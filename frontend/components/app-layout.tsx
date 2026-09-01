@@ -66,7 +66,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
                 <Activity className="size-4" />
               </div>
               <span className="font-bold tracking-tight text-foreground text-sm">
-                PulseNoShow <span className="text-primary">AI</span>
+                SHAI <span className="text-primary">Smart Hospital AI</span>
               </span>
             </Link>
           </div>

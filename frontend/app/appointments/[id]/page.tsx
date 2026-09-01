@@ -16,6 +16,7 @@ import {
 import { ApiError, getAppointment, getPatient, getPrediction } from "@/lib/api";
 import { OutcomeActions } from "@/app/appointments/[id]/outcome-actions";
 import { ShapTornadoChart } from "@/components/shap-tornado-chart";
+import { ContextualAdjustmentPanel } from "@/components/contextual-adjustment-panel";
 import { RiskBadge } from "@/components/risk-badge";
 import { RiskGauge } from "@/components/risk-gauge";
 import { Badge } from "@/components/ui/badge";
@@ -199,6 +200,13 @@ export default async function AppointmentDetailPage({
                   <div className="flex flex-col gap-1 pt-1">
                     <ShapTornadoChart contributions={prediction.explanation} />
                   </div>
+
+                  {/* Contextual Risk Adjustment (rule-based, separate from ML) */}
+                  {prediction.contextual_adjustment && (
+                    <div className="border-t border-border/60 pt-4">
+                      <ContextualAdjustmentPanel adjustment={prediction.contextual_adjustment} />
+                    </div>
+                  )}
                 </>
               ) : (
                 <div className="py-8 text-center text-xs text-muted-foreground">

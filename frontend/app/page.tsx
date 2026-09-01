@@ -6,19 +6,25 @@ import {
   Percent,
   PlusCircle,
   TrendingUp,
+  Clock,
 } from "lucide-react";
 
 import { getAppointmentsWithPredictions } from "@/lib/appointments-with-predictions";
+import { listDoctorSessions } from "@/lib/api";
 import { BackendUnreachable } from "@/components/backend-unreachable";
 import { AppointmentsTable } from "@/components/appointments-table";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import type { RiskCategory } from "@/lib/types";
 
 export default async function DashboardPage() {
-  let records;
+  let records, doctorSessions;
   try {
-    records = await getAppointmentsWithPredictions();
+    [records, doctorSessions] = await Promise.all([
+      getAppointmentsWithPredictions(),
+      listDoctorSessions(),
+    ]);
   } catch (err) {
     return <BackendUnreachable error={err} />;
   }
@@ -82,6 +88,43 @@ export default async function DashboardPage() {
           }
         />
       </div>
+
+      {/* Consultant Punctuality Status Bar */}
+      {doctorSessions.length > 0 && (
+        <div className="flex flex-wrap gap-2.5">
+          {doctorSessions.map((s) => (
+            <div
+              key={s.id}
+              className="flex items-center gap-2 rounded-lg border border-border/70 bg-card px-3 py-2"
+            >
+              <Clock className="size-3.5 text-muted-foreground shrink-0" />
+              <div className="flex flex-col">
+                <span className="text-xs font-medium text-foreground leading-tight">
+                  {s.doctor_name}
+                </span>
+                <span className="text-[10px] text-muted-foreground leading-tight">
+                  {s.specialty} · {s.scheduled_start_time}
+                </span>
+              </div>
+              {s.status === "delayed" ? (
+                <Badge
+                  variant="outline"
+                  className="ml-1 shrink-0 border-red-500/40 bg-red-500/10 text-red-700 dark:border-red-500/50 dark:bg-red-950/40 dark:text-red-300"
+                >
+                  +{s.delay_minutes}m late
+                </Badge>
+              ) : (
+                <Badge
+                  variant="outline"
+                  className="ml-1 shrink-0 border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:border-emerald-500/50 dark:bg-emerald-950/40 dark:text-emerald-300"
+                >
+                  On time
+                </Badge>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* KPI Stat Cards Grid */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">

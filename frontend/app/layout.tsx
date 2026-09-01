@@ -4,8 +4,9 @@ import "./globals.css";
 import { AppLayout } from "@/components/app-layout";
 
 export const metadata: Metadata = {
-  title: "PulseNoShow AI — Hospital & Clinic Triage Dashboard",
-  description: "AI-powered appointment no-show risk prediction, SHAP explainability, and patient triage system.",
+  title: "SHAI — Smart Hospital AI Operations Platform",
+  description:
+    "Autonomous clinic capacity and patient engagement orchestrator: no-show prediction, prescriptive overbooking, trilingual outreach, and executive ROI simulation.",
 };
 
 export default function RootLayout({

@@ -1,11 +1,19 @@
 import type {
+  AgentSimulateResult,
   Appointment,
   AppointmentInput,
+  CapacityOptimizeResult,
+  DoctorSession,
+  Intervention,
+  InterventionLanguage,
   Patient,
   PatientInput,
   PredictFeatures,
   PredictionResult,
+  SimulatorParams,
+  SimulatorResult,
   StoredPrediction,
+  WaitlistEntry,
 } from "@/lib/types";
 
 const API_BASE_URL = process.env.BACKEND_API_URL ?? "http://localhost:8000";
@@ -93,5 +101,63 @@ export function predict(appointmentId: string, features: PredictFeatures) {
   return apiFetch<PredictionResult>("/predict", {
     method: "POST",
     body: JSON.stringify({ appointment_id: appointmentId, ...features }),
+  });
+}
+
+// ===================================
+// SHAI Enterprise Modules
+// ===================================
+
+export function listDoctorSessions() {
+  return apiFetch<DoctorSession[]>("/doctors/sessions");
+}
+
+export function updateDoctorDelay(sessionId: string, delayMinutes: number, status: string) {
+  return apiFetch<DoctorSession>(`/doctors/sessions/${sessionId}/delay`, {
+    method: "PATCH",
+    body: JSON.stringify({ delay_minutes: delayMinutes, status }),
+  });
+}
+
+export function optimizeCapacity(maxWaitTimeToleranceMins = 15) {
+  return apiFetch<CapacityOptimizeResult>("/capacity/optimize", {
+    method: "POST",
+    body: JSON.stringify({ max_wait_time_tolerance_mins: maxWaitTimeToleranceMins }),
+  });
+}
+
+export function getWaitlist() {
+  return apiFetch<WaitlistEntry[]>("/capacity/waitlist");
+}
+
+export function assignWaitlistSlot(waitlistId: string) {
+  return apiFetch<WaitlistEntry>(`/capacity/waitlist/${waitlistId}/assign`, {
+    method: "POST",
+  });
+}
+
+export function listConversations() {
+  return apiFetch<Intervention[]>("/outreach/conversations");
+}
+
+export function simulateAgent(
+  appointmentId: string,
+  patientMessage: string,
+  language: InterventionLanguage
+) {
+  return apiFetch<AgentSimulateResult>("/outreach/simulate-agent", {
+    method: "POST",
+    body: JSON.stringify({
+      appointment_id: appointmentId,
+      patient_message: patientMessage,
+      language,
+    }),
+  });
+}
+
+export function evaluateSimulator(params: SimulatorParams) {
+  return apiFetch<SimulatorResult>("/simulator/evaluate", {
+    method: "POST",
+    body: JSON.stringify(params),
   });
 }

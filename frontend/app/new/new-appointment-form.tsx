@@ -14,6 +14,7 @@ import {
 
 import { createAppointmentAction, type NewAppointmentState } from "@/app/new/actions";
 import { ShapTornadoChart } from "@/components/shap-tornado-chart";
+import { ContextualAdjustmentPanel } from "@/components/contextual-adjustment-panel";
 import { RiskBadge } from "@/components/risk-badge";
 import { RiskGauge } from "@/components/risk-gauge";
 import { Button } from "@/components/ui/button";
@@ -43,6 +44,17 @@ const DEPARTMENTS = [
   "Neurology",
   "Gynecology",
   "Oncology",
+];
+
+const KNOWN_CONSULTANTS = ["Dr. Rohan Perera", "Dr. Neluka Fernando", "Dr. Anura Jayasinghe"];
+
+const BOOKING_CHANNELS = ["Doc990", "eChannelling", "Asiri MyHealth", "Hospital Counter"];
+
+const PAYMENT_MODES = [
+  "Credit Card (NSR Protected)",
+  "Credit Card",
+  "Corporate Insurance",
+  "Cash",
 ];
 
 export function NewAppointmentForm() {
@@ -137,6 +149,13 @@ export function NewAppointmentForm() {
               <ShapTornadoChart contributions={state.result.prediction.explanation} />
             </div>
 
+            {/* Contextual Risk Adjustment (rule-based, separate from ML) */}
+            {state.result.prediction.contextual_adjustment && (
+              <div className="border-t border-border/60 pt-4">
+                <ContextualAdjustmentPanel adjustment={state.result.prediction.contextual_adjustment} />
+              </div>
+            )}
+
             {/* Payoff Actions */}
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">
               <Button
@@ -184,12 +203,22 @@ export function NewAppointmentForm() {
             </CardHeader>
 
             <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2 pt-4">
-              <Field label="Full Name *" htmlFor="full_name" className="sm:col-span-2">
+              <Field label="Full Name *" htmlFor="full_name">
                 <Input
                   id="full_name"
                   name="full_name"
                   placeholder="e.g. Eleanor Vance"
                   required
+                  disabled={pending}
+                  className="h-9 text-xs"
+                />
+              </Field>
+
+              <Field label="UHID (Unique Health ID)" htmlFor="uhid">
+                <Input
+                  id="uhid"
+                  name="uhid"
+                  placeholder="e.g. UHID-ASIRI-9812"
                   disabled={pending}
                   className="h-9 text-xs"
                 />
@@ -252,6 +281,32 @@ export function NewAppointmentForm() {
                   name="email"
                   type="email"
                   placeholder="e.g. patient@example.com"
+                  disabled={pending}
+                  className="h-9 text-xs"
+                />
+              </Field>
+
+              <Field label="City / Residential Area" htmlFor="city">
+                <Input
+                  id="city"
+                  name="city"
+                  placeholder="e.g. Nugegoda"
+                  disabled={pending}
+                  className="h-9 text-xs"
+                />
+              </Field>
+
+              <Field
+                label="Distance from Hospital (km)"
+                htmlFor="distance_km"
+              >
+                <Input
+                  id="distance_km"
+                  name="distance_km"
+                  type="number"
+                  min={0}
+                  step="0.1"
+                  placeholder="e.g. 12.5"
                   disabled={pending}
                   className="h-9 text-xs"
                 />
@@ -371,6 +426,66 @@ export function NewAppointmentForm() {
                     ))}
                   </select>
                 </div>
+              </Field>
+
+              <Field label="Consultant" htmlFor="doctor_name">
+                <Input
+                  id="doctor_name"
+                  name="doctor_name"
+                  list="known-consultants"
+                  placeholder="e.g. Dr. Rohan Perera"
+                  defaultValue={KNOWN_CONSULTANTS[0]}
+                  disabled={pending}
+                  className="h-9 text-xs"
+                />
+                <datalist id="known-consultants">
+                  {KNOWN_CONSULTANTS.map((d) => (
+                    <option key={d} value={d} />
+                  ))}
+                </datalist>
+              </Field>
+
+              <Field label="Scheduled Clinic Time" htmlFor="scheduled_time">
+                <Input
+                  id="scheduled_time"
+                  name="scheduled_time"
+                  type="time"
+                  defaultValue="17:30"
+                  disabled={pending}
+                  className="h-9 text-xs"
+                />
+              </Field>
+
+              <Field label="Booking Channel" htmlFor="booking_channel">
+                <select
+                  id="booking_channel"
+                  name="booking_channel"
+                  disabled={pending}
+                  className="h-9 w-full rounded-lg border border-input bg-card px-2.5 text-xs outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20 text-foreground"
+                  defaultValue={BOOKING_CHANNELS[0]}
+                >
+                  {BOOKING_CHANNELS.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="Payment Mode" htmlFor="payment_mode">
+                <select
+                  id="payment_mode"
+                  name="payment_mode"
+                  disabled={pending}
+                  className="h-9 w-full rounded-lg border border-input bg-card px-2.5 text-xs outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20 text-foreground"
+                  defaultValue={PAYMENT_MODES[0]}
+                >
+                  {PAYMENT_MODES.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
               </Field>
 
               <div className="sm:col-span-2 rounded-lg border border-border/80 bg-muted/20 p-3">

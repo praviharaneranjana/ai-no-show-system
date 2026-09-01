@@ -39,12 +39,17 @@ export async function createAppointmentAction(
   }
 
   try {
+    const distanceKmRaw = formData.get("distance_km") as string;
+
     const patient = await createPatient({
       full_name: fullName,
       date_of_birth: dateOfBirth,
+      uhid: (formData.get("uhid") as string) || null,
       gender: (formData.get("gender") as string) || null,
       phone: (formData.get("phone") as string) || null,
       email: (formData.get("email") as string) || null,
+      city: (formData.get("city") as string) || null,
+      distance_km: distanceKmRaw ? Number(distanceKmRaw) : null,
       scholarship: formData.get("scholarship") === "on",
       hypertension: formData.get("hypertension") === "on",
       diabetes: formData.get("diabetes") === "on",
@@ -57,6 +62,10 @@ export async function createAppointmentAction(
       scheduled_day: scheduledDay,
       appointment_day: appointmentDay,
       department: (formData.get("department") as string) || null,
+      doctor_name: (formData.get("doctor_name") as string) || null,
+      booking_channel: (formData.get("booking_channel") as string) || null,
+      payment_mode: (formData.get("payment_mode") as string) || null,
+      scheduled_time: (formData.get("scheduled_time") as string) || null,
       sms_received: formData.get("sms_received") === "on",
     });
 

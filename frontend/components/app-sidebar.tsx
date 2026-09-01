@@ -9,6 +9,9 @@ import {
   Activity,
   Sparkles,
   ShieldCheck,
+  Gauge,
+  MessagesSquare,
+  Calculator,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -26,14 +29,35 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
   const NAV_ITEMS = [
     {
       href: "/",
-      label: "Appointments Triage",
+      label: "Command Center",
       icon: CalendarDays,
       exact: true,
       description: "Live schedule & risk triage",
     },
     {
+      href: "/capacity",
+      label: "Capacity & Overbooking",
+      icon: Gauge,
+      exact: false,
+      description: "Prescriptive slot optimizer",
+    },
+    {
+      href: "/outreach",
+      label: "Autonomous Agent Hub",
+      icon: MessagesSquare,
+      exact: false,
+      description: "Trilingual patient outreach",
+    },
+    {
+      href: "/simulator",
+      label: "Executive ROI Simulator",
+      icon: Calculator,
+      exact: false,
+      description: "Boardroom revenue calculator",
+    },
+    {
       href: "/analytics",
-      label: "Analytics & Trends",
+      label: "Operations Analytics",
       icon: BarChart3,
       exact: false,
       description: "Model & department metrics",
@@ -66,13 +90,13 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
           </div>
           <div className="flex flex-col">
             <div className="flex items-center gap-1.5 font-bold tracking-tight text-foreground">
-              <span>PulseNoShow</span>
+              <span>SHAI</span>
               <span className="rounded bg-primary/10 px-1 py-0.2 text-[10px] font-semibold text-primary">
-                AI
+                Smart Hospital AI
               </span>
             </div>
             <span className="text-[11px] text-muted-foreground">
-              Clinic Scheduling & Triage
+              Autonomous Clinic Capacity & Engagement
             </span>
           </div>
         </Link>
