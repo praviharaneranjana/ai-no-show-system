@@ -81,7 +81,7 @@ export function ShaiLogo({
     return (
       <div
         className={cn(
-          "inline-flex items-center justify-center bg-[#0B0F19] p-2 rounded-2xl border border-cyan-500/25 shadow-xs shadow-cyan-500/10",
+          "inline-flex items-center justify-center bg-[#0B0F19] p-2 rounded-2xl border border-[#6C5CE7]/30 shadow-xs shadow-[#6C5CE7]/15",
           className
         )}
       >
@@ -95,7 +95,7 @@ export function ShaiLogo({
     return (
       <div
         className={cn(
-          "inline-flex items-center justify-center bg-[#0B0F19] px-3.5 py-1.5 rounded-2xl border border-cyan-500/25 shadow-xs shadow-cyan-500/10",
+          "inline-flex items-center justify-center bg-[#0B0F19] px-3.5 py-1.5 rounded-2xl border border-[#6C5CE7]/30 shadow-xs shadow-[#6C5CE7]/15",
           className
         )}
       >
@@ -109,7 +109,7 @@ export function ShaiLogo({
     return (
       <div
         className={cn(
-          "inline-flex flex-col items-center justify-center bg-[#0B0F19] p-4 rounded-3xl border border-cyan-500/25 shadow-md shadow-cyan-500/10 text-center",
+          "inline-flex flex-col items-center justify-center bg-[#0B0F19] p-4 rounded-3xl border border-[#6C5CE7]/30 shadow-md shadow-[#6C5CE7]/15 text-center",
           className
         )}
       >
@@ -122,7 +122,7 @@ export function ShaiLogo({
   return (
     <div
       className={cn(
-        "group inline-flex items-center bg-[#0B0F19] border border-cyan-500/25 shadow-xs shadow-cyan-500/10 transition-all hover:border-cyan-500/40",
+        "group inline-flex items-center bg-[#0B0F19] border border-[#6C5CE7]/30 shadow-xs shadow-[#6C5CE7]/15 transition-all hover:border-[#6C5CE7]/50",
         sizeConfig.container,
         className
       )}
