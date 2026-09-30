@@ -13,7 +13,9 @@ import os
 
 import pandas as pd
 
-from app import models, outreach_drafter, schemas, shai_model
+from contextlib import asynccontextmanager
+
+from app import auth, models, outreach_drafter, schemas, shai_model
 from app.database import get_db
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -29,10 +31,19 @@ shai = shai_model.ShaiModel()
 # ======================
 # FastAPI App
 # ======================
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    auth.bootstrap_admin()
+    yield
+
+
 app = FastAPI(
     title="AI Patient No-Show Prediction System",
     description="Predicts patient no-show risk with SHAP explanations",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
+    # Every route needs a valid session token except the public ones (see app/auth.py).
+    dependencies=[Depends(auth.require_user)],
 )
 
 # Allow frontend (Next.js) to call this API
@@ -50,11 +61,11 @@ app.add_middleware(
 API_KEY = os.getenv("API_KEY")
 if not API_KEY:
     logger.warning(
-        "API_KEY is not set — all endpoints are unauthenticated. "
+        "API_KEY is not set — the shared service key (X-API-Key) is not enforced; staff login still is. "
         "Set API_KEY in the environment before deploying anywhere non-local."
     )
 
-PUBLIC_PATHS = {"/", "/health", "/docs", "/redoc", "/openapi.json", "/auth/login"}
+PUBLIC_PATHS = auth.PUBLIC_PATHS
 
 
 @app.middleware("http")
@@ -145,6 +156,9 @@ def _patient_history(db: Session, appointment: models.Appointment) -> tuple[int,
 # ======================
 # API Endpoints
 # ======================
+app.include_router(auth.router)
+
+
 @app.get("/")
 def home():
     return {
@@ -162,98 +176,6 @@ def health(db: Session = Depends(get_db)):
         db_status = "unavailable"
     return {"status": "ok", "database": db_status}
  
-class LoginRequest(BaseModel):
-    email: str
-    password: str
-
-class LoginResponse(BaseModel):
-    role: str
-    name: str
-    mustChangePassword: bool = False
-    access_token: str
-
-STAFF_ROSTER = {
-    "nurse.perera@hospital.org": {
-        "password": "ClinicPassword123!",
-        "name": "Nurse K. Perera",
-        "role": "front_desk",
-        "active": True,
-        "mustChangePassword": False,
-        "failed_attempts": 0,
-    },
-    "manager.fernando@hospital.org": {
-        "password": "ManagerPassword123!",
-        "name": "Dr. D. Fernando",
-        "role": "manager",
-        "active": True,
-        "mustChangePassword": False,
-        "failed_attempts": 0,
-    },
-    "admin.silva@hospital.org": {
-        "password": "AdminPassword123!",
-        "name": "Admin S. Silva",
-        "role": "admin",
-        "active": True,
-        "mustChangePassword": False,
-        "failed_attempts": 0,
-    },
-}
-
-@app.post("/auth/login", response_model=LoginResponse)
-def auth_login(req: LoginRequest, response: Response):
-    email = req.email.lower().strip()
-    user = STAFF_ROSTER.get(email)
-
-    if not user:
-        if email.endswith("@hospital.org") and len(req.password) >= 6:
-            role = "front_desk"
-            if "manager" in email:
-                role = "manager"
-            elif "admin" in email:
-                role = "admin"
-            response.set_cookie(
-                key="shai_session",
-                value=role,
-                httponly=False,
-                max_age=28800,
-                samesite="lax",
-            )
-            return LoginResponse(
-                role=role,
-                name=email.split("@")[0].replace(".", " ").title(),
-                mustChangePassword=False,
-                access_token=f"shai-token-{role}",
-            )
-        raise HTTPException(status_code=401, detail="Incorrect email or password.")
-
-    if not user.get("active", True):
-        raise HTTPException(status_code=403, detail="This account is inactive. Contact your administrator.")
-
-    if user.get("failed_attempts", 0) >= 5:
-        raise HTTPException(
-            status_code=423,
-            detail="Too many failed attempts. This account is temporarily locked. Contact IT if you need urgent access.",
-        )
-
-    if req.password != user["password"]:
-        user["failed_attempts"] = user.get("failed_attempts", 0) + 1
-        raise HTTPException(status_code=401, detail="Incorrect email or password.")
-
-    user["failed_attempts"] = 0
-    response.set_cookie(
-        key="shai_session",
-        value=user["role"],
-        httponly=False,
-        max_age=28800,
-        samesite="lax",
-    )
-    return LoginResponse(
-        role=user["role"],
-        name=user["name"],
-        mustChangePassword=user.get("mustChangePassword", False),
-        access_token=f"shai-token-{user['role']}",
-    )
-
 @app.post("/predict", response_model=PredictionResponse)
 def predict_no_show(data: AppointmentRequest, db: Session = Depends(get_db)):
     appointment = db.get(models.Appointment, data.appointment_id)
@@ -533,7 +455,7 @@ def list_doctor_sessions(db: Session = Depends(get_db)):
     return sessions
 
 
-@app.patch("/doctors/sessions/{session_id}/delay", response_model=schemas.DoctorSessionOut)
+@app.patch("/doctors/sessions/{session_id}/delay", response_model=schemas.DoctorSessionOut, dependencies=[Depends(auth.require_role("manager"))])
 def update_doctor_delay(
     session_id: uuid.UUID,
     data: schemas.DoctorSessionDelayUpdate,
@@ -552,7 +474,7 @@ def update_doctor_delay(
 # ===================================
 # 2. Prescriptive Capacity & Overbooking
 # ===================================
-@app.post("/capacity/optimize", response_model=schemas.CapacityOptimizeResponse)
+@app.post("/capacity/optimize", response_model=schemas.CapacityOptimizeResponse, dependencies=[Depends(auth.require_role("manager"))])
 def optimize_capacity(req: schemas.CapacityOptimizeRequest, db: Session = Depends(get_db)):
     target_date = req.session_date or pd.to_datetime("today").date()
     sessions = db.query(models.DoctorSession).all()
@@ -883,7 +805,7 @@ def simulate_patient_agent(req: schemas.AgentSimulateRequest, db: Session = Depe
 # ===================================
 # 5. Executive ROI & Value Simulator
 # ===================================
-@app.post("/simulator/evaluate", response_model=schemas.SimulatorEvaluateResponse)
+@app.post("/simulator/evaluate", response_model=schemas.SimulatorEvaluateResponse, dependencies=[Depends(auth.require_role("manager"))])
 def evaluate_roi_simulation(params: schemas.SimulatorEvaluateRequest):
     # Calculations based on Sri Lankan Private Hospital Outpatient Metrics
     daily_consultations = params.daily_clinics_count * 20  # ~20 patients per consultant clinic

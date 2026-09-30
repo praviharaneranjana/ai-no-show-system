@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("API_KEY", "test-api-key")
 
+from app import models, security
 from app.database import Base, get_db
 from app.main import app
 
@@ -38,8 +39,29 @@ def db_session():
         connection.close()
 
 
+TEST_PASSWORD = "Test-Password-123"
+
+
+def make_user(db_session, role="admin", email=None, password=TEST_PASSWORD, **overrides):
+    user = models.User(
+        email=email or f"{role}-{os.urandom(3).hex()}@test.local",
+        full_name=f"Test {role.title()}",
+        role=role,
+        password_hash=security.hash_password(password),
+        **overrides,
+    )
+    db_session.add(user)
+    db_session.flush()
+    return user
+
+
+def token_for(user) -> str:
+    return security.create_token(user_id=str(user.id), email=user.email, name=user.full_name, role=user.role)
+
+
 @pytest.fixture
-def client(db_session):
+def raw_client(db_session):
+    """Client with the service API key but NO user session (for auth tests)."""
     def override_get_db():
         yield db_session
 
@@ -48,3 +70,10 @@ def client(db_session):
         test_client.headers.update({"X-API-Key": os.environ["API_KEY"]})
         yield test_client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def client(raw_client, db_session):
+    """Default client: signed in as an admin, so feature tests can reach every route."""
+    raw_client.headers["Authorization"] = f"Bearer {token_for(make_user(db_session, 'admin'))}"
+    return raw_client
