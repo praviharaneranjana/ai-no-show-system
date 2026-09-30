@@ -79,7 +79,7 @@ export default async function AnalyticsPage() {
       </div>
 
       {/* Top 4 KPI Tiles (StatCards) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+      <div className="grid grid-cols-2 2xl:grid-cols-4 gap-3.5">
         <StatCard
           title="Observed No-Show Rate"
           value={noShowRate !== null ? `${noShowRate.toFixed(1)}%` : "—"}
@@ -130,7 +130,7 @@ export default async function AnalyticsPage() {
           </span>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-6 gap-3">
           <div className="flex flex-col p-3 rounded-2xl bg-card border border-border/40">
             <span className="text-[11px] font-semibold text-muted-foreground">ROC-AUC</span>
             <span className="text-xl font-bold font-mono text-foreground mt-0.5">0.672</span>

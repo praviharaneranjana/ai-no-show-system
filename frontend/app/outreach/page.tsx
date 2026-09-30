@@ -80,7 +80,7 @@ export default async function OutreachPage() {
       </div>
 
       {/* KPI StatCards (4 items) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+      <div className="grid grid-cols-2 2xl:grid-cols-4 gap-3.5">
         <StatCard
           title="Total Conversations"
           value={total}
