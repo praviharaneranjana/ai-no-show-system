@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Loader2, Send, Bot, User } from "lucide-react";
+import { Loader2, Send, Bot, User, Sparkles } from "lucide-react";
 
 import { simulateAgentAction } from "@/app/outreach/actions";
 import { Button } from "@/components/ui/button";
@@ -12,10 +12,10 @@ type AppointmentOption = {
   label: string;
 };
 
-const LANGUAGE_LABELS: Record<InterventionLanguage, string> = {
-  en: "English",
-  si: "Sinhala",
-  ta: "Tamil",
+const LANGUAGE_CONFIG: Record<InterventionLanguage, { label: string; badge: string }> = {
+  en: { label: "English", badge: "EN" },
+  si: { label: "සිංහල (Sinhala)", badge: "SI" },
+  ta: { label: "தமிழ் (Tamil)", badge: "TA" },
 };
 
 const QUICK_MESSAGES: Record<InterventionLanguage, { label: string; text: string }[]> = {
@@ -68,23 +68,23 @@ export function AgentSimulator({ appointments }: { appointments: AppointmentOpti
 
   if (appointments.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">
+      <p className="text-sm text-muted-foreground py-6 text-center">
         No appointments available to simulate outreach for yet.
       </p>
     );
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      {/* Controls */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-medium text-foreground">Appointment</label>
+    <div className="flex flex-col gap-5">
+      {/* Controls: Target Appointment & Language Pill Selector */}
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5 items-end">
+        <div className="flex flex-col gap-1.5 md:col-span-7">
+          <label className="text-xs font-semibold text-foreground">Select Target Appointment</label>
           <select
             value={appointmentId}
             onChange={(e) => setAppointmentId(e.target.value)}
             disabled={isPending}
-            className="h-9 w-full rounded-lg border border-input bg-card px-2.5 text-xs outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20 text-foreground"
+            className="h-10 w-full rounded-xl border border-border/80 bg-background/90 px-3 text-xs outline-none transition-all focus:border-primary focus:ring-2 focus:ring-primary/20 text-foreground"
           >
             {appointments.map((a) => (
               <option key={a.id} value={a.id}>
@@ -94,35 +94,44 @@ export function AgentSimulator({ appointments }: { appointments: AppointmentOpti
           </select>
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-medium text-foreground">Patient Language</label>
-          <select
-            value={language}
-            onChange={(e) => setLanguage(e.target.value as InterventionLanguage)}
-            disabled={isPending}
-            className="h-9 w-full rounded-lg border border-input bg-card px-2.5 text-xs outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20 text-foreground"
-          >
-            <option value="en">English</option>
-            <option value="si">Sinhala</option>
-            <option value="ta">Tamil</option>
-          </select>
+        <div className="flex flex-col gap-1.5 md:col-span-5">
+          <label className="text-xs font-semibold text-foreground">Language Mode</label>
+          <div className="flex rounded-xl bg-muted/60 p-1 border border-border/50">
+            {(["en", "si", "ta"] as InterventionLanguage[]).map((lang) => (
+              <button
+                key={lang}
+                type="button"
+                onClick={() => setLanguage(lang)}
+                disabled={isPending}
+                className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  language === lang
+                    ? "bg-card text-foreground shadow-xs"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {LANGUAGE_CONFIG[lang].badge} · {LANGUAGE_CONFIG[lang].label.split(" ")[0]}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* Quick canned messages */}
-      <div className="flex flex-wrap gap-1.5">
-        {QUICK_MESSAGES[language].map((q) => (
-          <Button
-            key={q.label}
-            variant="outline"
-            size="xs"
-            disabled={isPending}
-            onClick={() => send(q.text)}
-            className="text-[11px]"
-          >
-            {q.label}
-          </Button>
-        ))}
+      {/* Quick Replies Carousel / Chips */}
+      <div className="flex flex-col gap-1.5">
+        <span className="text-[11px] font-medium text-muted-foreground">Quick Test Inquiries:</span>
+        <div className="flex flex-wrap gap-2">
+          {QUICK_MESSAGES[language].map((q) => (
+            <button
+              key={q.label}
+              type="button"
+              disabled={isPending}
+              onClick={() => send(q.text)}
+              className="px-3 py-1.5 rounded-full text-xs font-medium border border-border/80 bg-card hover:bg-muted/40 hover:border-primary/50 text-foreground transition-all cursor-pointer disabled:opacity-50 active:scale-95"
+            >
+              {q.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Free text input */}
@@ -134,59 +143,70 @@ export function AgentSimulator({ appointments }: { appointments: AppointmentOpti
             if (e.key === "Enter") send(message);
           }}
           disabled={isPending}
-          placeholder={`Type a patient reply in ${LANGUAGE_LABELS[language]}…`}
-          className="h-9 flex-1 rounded-lg border border-input bg-card px-3 text-xs outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20 text-foreground"
+          placeholder={`Type custom patient response in ${LANGUAGE_CONFIG[language].label}…`}
+          className="h-10 flex-1 rounded-xl border border-border/80 bg-background/90 px-3.5 text-xs outline-none transition-all focus:border-primary focus:ring-2 focus:ring-primary/20 text-foreground placeholder:text-muted-foreground/60"
         />
         <Button
           size="sm"
           disabled={isPending || !message.trim()}
           onClick={() => send(message)}
-          className="gap-1.5 shrink-0"
+          className="h-10 px-4 rounded-xl gap-2 shrink-0 bg-gradient-to-r from-[#8B7CF6] to-[#5B7CFA] text-white hover:opacity-90 shadow-xs cursor-pointer"
         >
-          {isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
-          <span>Send</span>
+          {isPending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+          <span>Send Reply</span>
         </Button>
       </div>
 
       {error && (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive font-medium">
+        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-600 dark:text-rose-400 font-medium">
           {error}
         </div>
       )}
 
-      {/* Live conversation preview */}
+      {/* WhatsApp / Chat simulation thread */}
       {(lastPatientMessage || result) && (
-        <div className="flex flex-col gap-2.5 rounded-lg border border-border/70 bg-muted/20 p-3.5">
+        <div className="flex flex-col gap-3 rounded-2xl border border-border/60 bg-muted/20 p-4 animate-in fade-in duration-200">
+          <div className="flex items-center justify-between pb-2 border-b border-border/40 text-[11px] text-muted-foreground">
+            <span className="font-semibold uppercase tracking-wider">SMS / WhatsApp Session Stream</span>
+            <span>Real-time NLP Parser</span>
+          </div>
+
           {lastPatientMessage && (
-            <div className="flex items-start justify-end gap-2">
-              <div className="max-w-[80%] rounded-2xl rounded-tr-sm bg-primary px-3 py-2 text-xs text-primary-foreground">
+            <div className="flex items-start justify-end gap-2.5">
+              <div className="max-w-[75%] rounded-2xl rounded-tr-xs bg-gradient-to-r from-[#8B7CF6] to-[#5B7CFA] px-4 py-2.5 text-xs text-white shadow-xs">
                 {lastPatientMessage}
               </div>
-              <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+              <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground font-semibold text-xs border border-border/60">
                 <User className="size-3.5" />
               </div>
             </div>
           )}
 
           {isPending && (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Loader2 className="size-3 animate-spin" />
-              <span>SHAI agent is composing a reply…</span>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground pl-1 py-1">
+              <Loader2 className="size-3.5 animate-spin text-primary" />
+              <span>SHAI autonomous agent is reasoning and drafting response…</span>
             </div>
           )}
 
           {result && !isPending && (
-            <div className="flex items-start gap-2">
-              <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
-                <Bot className="size-3.5" />
+            <div className="flex items-start gap-2.5">
+              <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary border border-primary/20">
+                <Bot className="size-4" />
               </div>
-              <div className="flex max-w-[80%] flex-col gap-1.5">
-                <div className="rounded-2xl rounded-tl-sm bg-card ring-1 ring-foreground/10 px-3 py-2 text-xs text-foreground whitespace-pre-line">
+              <div className="flex max-w-[80%] flex-col gap-2">
+                <div className="rounded-2xl rounded-tl-xs bg-card border border-border/60 p-3.5 text-xs text-foreground whitespace-pre-line shadow-xs">
                   {result.agent_response}
                 </div>
-                <span className="text-[10px] text-muted-foreground">
-                  Detected intent: <strong>{result.intent}</strong> · Action: {result.suggested_action}
-                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-primary/10 text-primary border border-primary/20">
+                    <Sparkles className="size-3" />
+                    Intent: {result.intent}
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">
+                    Action executed: <strong className="text-foreground">{result.suggested_action}</strong>
+                  </span>
+                </div>
               </div>
             </div>
           )}

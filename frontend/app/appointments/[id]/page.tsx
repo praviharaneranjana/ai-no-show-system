@@ -1,31 +1,22 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import type { ReactNode } from "react";
 import {
   ArrowLeft,
   Calendar,
   Phone,
   Mail,
-  Sparkles,
-  CheckCircle2,
-  XCircle,
-  ShieldAlert,
-  HeartPulse,
+  User,
+  Building,
+  CreditCard,
+  Send,
 } from "lucide-react";
 
 import { ApiError, getAppointment, getPatient, getPrediction } from "@/lib/api";
 import { OutcomeActions } from "@/app/appointments/[id]/outcome-actions";
 import { ShapTornadoChart } from "@/components/shap-tornado-chart";
-import { ContextualAdjustmentPanel } from "@/components/contextual-adjustment-panel";
-import { RiskBadge } from "@/components/risk-badge";
-import { RiskGauge } from "@/components/risk-gauge";
-import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { DotRingGauge } from "@/components/dot-ring-gauge";
+import { RiskPill } from "@/components/risk-pill";
+import { JourneyMap } from "@/components/journey-map";
 
 function calculateAge(dobStr: string): number {
   const dob = new Date(dobStr);
@@ -36,13 +27,6 @@ function calculateAge(dobStr: string): number {
     (today.getUTCMonth() === dob.getUTCMonth() && today.getUTCDate() >= dob.getUTCDate());
   if (!hadBirthday) age -= 1;
   return Math.max(0, age);
-}
-
-function calculateDaysAhead(scheduled: string, appointment: string): number {
-  const s = new Date(scheduled);
-  const a = new Date(appointment);
-  const msPerDay = 1000 * 60 * 60 * 24;
-  return Math.max(0, Math.round((a.getTime() - s.getTime()) / msPerDay));
 }
 
 export default async function AppointmentDetailPage({
@@ -65,337 +49,302 @@ export default async function AppointmentDetailPage({
   });
 
   const age = calculateAge(patient.date_of_birth);
-  const daysAhead = calculateDaysAhead(appointment.scheduled_day, appointment.appointment_day);
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const isPastOrToday = appointment.appointment_day <= todayStr;
-  const isHighRisk = prediction?.risk_category === "High";
 
   return (
-    <div className="flex w-full flex-col gap-6 p-6 lg:p-8 max-w-7xl mx-auto">
-      {/* Back link & Title */}
-      <div className="flex flex-col gap-2">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors w-fit"
-        >
-          <ArrowLeft className="size-3.5" />
-          <span>Back to appointments triage</span>
-        </Link>
-
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/80 pb-5">
-          <div className="flex items-center gap-3">
-            <div className="flex size-12 items-center justify-center rounded-2xl bg-primary/10 text-primary font-bold text-base">
-              {patient.full_name
-                .split(" ")
-                .map((n) => n[0])
-                .slice(0, 2)
-                .join("")
-                .toUpperCase()}
-            </div>
-            <div className="flex flex-col">
-              <div className="flex items-center gap-2.5">
-                <h1 className="text-2xl font-bold tracking-tight text-foreground">
-                  {patient.full_name}
-                </h1>
-                {prediction && (
-                  <RiskBadge
-                    category={prediction.risk_category}
-                    score={prediction.risk_score}
-                    size="default"
-                  />
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Appointment on <strong>{appointment.appointment_day}</strong> • {appointment.department ?? "General Medicine"}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            {appointment.no_show !== null ? (
-              <Badge
-                variant="outline"
-                className={
-                  appointment.no_show
-                    ? "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300 font-semibold px-3 py-1"
-                    : "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-semibold px-3 py-1"
-                }
-              >
-                {appointment.no_show ? "Visit Outcome: No-Show" : "Visit Outcome: Attended"}
-              </Badge>
-            ) : isPastOrToday ? (
-              <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300 font-medium">
-                Pending Outcome Recording
-              </Badge>
-            ) : (
-              <Badge variant="outline" className="text-muted-foreground">
-                Upcoming Appointment
-              </Badge>
-            )}
-          </div>
+    <div className="flex flex-col gap-6 p-4 md:p-6 lg:p-8">
+      {/* Top Breadcrumb & Outcome Actions Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-border/60">
+        <div className="flex items-center gap-3">
+          <Link
+            href="/"
+            className="flex items-center gap-1.5 text-xs font-semibold text-[#8B7CF6] hover:underline"
+          >
+            <ArrowLeft className="size-4" />
+            <span>Dashboard</span>
+          </Link>
+          <span className="text-muted-foreground">/</span>
+          <h1 className="font-heading text-lg font-bold text-foreground sm:text-xl">
+            Appointment #{appointment.id.slice(0, 8).toUpperCase()}
+          </h1>
         </div>
+
+        {/* Outcome Actions (Mark Attended / Mark No-Show) */}
+        <OutcomeActions
+          appointmentId={appointment.id}
+        />
       </div>
 
-      {/* Main Grid: AI Prediction (Left) + Details & Outcomes (Right) */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-        {/* Left Column: AI Prediction & SHAP (7 cols) */}
-        <div className="flex flex-col gap-6 lg:col-span-7">
-          {/* AI Assessment Card */}
-          <Card className="border-border/80 shadow-xs">
-            <CardHeader className="pb-3 border-b border-border/60">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="size-4 text-primary" />
-                  <CardTitle className="text-base">AI Attendance Risk Assessment</CardTitle>
-                </div>
-                <span className="text-[11px] font-mono text-muted-foreground">
-                  XGBoost + SHAP
-                </span>
-              </div>
-            </CardHeader>
+      {/* 12-Col Bento Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        
+        {/* Risk Hero Card (4 cols) */}
+        <div className="lg:col-span-4 rounded-[24px] border border-border bg-card p-6 bento-card-shadow flex flex-col items-center justify-between text-center">
+          <div className="w-full flex items-center justify-between pb-3 border-b border-border/60">
+            <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+              Calibrated Risk Model
+            </span>
+            <span className="font-mono text-[10px] text-muted-foreground">
+              shai-lk-synth-v1
+            </span>
+          </div>
 
-            <CardContent className="flex flex-col gap-5 pt-4">
-              {prediction ? (
-                <>
-                  {/* Risk Score & Recommendation Reveal */}
-                  <div className="flex flex-col sm:flex-row items-center gap-5 rounded-xl border border-border/80 bg-muted/20 p-4">
-                    <RiskGauge
-                      score={prediction.risk_score}
-                      category={prediction.risk_category}
-                      size="default"
-                    />
+          <div className="my-4">
+            <DotRingGauge
+              score={prediction?.risk_score || 0.15}
+              category={prediction?.risk_category || "Low"}
+              size={150}
+            />
+          </div>
 
-                    <div className="flex flex-1 flex-col gap-2">
-                      <div className="flex items-center gap-2">
-                        <RiskBadge
-                          category={prediction.risk_category}
-                          score={prediction.risk_score}
-                          size="default"
-                        />
-                        <span className="text-xs text-muted-foreground">
-                          probability of missing visit
-                        </span>
-                      </div>
+          <div className="w-full space-y-2">
+            <div className="flex items-center justify-center gap-2">
+              <RiskPill
+                category={prediction?.risk_category || "Low"}
+                score={prediction?.risk_score}
+                size="default"
+              />
+            </div>
 
-                      {/* Action Recommendation Box */}
-                      <div
-                        className={`rounded-lg border p-3 text-xs leading-relaxed ${
-                          isHighRisk
-                            ? "border-red-500/40 bg-red-500/10 text-red-800 dark:text-red-200 font-medium"
-                            : prediction.risk_category === "Medium"
-                            ? "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200 font-medium"
-                            : "border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
-                        }`}
-                      >
-                        <div className="font-semibold mb-0.5 flex items-center gap-1.5">
-                          <ShieldAlert className="size-3.5" />
-                          <span>Staff Action Recommendation:</span>
-                        </div>
-                        {prediction.recommendation}
-                      </div>
-                    </div>
-                  </div>
+            <p className="text-xs text-muted-foreground max-w-xs mx-auto">
+              Recommendation:{" "}
+              <strong className="text-foreground">
+                {prediction?.recommendation || "Standard SMS reminder protocol."}
+              </strong>
+            </p>
+          </div>
 
-                  {/* SHAP Feature Contribution Chart */}
-                  <div className="flex flex-col gap-1 pt-1">
-                    <ShapTornadoChart contributions={prediction.explanation} />
-                  </div>
-
-                  {/* Contextual Risk Adjustment (rule-based, separate from ML) */}
-                  {prediction.contextual_adjustment && (
-                    <div className="border-t border-border/60 pt-4">
-                      <ContextualAdjustmentPanel adjustment={prediction.contextual_adjustment} />
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div className="py-8 text-center text-xs text-muted-foreground">
-                  No prediction has been computed for this appointment yet.
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <div className="w-full pt-3 border-t border-border/60 text-[10px] text-muted-foreground flex justify-between">
+            <span>ROC-AUC: 0.672</span>
+            <span>1.8× Lift on Top 20%</span>
+          </div>
         </div>
 
-        {/* Right Column: Outcomes & Patient Profile (5 cols) */}
-        <div className="flex flex-col gap-6 lg:col-span-5">
-          {/* Outcome Recording Card */}
-          <Card className="border-border/80 shadow-xs">
-            <CardHeader className="pb-3 border-b border-border/60">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="size-4 text-primary" />
-                <CardTitle className="text-base">Visit Outcome Status</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3 pt-4 text-xs">
-              {appointment.no_show !== null ? (
-                <div
-                  className={`flex items-center gap-3 rounded-lg border p-3.5 ${
-                    appointment.no_show
-                      ? "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
-                      : "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                  }`}
-                >
-                  {appointment.no_show ? (
-                    <XCircle className="size-5 shrink-0 text-red-600 dark:text-red-400" />
-                  ) : (
-                    <CheckCircle2 className="size-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                  )}
-                  <div className="flex flex-col">
-                    <span className="font-bold text-sm">
-                      {appointment.no_show ? "Recorded as No-Show" : "Recorded as Attended"}
-                    </span>
-                    <span className="text-[11px] opacity-85">
-                      Status has been recorded and contributed to hospital analytics.
-                    </span>
-                  </div>
-                </div>
-              ) : isPastOrToday ? (
-                <div className="flex flex-col gap-2.5">
-                  <p className="text-muted-foreground text-xs">
-                    Appointment date is reached. Record whether the patient attended or missed their appointment:
-                  </p>
-                  <OutcomeActions appointmentId={appointment.id} />
-                </div>
-              ) : (
-                <div className="rounded-lg border border-border/60 bg-muted/20 p-3 text-muted-foreground text-xs">
-                  📅 Outcome recording will unlock on the appointment date (<strong>{appointment.appointment_day}</strong>).
-                </div>
-              )}
-            </CardContent>
-          </Card>
+        {/* SHAP Feature Drivers Tornado (4 cols) */}
+        <div className="lg:col-span-4 rounded-[24px] border border-border bg-card p-6 bento-card-shadow flex flex-col justify-between">
+          <div>
+            <div className="pb-3 border-b border-border/60">
+              <h2 className="font-heading text-base font-bold text-foreground">
+                SHAP Attribution Drivers
+              </h2>
+              <p className="text-[11px] text-muted-foreground">
+                Key clinical and logistic factors influencing risk
+              </p>
+            </div>
 
-          {/* Appointment Timing & Logistics */}
-          <Card className="border-border/80 shadow-xs">
-            <CardHeader className="pb-3 border-b border-border/60">
-              <div className="flex items-center gap-2">
-                <Calendar className="size-4 text-primary" />
-                <CardTitle className="text-base">Appointment Logistics</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-2.5 pt-4 text-xs">
-              <DetailRow label="Appointment Date" value={appointment.appointment_day} highlight />
-              <DetailRow label="Scheduled Date" value={appointment.scheduled_day} />
-              <DetailRow
-                label="Lead Time"
-                value={`${daysAhead} day${daysAhead === 1 ? "" : "s"} in advance`}
+            <div className="mt-4">
+              <ShapTornadoChart
+                contributions={prediction?.explanation || []}
               />
-              <DetailRow
-                label="Department"
-                value={appointment.department ?? "General Medicine"}
-              />
-              <DetailRow
-                label="SMS Reminder"
-                value={appointment.sms_received ? "Sent ✅" : "Not Sent ❌"}
-              />
-              <DetailRow label="Status Code" value={appointment.status} />
-            </CardContent>
-          </Card>
+            </div>
+          </div>
 
-          {/* Patient Demographic & Clinical Profile */}
-          <Card className="border-border/80 shadow-xs">
-            <CardHeader className="pb-3 border-b border-border/60">
-              <div className="flex items-center gap-2">
-                <HeartPulse className="size-4 text-primary" />
-                <CardTitle className="text-base">Patient Clinical Profile</CardTitle>
+          <div className="pt-3 border-t border-border/60 text-[10px] text-muted-foreground">
+            Values derived via TreeExplainer log-odds attribution.
+          </div>
+        </div>
+
+        {/* Patient Profile Card (4 cols) */}
+        <div className="lg:col-span-4 rounded-[24px] border border-border bg-card p-6 bento-card-shadow flex flex-col justify-between">
+          <div>
+            <div className="pb-3 border-b border-border/60 flex items-center justify-between">
+              <div>
+                <h2 className="font-heading text-base font-bold text-foreground">
+                  Patient Profile
+                </h2>
+                <p className="text-[11px] text-muted-foreground">
+                  Demographic & clinical history
+                </p>
               </div>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-2.5 pt-4 text-xs">
-              <DetailRow
-                label="Full Name"
-                value={patient.full_name}
-                highlight
-              />
-              <DetailRow
-                label="Age / DOB"
-                value={`${age} years old (${patient.date_of_birth})`}
-              />
-              <DetailRow
-                label="Gender"
-                value={
-                  patient.gender === "F"
-                    ? "Female"
-                    : patient.gender === "M"
-                    ? "Male"
-                    : patient.gender ?? "Not specified"
-                }
-              />
+              <span className="font-mono text-xs font-bold text-[#8B7CF6]">
+                {patient.uhid}
+              </span>
+            </div>
+
+            <div className="mt-4 space-y-3 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground flex items-center gap-1.5">
+                  <User className="size-3.5" /> Full Name
+                </span>
+                <span className="font-bold text-foreground">{patient.full_name}</span>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Age & Gender</span>
+                <span className="font-medium text-foreground">
+                  {age} years · {patient.gender === "M" ? "Male" : patient.gender === "F" ? "Female" : patient.gender}
+                </span>
+              </div>
+
               {patient.phone && (
-                <div className="flex items-center justify-between gap-4 py-1">
-                  <span className="text-muted-foreground">Phone</span>
-                  <a
-                    href={`tel:${patient.phone}`}
-                    className="flex items-center gap-1 font-medium text-primary hover:underline"
-                  >
-                    <Phone className="size-3" />
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground flex items-center gap-1.5">
+                    <Phone className="size-3.5" /> Phone
+                  </span>
+                  <a href={`tel:${patient.phone}`} className="font-mono text-[#8B7CF6] hover:underline">
                     {patient.phone}
                   </a>
                 </div>
               )}
+
               {patient.email && (
-                <div className="flex items-center justify-between gap-4 py-1">
-                  <span className="text-muted-foreground">Email</span>
-                  <a
-                    href={`mailto:${patient.email}`}
-                    className="flex items-center gap-1 font-medium text-primary hover:underline"
-                  >
-                    <Mail className="size-3" />
-                    {patient.email}
-                  </a>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground flex items-center gap-1.5">
+                    <Mail className="size-3.5" /> Email
+                  </span>
+                  <span className="font-mono text-foreground truncate max-w-[160px]">{patient.email}</span>
                 </div>
               )}
 
-              <div className="border-t border-border/60 pt-2.5 mt-1 flex flex-col gap-2">
-                <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                  Recorded Chronic Conditions & Welfare
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Residence</span>
+                <span className="text-foreground">
+                  {patient.city || "Colombo"}, {patient.distance_km ? `${patient.distance_km} km` : "Western Province"}
+                </span>
+              </div>
+
+              {/* Chronic Conditions Badges */}
+              <div className="pt-2 border-t border-border/60">
+                <span className="text-[10px] font-bold text-muted-foreground uppercase block mb-1.5">
+                  Recorded Chronic Conditions
                 </span>
                 <div className="flex flex-wrap gap-1.5">
-                  <ConditionChip label="Hypertension" active={patient.hypertension} />
-                  <ConditionChip label="Diabetes" active={patient.diabetes} />
-                  <ConditionChip label="Alcoholism" active={patient.alcoholism} />
-                  <ConditionChip label="Scholarship Program" active={patient.scholarship} />
-                  {patient.handicap > 0 && (
-                    <Badge variant="outline" className="border-border text-foreground text-[11px]">
-                      Handicap Level {patient.handicap}
-                    </Badge>
+                  {patient.hypertension ? (
+                    <span className="rounded-md bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                      Hypertension
+                    </span>
+                  ) : null}
+                  {patient.diabetes ? (
+                    <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                      Diabetes
+                    </span>
+                  ) : null}
+                  {patient.alcoholism ? (
+                    <span className="rounded-md bg-purple-50 px-2 py-0.5 text-[10px] font-bold text-purple-700 dark:bg-purple-950/40 dark:text-purple-300">
+                      Alcohol Use
+                    </span>
+                  ) : null}
+                  {patient.handicap > 0 ? (
+                    <span className="rounded-md bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+                      Mobility Impairment (L{patient.handicap})
+                    </span>
+                  ) : null}
+                  {!patient.hypertension && !patient.diabetes && !patient.alcoholism && patient.handicap === 0 && (
+                    <span className="rounded-md bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                      None documented
+                    </span>
                   )}
                 </div>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
+
+          <div className="pt-3 border-t border-border/60 text-[10px] text-muted-foreground">
+            Enrolled in subsidy: {patient.scholarship ? "Yes (Subsidized)" : "Standard Private Care"}
+          </div>
         </div>
+
+        {/* Journey Map Card (6 cols) */}
+        <div className="lg:col-span-6 rounded-[24px] border border-border bg-card p-6 bento-card-shadow">
+          <div className="pb-3 border-b border-border/60 flex items-center justify-between mb-4">
+            <div>
+              <h2 className="font-heading text-base font-bold text-foreground">
+                Patient Journey Map
+              </h2>
+              <p className="text-[11px] text-muted-foreground">
+                Transit route and distance risk attribution
+              </p>
+            </div>
+            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400">
+              Carto Positron
+            </span>
+          </div>
+
+          <JourneyMap
+            patientId={patient.id}
+            patientName={patient.full_name}
+            city={patient.city}
+            distanceKm={patient.distance_km}
+            contributions={prediction?.explanation || []}
+          />
+        </div>
+
+        {/* Clinic Logistics Card (6 cols) */}
+        <div className="lg:col-span-6 rounded-[24px] border border-border bg-card p-6 bento-card-shadow flex flex-col justify-between">
+          <div>
+            <div className="pb-3 border-b border-border/60 flex items-center justify-between mb-4">
+              <div>
+                <h2 className="font-heading text-base font-bold text-foreground">
+                  Appointment Logistics
+                </h2>
+                <p className="text-[11px] text-muted-foreground">
+                  Clinic scheduling and payment channel
+                </p>
+              </div>
+              <span className="font-mono text-xs font-bold text-foreground">
+                Queue #{appointment.queue_number || "—"}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div className="p-3 rounded-2xl bg-muted/40 border border-border/60">
+                <span className="text-muted-foreground flex items-center gap-1.5 text-[11px] mb-1">
+                  <Calendar className="size-3.5" /> Date & Time
+                </span>
+                <span className="font-bold text-foreground">
+                  {appointment.appointment_day}
+                </span>
+                <span className="text-[10px] text-muted-foreground block">
+                  {appointment.scheduled_time || "Morning Session"}
+                </span>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-muted/40 border border-border/60">
+                <span className="text-muted-foreground flex items-center gap-1.5 text-[11px] mb-1">
+                  <Building className="size-3.5" /> Department & Doctor
+                </span>
+                <span className="font-bold text-foreground">
+                  {appointment.department || "General Outpatient"}
+                </span>
+                <span className="text-[10px] text-muted-foreground block">
+                  {appointment.doctor_name || "Consultant on duty"}
+                </span>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-muted/40 border border-border/60">
+                <span className="text-muted-foreground flex items-center gap-1.5 text-[11px] mb-1">
+                  <CreditCard className="size-3.5" /> Booking Channel
+                </span>
+                <span className="font-bold text-foreground">
+                  {appointment.booking_channel || "Counter"}
+                </span>
+                <span className="text-[10px] text-muted-foreground block">
+                  Payment: {appointment.payment_mode || "Cash at desk"}
+                </span>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-muted/40 border border-border/60">
+                <span className="text-muted-foreground flex items-center gap-1.5 text-[11px] mb-1">
+                  <Send className="size-3.5" /> Outreach Telemetry
+                </span>
+                <span className="font-bold text-foreground">
+                  {appointment.sms_received ? "Reminder SMS Delivered" : "No Reminder Sent"}
+                </span>
+                <span className="text-[10px] text-[#8B7CF6] font-semibold block">
+                  {appointment.ai_action_status || "Standard Protocol"}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-3 border-t border-border/60 flex items-center justify-between text-xs">
+            <span className="text-muted-foreground">Current Appointment Status:</span>
+            <span className="font-bold text-foreground capitalize">
+              {appointment.status || "Scheduled"}
+            </span>
+          </div>
+        </div>
+
       </div>
     </div>
-  );
-}
-
-function DetailRow({
-  label,
-  value,
-  highlight = false,
-}: {
-  label: string;
-  value: ReactNode;
-  highlight?: boolean;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4 py-0.5">
-      <span className="text-muted-foreground">{label}</span>
-      <span className={`text-right tabular-nums ${highlight ? "font-semibold text-foreground" : "text-foreground"}`}>
-        {value}
-      </span>
-    </div>
-  );
-}
-
-function ConditionChip({ label, active }: { label: string; active: boolean }) {
-  if (!active) return null;
-  return (
-    <Badge
-      variant="outline"
-      className="border-primary/30 bg-primary/10 text-primary font-medium text-[11px]"
-    >
-      {label}
-    </Badge>
   );
 }

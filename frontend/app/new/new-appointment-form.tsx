@@ -14,9 +14,8 @@ import {
 
 import { createAppointmentAction, type NewAppointmentState } from "@/app/new/actions";
 import { ShapTornadoChart } from "@/components/shap-tornado-chart";
-import { ContextualAdjustmentPanel } from "@/components/contextual-adjustment-panel";
-import { RiskBadge } from "@/components/risk-badge";
-import { RiskGauge } from "@/components/risk-gauge";
+import { RiskPill } from "@/components/risk-pill";
+import { DotRingGauge } from "@/components/dot-ring-gauge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -100,7 +99,7 @@ export function NewAppointmentForm() {
                   </CardDescription>
                 </div>
               </div>
-              <RiskBadge
+              <RiskPill
                 category={state.result.prediction.risk_category}
                 score={state.result.prediction.risk_score}
                 size="default"
@@ -109,17 +108,17 @@ export function NewAppointmentForm() {
           </CardHeader>
 
           <CardContent className="flex flex-col gap-5 p-5">
-            <div className="flex flex-col sm:flex-row items-center gap-5 rounded-xl border border-border/80 bg-muted/20 p-4">
-              <RiskGauge
+            <div className="flex flex-col sm:flex-row items-center gap-5 rounded-2xl border border-border/80 bg-muted/20 p-5">
+              <DotRingGauge
                 score={state.result.prediction.risk_score}
                 category={state.result.prediction.risk_category}
-                size="default"
+                size={140}
               />
 
               <div className="flex flex-1 flex-col gap-2">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-semibold text-foreground">
-                    Estimated No-Show Probability:
+                    Calibrated No-Show Risk:
                   </span>
                   <span className="text-sm font-bold tabular-nums text-foreground">
                     {Math.round(state.result.prediction.risk_score * 100)}%
@@ -127,7 +126,7 @@ export function NewAppointmentForm() {
                 </div>
 
                 <div
-                  className={`rounded-lg border p-3 text-xs leading-relaxed ${
+                  className={`rounded-xl border p-3.5 text-xs leading-relaxed ${
                     state.result.prediction.risk_category === "High"
                       ? "border-red-500/40 bg-red-500/10 text-red-800 dark:text-red-200 font-medium"
                       : state.result.prediction.risk_category === "Medium"
@@ -137,7 +136,7 @@ export function NewAppointmentForm() {
                 >
                   <div className="font-semibold mb-0.5 flex items-center gap-1.5">
                     <ShieldAlert className="size-3.5" />
-                    <span>Staff Action Directive:</span>
+                    <span>Staff Action Recommendation:</span>
                   </div>
                   {state.result.prediction.recommendation}
                 </div>
@@ -148,13 +147,6 @@ export function NewAppointmentForm() {
             <div className="flex flex-col gap-1">
               <ShapTornadoChart contributions={state.result.prediction.explanation} />
             </div>
-
-            {/* Contextual Risk Adjustment (rule-based, separate from ML) */}
-            {state.result.prediction.contextual_adjustment && (
-              <div className="border-t border-border/60 pt-4">
-                <ContextualAdjustmentPanel adjustment={state.result.prediction.contextual_adjustment} />
-              </div>
-            )}
 
             {/* Payoff Actions */}
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">
