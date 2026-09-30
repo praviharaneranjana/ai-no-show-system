@@ -12,12 +12,15 @@ Next.js 16 frontend ──HTTP + X-API-Key──▶ FastAPI ──SQL──▶ P
 
 ## Quick start (Docker)
 ```bash
-cp .env.example .env            # set API_KEY (and optionally GEMINI_API_KEY)
+cp .env.example .env            # then set API_KEY, SECRET_KEY (openssl rand -hex 32) and the bootstrap admin
 docker compose up --build
 ```
 - App: http://localhost:3000 — API docs: http://localhost:8000/docs
+- Sign in with the bootstrap admin from `.env` (you must choose a new password at first login).
+  Create more staff with `docker compose exec backend python create_user.py --email ... --name ... --role front_desk|manager|admin`.
 - Migrations run automatically on backend start.
 - Load demo data: `docker compose exec backend python seed_bulk.py`
+- Public server with HTTPS, backups and operations: [`deploy/DEPLOY.md`](deploy/DEPLOY.md).
 
 ## Local development (no Docker)
 ```bash
@@ -72,9 +75,9 @@ is unproven until it is tested on that hospital's own history — [`docs/VALIDAT
 ## Deployment
 Suggested: backend + Postgres on Render/Railway/Fly (use `backend/Dockerfile`; set `DATABASE_URL`,
 `API_KEY`, `CORS_ORIGINS`, optional `GEMINI_API_KEY`), frontend on Vercel or as `frontend/Dockerfile`
-(set `BACKEND_API_URL`, `BACKEND_API_KEY`). Never deploy without `API_KEY`, and replace the demo
-login before real patient data is involved — see the security list in
-[`docs/SYSTEM_OVERVIEW.md`](docs/SYSTEM_OVERVIEW.md) §12.
+(set `BACKEND_API_URL`, `BACKEND_API_KEY`). Use the HTTPS overlay (`docker-compose.prod.yml`, see [`deploy/DEPLOY.md`](deploy/DEPLOY.md)). Staff sign in with real
+accounts (scrypt-hashed passwords, signed expiring sessions, roles, lockout); the remaining
+pre-production checklist is in [`docs/SYSTEM_OVERVIEW.md`](docs/SYSTEM_OVERVIEW.md) §12.
 
 ## More
 [`docs/SYSTEM_OVERVIEW.md`](docs/SYSTEM_OVERVIEW.md) — full developer guide · [`PLAN.md`](PLAN.md) — roadmap · MIT licence.

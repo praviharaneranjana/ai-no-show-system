@@ -1,11 +1,13 @@
-# One-command local stack:  docker compose up --build
+# One-command local stack:  cp .env.example .env  (set the secrets)  &&  docker compose up --build
 # Frontend http://localhost:3000   API docs http://localhost:8000/docs
+# For a public server with HTTPS use docker-compose.prod.yml as well (see deploy/DEPLOY.md).
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: noshow
-      POSTGRES_PASSWORD: noshow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-noshow}
       POSTGRES_DB: noshow_db
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -17,11 +19,19 @@ services:
 
   backend:
     build: ./backend
+    restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+psycopg://noshow:noshow@db:5432/noshow_db
-      API_KEY: ${API_KEY:-dev-api-key-change-me}
+      DATABASE_URL: postgresql+psycopg://noshow:${POSTGRES_PASSWORD:-noshow}@db:5432/noshow_db
+      # Shared secret between the frontend server and the API (X-API-Key).
+      API_KEY: ${API_KEY:?Set API_KEY in .env (e.g. openssl rand -hex 32)}
+      # Signs staff session tokens. Changing it signs everyone out.
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env (e.g. openssl rand -hex 32)}
+      # Creates the first admin when the users table is empty (must change password at first login).
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:-Administrator}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      CORS_ORIGINS: http://localhost:3000
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
     depends_on:
       db:
         condition: service_healthy
@@ -30,9 +40,12 @@ services:
 
   frontend:
     build: ./frontend
+    restart: unless-stopped
     environment:
       BACKEND_API_URL: http://backend:8000
-      BACKEND_API_KEY: ${API_KEY:-dev-api-key-change-me}
+      BACKEND_API_KEY: ${API_KEY:?Set API_KEY in .env (e.g. openssl rand -hex 32)}
+      # true only when the site is served over HTTPS (docker-compose.prod.yml sets it)
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
     depends_on:
       - backend
     ports:

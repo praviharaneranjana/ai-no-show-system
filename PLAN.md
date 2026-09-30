@@ -149,7 +149,10 @@ console/network errors.
       an account on the chosen host).
 - [ ] **Validate on real local hospital data** — the main remaining gap. Plan in
       `docs/VALIDATION_ON_LOCAL_DATA.md`; blocked on getting a de-identified export.
-- [ ] Replace the demo login (see `docs/SYSTEM_OVERVIEW.md` §12) before any real PHI.
+- [x] Real authentication (2026-10-01): `users` table, scrypt hashes, signed sessions in an httpOnly cookie,
+      roles (front_desk/manager/admin), DB-backed lockout, forced password change, `create_user.py`.
+- [x] Production Docker setup: required secrets, non-root containers, HTTPS overlay (Caddy),
+      `deploy/DEPLOY.md`. Running it on a public server needs a host and domain (not done).
 
 ## Non-goals for now
 - Retraining pipeline automation / MLOps — out of scope until the core

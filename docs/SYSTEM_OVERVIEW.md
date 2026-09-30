@@ -367,23 +367,40 @@ input, label, select, separator, skeleton, slider, table, tabs).
 
 ## 8. Authentication and access control (current state)
 
-Flow: `/login` → `loginAction` (Server Action) → `POST /auth/login` on the backend → backend returns
-role → Server Action sets cookie `shai_session=<role>` (8 h, `sameSite=lax`) → `proxy.ts` lets requests through.
+Real staff accounts replaced the earlier demo login.
 
-`proxy.ts` (Next 16's replacement for `middleware.ts`) runs on every non-static path and:
-1. If no backend is configured (desktop first run) → redirect to `/setup`.
-2. If no `shai_session` cookie and not on `/login` or `/setup` → redirect to `/login?redirect=<path>`.
-3. If cookie present and visiting `/login` → redirect to `/`.
+**Accounts.** The `users` table (migration `7c1d9a4e52b0`) stores email, name, role, an scrypt password
+hash (`app/security.py`, stdlib only), active flag, forced-password-change flag, failed-attempt counter
+and lock time. The first admin is created from `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` when
+the table is empty; more accounts come from `python create_user.py` or `POST /admin/users`. New and
+admin-reset accounts must change their password at first login (10+ characters).
 
-Roles: `front_desk`, `manager`, `admin`. **Currently the role is stored but never used to restrict any
-page or endpoint** — all logged-in users see everything.
+**Sign-in flow.** `/login` → `loginAction` (Server Action) → `POST /auth/login` → the backend checks the hash
+(always, even for unknown emails, so timing doesn't reveal which exist), applies lockout (5 failures → 15 min,
+stored in the DB so it survives restarts and multiple workers) and returns an HMAC-signed token
+(`SECRET_KEY`, 8 h expiry) → the Server Action stores it in the **httpOnly** `shai_session` cookie.
+Sign-out is a Server Action because page scripts cannot clear an httpOnly cookie.
 
-The backend has three hard-coded users in `STAFF_ROSTER` (in `main.py`, with plaintext passwords),
-plus a fallback that accepts **any** `@hospital.org` email with a ≥ 6-character password
-(role inferred from "manager"/"admin" in the email). The token returned is the literal string
-`shai-token-<role>`. This is a demo login, not real authentication. See §12.
+**Every request.** `lib/api.ts` forwards the token as `Authorization: Bearer …` (plus the shared `X-API-Key`).
+The backend's global `require_user` dependency verifies the signature and expiry and then **re-reads the user
+row**, so deactivating an account or changing a role takes effect immediately and a token cannot grant
+more than the database says. A 401 sends the browser to `/login?reason=session_expired`; a pending
+password change redirects to `/change-password`.
 
-Sign-out (`app-sidebar.tsx`) clears the cookie and localStorage keys `shai_user_role`, `shai_user_name`.
+**Frontend gate.** `proxy.ts` only decodes the cookie (it has no signing key) to skip the login screen and
+detect expiry. A forged cookie can reach the page shell but never any data, because the backend verifies
+every call.
+
+**Roles** (`front_desk` < `manager` < `admin`):
+
+| Role | Access |
+|---|---|
+| front_desk | appointments, patients, predictions, outreach, waitlist |
+| manager | + capacity optimiser, doctor delays, ROI simulator (`/capacity`, `/simulator`) |
+| admin | + `/admin/users` (create, change role, deactivate, reset password) |
+
+The same rules are applied in the UI (links hidden, pages redirect via `requireRole`) and enforced by the
+API (`require_role`). Public endpoints: `/`, `/health`, `/docs`, `/redoc`, `/openapi.json`, `/auth/login`.
 
 ---
 
@@ -429,8 +446,10 @@ npm test && npm run lint
 # Desktop:  npm run electron:dev   |  npm run dist:mac / dist:win
 ```
 
-Login for local use: `nurse.perera@hospital.org` / `ClinicPassword123!` (front desk),
-`manager.fernando@hospital.org` / `ManagerPassword123!`, `admin.silva@hospital.org` / `AdminPassword123!`.
+Sign in: create an account first (there are no built-in users):
+`BOOTSTRAP_ADMIN_EMAIL=you@hospital.org BOOTSTRAP_ADMIN_PASSWORD='a-long-password' uvicorn app.main:app`
+creates the first admin on an empty database, or run `python create_user.py --email ... --name ... --role admin`.
+The password must be changed at first login.
 
 Environment variables:
 
@@ -482,9 +501,9 @@ delivery (Twilio / WhatsApp Business API), and make rescheduling actually mutate
 Roughly ordered by importance for a production/large-scale path.
 
 **Security**
-1. **Login is a demo.** Hard-coded users with plaintext passwords in source; any `@hospital.org` email with a 6+ char password is accepted; the "token" is a fixed string; failed-attempt lockout is in process memory (resets on restart, per-worker). Replace with real user storage (hashed passwords), signed sessions/JWT, and rate limiting.
-2. **Session cookie is forgeable.** `shai_session` holds just the role, and the backend's variant of the cookie is `httponly=False`. `proxy.ts` only checks that the cookie exists, so anyone can set `shai_session=admin` and pass the gate. Also the browser-side `login` path sets the cookie twice (backend response and Server Action).
-3. **No authorization.** Roles are never enforced on pages or API routes. Patient PHI endpoints depend only on the shared `X-API-Key`.
+1. ~~Login is a demo~~ **Fixed:** hashed passwords, signed expiring sessions, DB-backed lockout, roles, forced password change (§8).
+2. **Remaining auth gaps:** no self-service "forgot password" (an admin resets it), no MFA, no audit log of who viewed which patient, tokens live 8 h and cannot be revoked individually before expiry (deactivating the user does revoke them).
+3. **Role enforcement is coarse:** roles gate whole features (capacity, simulator, user management); all roles can see all patients. Per-department or per-branch visibility is not implemented.
 4. **API is open if `API_KEY` is unset** (warning only). 500 responses echo exception text.
 5. Patient data (names, phone, conditions) is health data — encryption at rest, audit logging and consent handling are not implemented.
 
