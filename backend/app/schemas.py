@@ -146,6 +146,20 @@ class AgentSimulateResponse(BaseModel):
     status_updated: str
 
 
+class OutreachDraftRequest(BaseModel):
+    appointment_id: uuid.UUID
+    language: str = "en"  # "en", "si", "ta"
+
+
+class OutreachDraftResponse(BaseModel):
+    appointment_id: uuid.UUID
+    language: str
+    message: str
+    source: str  # "gemini" | "template"
+    reasons: list[str]  # coarse reason categories behind the tailoring
+    model: str | None = None
+
+
 class WaitlistCreate(BaseModel):
     patient_name: str
     patient_phone: str

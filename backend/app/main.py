@@ -12,7 +12,7 @@ import os
 
 import pandas as pd
 
-from app import models, schemas, shai_model
+from app import models, outreach_drafter, schemas, shai_model
 from app.database import get_db
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -692,6 +692,34 @@ def list_conversations(db: Session = Depends(get_db)):
             db.commit()
             interventions = db.query(models.Intervention).all()
     return interventions
+
+
+@app.post("/outreach/draft", response_model=schemas.OutreachDraftResponse)
+def draft_outreach_message(req: schemas.OutreachDraftRequest, db: Session = Depends(get_db)):
+    """AI-drafted reminder for staff to review (not sent). Falls back to a template."""
+    appt = db.get(models.Appointment, req.appointment_id)
+    if appt is None:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+
+    prediction = (
+        db.query(models.Prediction).filter(models.Prediction.appointment_id == appt.id).first()
+    )
+    explanation = prediction.explanation if prediction and isinstance(prediction.explanation, dict) else {}
+    language = req.language if req.language in outreach_drafter.LANGUAGES else "en"
+    when = f"{appt.appointment_day:%d %b %Y}" + (f" at {appt.scheduled_time}" if appt.scheduled_time else "")
+
+    draft = outreach_drafter.draft_reminder(
+        language=language,
+        first_name=appt.patient.full_name.split()[0],
+        department=appt.department or "clinic",
+        when=when,
+        tier=prediction.risk_category if prediction else "Medium",
+        contributions=explanation.get("contributions", []),
+    )
+    return schemas.OutreachDraftResponse(
+        appointment_id=appt.id, language=language, message=draft.message,
+        source=draft.source, reasons=draft.reasons, model=draft.model,
+    )
 
 
 @app.post("/outreach/simulate-agent", response_model=schemas.AgentSimulateResponse)
