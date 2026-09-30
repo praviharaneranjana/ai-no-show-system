@@ -1,0 +1,8 @@
+venv/
+__pycache__/
+*.pyc
+.env
+tests/
+data/
+reports/
+models/shai_bundle/*.csv

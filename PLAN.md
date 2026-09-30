@@ -136,14 +136,20 @@ through the UI, confirmed the badge updated in place, and confirmed the
 analytics page's no-show rate and outcome count updated to match — zero
 console/network errors.
 
-## Phase 4 — Polish & deploy
-- [ ] Dockerize backend and frontend; docker-compose with Postgres for local
-      dev parity.
-- [ ] CI (GitHub Actions): lint + test both backend and frontend on PRs.
-- [ ] Root `README.md` describing the system, setup, and how the ML/API/DB/
-      frontend pieces fit together.
-- [ ] Deployment target decision (Render/Fly/Railway for backend+DB, Vercel
-      for frontend) and environment/secrets setup.
+## Phase 4 — Polish & deploy (2026-10-01)
+- [x] Dockerize backend and frontend; `docker-compose.yml` with Postgres
+      (`docker compose up --build`; migrations run on backend start).
+- [x] CI (GitHub Actions, `.github/workflows/ci.yml`): backend pytest against a
+      Postgres service; frontend lint + test + build; Docker build.
+- [x] Root `README.md` (architecture, quick start, validation summary, limits).
+- [x] Real-data validation on Kaggle: `backend/validate_model.py` →
+      `backend/reports/` (stratified + patient-grouped CV, temporal hold-out,
+      label-shuffle control, calibration, lift, baselines).
+- [ ] Deployment target decision and secrets (suggested split in README; needs
+      an account on the chosen host).
+- [ ] **Validate on real local hospital data** — the main remaining gap. Plan in
+      `docs/VALIDATION_ON_LOCAL_DATA.md`; blocked on getting a de-identified export.
+- [ ] Replace the demo login (see `docs/SYSTEM_OVERVIEW.md` §12) before any real PHI.
 
 ## Non-goals for now
 - Retraining pipeline automation / MLOps — out of scope until the core
