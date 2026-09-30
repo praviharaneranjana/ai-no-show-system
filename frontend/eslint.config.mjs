@@ -16,6 +16,9 @@ const eslintConfig = defineConfig([
     // Next.js app bundle, so the app's TS/React lint rules don't apply.
     "electron/**",
     "dist-electron/**",
+    // Build-time Node script and the vendored MapLibre worker it copies into /public.
+    "scripts/**",
+    "public/maplibre/**",
   ]),
 ]);
 

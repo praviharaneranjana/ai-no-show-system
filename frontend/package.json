@@ -12,7 +12,8 @@
     "electron:dev": "concurrently -k \"npm:dev\" \"wait-on http://localhost:3000 && cross-env ELECTRON_START_URL=http://localhost:3000 electron .\"",
     "electron:build": "next build --webpack && node electron/copy-standalone-assets.js",
     "dist:mac": "npm run electron:build && electron-builder --mac",
-    "dist:win": "npm run electron:build && electron-builder --win"
+    "dist:win": "npm run electron:build && electron-builder --win",
+    "postinstall": "node scripts/copy-maplibre-worker.js"
   },
   "build": {
     "appId": "org.shai.desktop",

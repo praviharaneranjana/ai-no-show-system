@@ -84,6 +84,8 @@ export function JourneyMap({
 
       try {
         const maplibre = await import("maplibre-gl");
+        // Worker files are copied to /public/maplibre by scripts/copy-maplibre-worker.js.
+        maplibre.setWorkerUrl("/maplibre/maplibre-gl-worker.mjs");
         if (isCancelled) return;
 
         // Clean Carto Positron basemap (Dropify pale minimal roads look)

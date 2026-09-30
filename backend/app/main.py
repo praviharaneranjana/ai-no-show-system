@@ -1,12 +1,13 @@
 import logging
 import time
 import uuid
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
+from datetime import date, timedelta
 from typing import List, Optional
 import os
 
@@ -379,6 +380,36 @@ def list_appointments(
     return query.offset(skip).limit(limit).all()
 
 
+@app.get("/appointments/overview", response_model=List[schemas.AppointmentOverviewRow])
+def appointments_overview(
+    days_back: int = Query(45, ge=0, le=3650, description="Include appointments from this many days ago onward (and all future ones)"),
+    limit: int = Query(1500, ge=1, le=5000),
+    db: Session = Depends(get_db),
+):
+    """Appointments + patient + prediction in one query, newest first.
+
+    The plain list endpoints are paginated and unordered, so joining them client-side
+    silently drops patients/predictions once there are more than a page of rows.
+    """
+    since = date.today() - timedelta(days=days_back)
+    rows = (
+        db.query(models.Appointment)
+        .options(joinedload(models.Appointment.patient), joinedload(models.Appointment.prediction))
+        .filter(models.Appointment.appointment_day >= since)
+        .order_by(models.Appointment.appointment_day.desc(), models.Appointment.id)
+        .limit(limit)
+        .all()
+    )
+    return [
+        schemas.AppointmentOverviewRow(
+            appointment=schemas.AppointmentOut.model_validate(a),
+            patient=schemas.PatientOut.model_validate(a.patient) if a.patient else None,
+            prediction=_prediction_out(a.prediction) if a.prediction else None,
+        )
+        for a in rows
+    ]
+
+
 @app.get("/appointments/{appointment_id}", response_model=schemas.AppointmentOut)
 def get_appointment(appointment_id: uuid.UUID, db: Session = Depends(get_db)):
     appointment = db.get(models.Appointment, appointment_id)
@@ -403,16 +434,7 @@ def record_appointment_outcome(
     return appointment
 
 
-@app.get("/appointments/{appointment_id}/prediction", response_model=schemas.PredictionOut)
-def get_appointment_prediction(appointment_id: uuid.UUID, db: Session = Depends(get_db)):
-    prediction = (
-        db.query(models.Prediction)
-        .filter(models.Prediction.appointment_id == appointment_id)
-        .first()
-    )
-    if prediction is None:
-        raise HTTPException(status_code=404, detail="No prediction found for this appointment")
-
+def _prediction_out(prediction: models.Prediction) -> schemas.PredictionOut:
     explanation_raw = prediction.explanation or {}
     if isinstance(explanation_raw, dict):
         contributions = explanation_raw.get("contributions", [])
@@ -434,6 +456,18 @@ def get_appointment_prediction(appointment_id: uuid.UUID, db: Session = Depends(
         recommendation=prediction.recommendation,
         created_at=prediction.created_at,
     )
+
+
+@app.get("/appointments/{appointment_id}/prediction", response_model=schemas.PredictionOut)
+def get_appointment_prediction(appointment_id: uuid.UUID, db: Session = Depends(get_db)):
+    prediction = (
+        db.query(models.Prediction)
+        .filter(models.Prediction.appointment_id == appointment_id)
+        .first()
+    )
+    if prediction is None:
+        raise HTTPException(status_code=404, detail="No prediction found for this appointment")
+    return _prediction_out(prediction)
 
 
 # ===================================

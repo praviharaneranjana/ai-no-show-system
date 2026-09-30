@@ -27,34 +27,31 @@ interface AppSidebarProps {
 export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const user = useSyncExternalStore(
+  // The snapshot must be a primitive: returning a fresh object each call makes
+  // useSyncExternalStore loop forever ("getSnapshot should be cached").
+  const userKey = useSyncExternalStore(
     (callback) => {
       window.addEventListener("storage", callback);
       return () => window.removeEventListener("storage", callback);
     },
     () => {
       try {
-        const storedName = localStorage.getItem("shai_user_name");
-        const storedRole = localStorage.getItem("shai_user_role");
-        const formattedRole =
-          storedRole === "admin"
-            ? "Administrator · Colombo"
-            : storedRole === "manager"
-            ? "Clinical Ops Manager"
-            : "Front Desk · Colombo";
-        return {
-          name: storedName || "Staff Member",
-          role: formattedRole,
-        };
+        return `${localStorage.getItem("shai_user_name") ?? ""}|${localStorage.getItem("shai_user_role") ?? ""}`;
       } catch {
-        return { name: "Staff Member", role: "Front Desk · Colombo" };
+        return "|";
       }
     },
-    () => ({ name: "Staff Member", role: "Front Desk · Colombo" })
+    () => "|"
   );
 
-  const userName = user.name;
-  const userRole = user.role;
+  const [storedName, storedRole] = userKey.split("|");
+  const userName = storedName || "Staff Member";
+  const userRole =
+    storedRole === "admin"
+      ? "Administrator · Colombo"
+      : storedRole === "manager"
+      ? "Clinical Ops Manager"
+      : "Front Desk · Colombo";
 
   const NAV_ITEMS = [
     {

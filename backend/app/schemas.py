@@ -86,6 +86,13 @@ class PredictionOut(BaseModel):
     created_at: datetime
 
 
+class AppointmentOverviewRow(BaseModel):
+    """An appointment joined with its patient and stored prediction (one round trip)."""
+    appointment: AppointmentOut
+    patient: PatientOut | None = None
+    prediction: PredictionOut | None = None
+
+
 # ===================================
 # SHAI Enterprise Modules Schemas
 # ===================================

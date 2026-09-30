@@ -1,5 +1,6 @@
 import type {
   AgentSimulateResult,
+  AppointmentOverviewRow,
   OutreachDraft,
   Appointment,
   AppointmentInput,
@@ -103,6 +104,10 @@ export function createPatient(data: PatientInput) {
 export function listAppointments(patientId?: string) {
   const qs = patientId ? `?patient_id=${encodeURIComponent(patientId)}` : "";
   return apiFetch<Appointment[]>(`/appointments${qs}`);
+}
+
+export function listAppointmentsOverview(daysBack: number) {
+  return apiFetch<AppointmentOverviewRow[]>(`/appointments/overview?days_back=${daysBack}`);
 }
 
 export function getAppointment(id: string) {

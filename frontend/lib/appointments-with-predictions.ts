@@ -1,4 +1,4 @@
-import { getPrediction, listAppointments, listPatients } from "@/lib/api";
+import { listAppointmentsOverview } from "@/lib/api";
 import type { Appointment, Patient, StoredPrediction } from "@/lib/types";
 
 export type AppointmentRecord = {
@@ -7,53 +7,20 @@ export type AppointmentRecord = {
   prediction: StoredPrediction | undefined;
 };
 
-// Fetching one prediction per appointment concurrently without a cap floods
-// the backend's DB connection pool (default size 5 + overflow 10) once there
-// are more than ~15 appointments, so requests queue up and time out.
-const PREDICTION_FETCH_CONCURRENCY = 10;
+// Default window: this many days back, plus every future appointment. The plain list
+// endpoints are paginated and unordered, so joining them client-side drops patients and
+// predictions once there are more rows than one page; the overview endpoint joins
+// appointment + patient + prediction server-side in one query.
+export const DEFAULT_DAYS_BACK = 45;
 
-async function settleWithConcurrencyLimit<T>(
-  tasks: (() => Promise<T>)[],
-  limit: number
-): Promise<PromiseSettledResult<T>[]> {
-  const results: PromiseSettledResult<T>[] = new Array(tasks.length);
-  let next = 0;
-
-  async function worker() {
-    while (next < tasks.length) {
-      const index = next++;
-      try {
-        results[index] = { status: "fulfilled", value: await tasks[index]() };
-      } catch (reason) {
-        results[index] = { status: "rejected", reason };
-      }
-    }
-  }
-
-  await Promise.all(
-    Array.from({ length: Math.min(limit, tasks.length) }, worker)
-  );
-  return results;
-}
-
-// Shared by the appointments list and the analytics overview — both need
-// appointments joined against their patient and (if run) their prediction.
-export async function getAppointmentsWithPredictions(): Promise<AppointmentRecord[]> {
-  const [appointments, patients] = await Promise.all([listAppointments(), listPatients()]);
-
-  const predictionResults = await settleWithConcurrencyLimit(
-    appointments.map((appointment) => () => getPrediction(appointment.id)),
-    PREDICTION_FETCH_CONCURRENCY
-  );
-
-  const patientById = new Map(patients.map((patient) => [patient.id, patient]));
-
-  return appointments.map((appointment, index) => {
-    const result = predictionResults[index];
-    return {
-      appointment,
-      patient: patientById.get(appointment.patient_id),
-      prediction: result.status === "fulfilled" ? result.value : undefined,
-    };
-  });
+// Shared by the dashboard, appointments list, outreach and analytics pages.
+export async function getAppointmentsWithPredictions(
+  daysBack: number = DEFAULT_DAYS_BACK
+): Promise<AppointmentRecord[]> {
+  const rows = await listAppointmentsOverview(daysBack);
+  return rows.map((row) => ({
+    appointment: row.appointment,
+    patient: row.patient ?? undefined,
+    prediction: row.prediction ?? undefined,
+  }));
 }

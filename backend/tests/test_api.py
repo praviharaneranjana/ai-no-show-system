@@ -178,3 +178,25 @@ def test_record_outcome_for_unknown_appointment_404s(client):
         json={"no_show": True},
     )
     assert resp.status_code == 404
+
+
+def test_appointments_overview_joins_patient_and_prediction_and_windows_by_date(client):
+    patient = make_patient(client)
+    recent = make_appointment(client, patient["id"])
+    client.post("/predict", json={"appointment_id": recent["id"]})
+    old = client.post("/appointments", json={
+        "patient_id": patient["id"],
+        "scheduled_day": (date.today() - timedelta(days=400)).isoformat(),
+        "appointment_day": (date.today() - timedelta(days=395)).isoformat(),
+    }).json()
+
+    resp = client.get("/appointments/overview?days_back=30")
+    assert resp.status_code == 200, resp.text
+    rows = {r["appointment"]["id"]: r for r in resp.json()}
+    assert recent["id"] in rows and old["id"] not in rows
+    row = rows[recent["id"]]
+    assert row["patient"]["id"] == patient["id"]
+    assert row["prediction"]["risk_category"] in {"Low", "Medium", "High"}
+
+    wide = {r["appointment"]["id"] for r in client.get("/appointments/overview?days_back=500").json()}
+    assert old["id"] in wide

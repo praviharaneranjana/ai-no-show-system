@@ -111,6 +111,12 @@ export type StoredPrediction = PredictionResult & {
   created_at: string;
 };
 
+export type AppointmentOverviewRow = {
+  appointment: Appointment;
+  patient: Patient | null;
+  prediction: StoredPrediction | null;
+};
+
 // ===================================
 // SHAI Enterprise Modules
 // ===================================
