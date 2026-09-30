@@ -2,8 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 
-import { simulateAgent } from "@/lib/api";
-import type { AgentSimulateResult, InterventionLanguage } from "@/lib/types";
+import { draftOutreach, simulateAgent } from "@/lib/api";
+import type { AgentSimulateResult, InterventionLanguage, OutreachDraft } from "@/lib/types";
 
 export async function simulateAgentAction(
   appointmentId: string,
@@ -13,4 +13,11 @@ export async function simulateAgentAction(
   const result = await simulateAgent(appointmentId, message, language);
   revalidatePath("/outreach");
   return result;
+}
+
+export async function draftOutreachAction(
+  appointmentId: string,
+  language: InterventionLanguage
+): Promise<OutreachDraft> {
+  return draftOutreach(appointmentId, language);
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState } from "react";
 import { ZoomIn, ZoomOut, Maximize2, Navigation, Compass } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -47,7 +48,7 @@ export function JourneyMap({
   patientId = "sample-patient",
   patientName = "Patient",
   city = "Colombo Outskirts",
-  distanceKm = 14.5,
+  distanceKm,
   contributions = [],
   className,
 }: JourneyMapProps) {
@@ -56,7 +57,8 @@ export function JourneyMap({
   const [useFallback, setUseFallback] = useState(false);
   const mapInstance = useRef<unknown>(null);
 
-  const dist = distanceKm && distanceKm > 0 ? distanceKm : 12.0;
+  const hasDistance = typeof distanceKm === "number" && distanceKm > 0;
+  const dist = hasDistance ? distanceKm : 0;
   // Estimated travel time assuming ~25 km/h urban speed in Sri Lanka
   const estMins = Math.round((dist / 25) * 60);
 
@@ -78,19 +80,10 @@ export function JourneyMap({
     hasLoadedRef.current = false;
 
     async function initMap() {
-      if (!mapContainer.current || typeof window === "undefined") return;
+      if (!hasDistance || !mapContainer.current || typeof window === "undefined") return;
 
       try {
         const maplibre = await import("maplibre-gl");
-        // Inject maplibre CSS if not present
-        if (!document.getElementById("maplibre-css")) {
-          const link = document.createElement("link");
-          link.id = "maplibre-css";
-          link.rel = "stylesheet";
-          link.href = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css";
-          document.head.appendChild(link);
-        }
-
         if (isCancelled) return;
 
         // Clean Carto Positron basemap (Dropify pale minimal roads look)
@@ -192,7 +185,7 @@ export function JourneyMap({
         } catch {}
       }
     };
-  }, [patientId, dist, patientLat, patientLng, city, patientName]);
+  }, [patientId, dist, hasDistance, patientLat, patientLng, city, patientName]);
 
   function handleZoomIn() {
     if (mapInstance.current) {
@@ -204,6 +197,23 @@ export function JourneyMap({
     if (mapInstance.current) {
       (mapInstance.current as { zoomOut: () => void }).zoomOut();
     }
+  }
+
+  function handleFullscreen() {
+    const el = mapContainer.current?.parentElement;
+    if (!el) return;
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void el.requestFullscreen?.();
+  }
+
+  if (!hasDistance) {
+    return (
+      <div className={cn("flex h-[220px] flex-col items-center justify-center gap-1.5 rounded-[20px] border border-dashed border-border bg-muted/30 px-4 text-center", className)}>
+        <Compass className="size-5 text-muted-foreground" />
+        <p className="text-xs font-semibold text-foreground">Distance not recorded</p>
+        <p className="text-[11px] text-muted-foreground">Add the patient&apos;s distance from the hospital to see the journey map.</p>
+      </div>
+    );
   }
 
   return (
@@ -233,7 +243,7 @@ export function JourneyMap({
               <g transform="translate(260, 45)">
                 <circle cx="0" cy="0" r="10" fill="#171725" fillOpacity="0.15" />
                 <circle cx="0" cy="0" r="5" fill="#171725" />
-                <text x="-25" y="-10" fontSize="9" fontWeight="700" fill="currentColor" className="text-foreground">Colombo Hospital</text>
+                <text x="-25" y="-10" fontSize="9" fontWeight="700" fill="currentColor" className="text-foreground">{DEFAULT_HOSPITAL_NAME}</text>
               </g>
             </svg>
           </div>
@@ -271,6 +281,7 @@ export function JourneyMap({
           <button
             type="button"
             aria-label="Fullscreen map"
+            onClick={handleFullscreen}
             className="flex size-7 items-center justify-center rounded-lg border border-border bg-white shadow-xs text-foreground transition-colors hover:bg-muted dark:bg-[#1E1E2D]"
           >
             <Maximize2 className="size-3.5" />
@@ -294,8 +305,7 @@ export function JourneyMap({
                 : "bg-[#DCFCE7] text-[#16A34A] dark:bg-emerald-950/40 dark:text-emerald-300"
             )}
           >
-            {distContrib.contribution > 0 ? "+" : ""}
-            {(distContrib.contribution * 100).toFixed(1)}% risk impact
+            {distContrib.contribution > 0 ? "Raises" : "Lowers"} risk · ×{Math.exp(distContrib.contribution).toFixed(2)} odds
           </span>
         ) : (
           <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">

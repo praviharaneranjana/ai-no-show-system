@@ -1,5 +1,6 @@
 import type {
   AgentSimulateResult,
+  OutreachDraft,
   Appointment,
   AppointmentInput,
   CapacityOptimizeResult,
@@ -181,6 +182,13 @@ export function simulateAgent(
       patient_message: patientMessage,
       language,
     }),
+  });
+}
+
+export function draftOutreach(appointmentId: string, language: InterventionLanguage) {
+  return apiFetch<OutreachDraft>("/outreach/draft", {
+    method: "POST",
+    body: JSON.stringify({ appointment_id: appointmentId, language }),
   });
 }
 

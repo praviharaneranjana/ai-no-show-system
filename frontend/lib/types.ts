@@ -154,6 +154,15 @@ export type AgentSimulateResult = {
   status_updated: string;
 };
 
+export type OutreachDraft = {
+  appointment_id: string;
+  language: InterventionLanguage;
+  message: string;
+  source: "gemini" | "template";
+  reasons: string[];
+  model: string | null;
+};
+
 export type WaitlistUrgency = "High" | "Normal" | "Routine";
 
 export type WaitlistEntry = {
