@@ -29,7 +29,7 @@ export function StatCard({
   iconBg,
   chartType,
   sparklineData,
-  barValues = [40, 60, 50, 80, 70, 100],
+  barValues,
   className,
 }: StatCardProps) {
   const displayLabel = label ?? title ?? "";
@@ -48,8 +48,14 @@ export function StatCard({
   }
 
   // Determine effective chart type
+  // Charts only render from real data passed in by the caller — never a placeholder series.
   const effectiveChartType =
-    chartType ?? (sparklineData && sparklineData.length > 0 ? "sparkline" : "bars");
+    chartType ??
+    (sparklineData && sparklineData.length > 1
+      ? "sparkline"
+      : barValues && barValues.length > 0
+      ? "bars"
+      : "none");
 
   // Render icon whether it's a Component function or a JSX element
   const renderIcon = () => {
@@ -102,11 +108,11 @@ export function StatCard({
       </div>
 
       {/* Right mini chart */}
-      {effectiveChartType === "sparkline" && (
+      {effectiveChartType === "sparkline" && sparklineData && sparklineData.length > 1 && (
         <Sparkline data={sparklineData} />
       )}
 
-      {effectiveChartType === "bars" && barValues && (
+      {effectiveChartType === "bars" && barValues && barValues.length > 0 && (
         <div className="flex items-end gap-1.5 h-10 px-1 shrink-0" aria-hidden="true">
           {barValues.slice(-6).map((val, idx, arr) => {
             const isLast = idx === arr.length - 1;

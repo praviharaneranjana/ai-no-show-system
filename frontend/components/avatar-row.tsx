@@ -67,13 +67,14 @@ export function AvatarRow({
           <span className="truncate text-[11px] text-muted-foreground">
             {meta}
           </span>
+          <span className="mt-1 self-start">
+            <RiskPill category={riskCategory} score={riskScore} size="sm" />
+          </span>
         </div>
       </div>
 
-      {/* Right: Risk Pill + Actions */}
+      {/* Right: Actions (the risk pill sits under the name so long names aren't squeezed out) */}
       <div className="flex items-center gap-2 shrink-0">
-        <RiskPill category={riskCategory} score={riskScore} size="sm" />
-
         <div className="flex items-center gap-1">
           {phone && (
             <a

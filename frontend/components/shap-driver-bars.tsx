@@ -1,4 +1,4 @@
-import { cn } from "@/lib/utils";
+import { cn, formatOddsMultiplier } from "@/lib/utils";
 import type { FeatureContribution } from "@/lib/types";
 
 export function formatFeatureLabel(feature: string, value?: number | string | boolean): { label: string; formattedVal: string } {
@@ -111,7 +111,6 @@ export function ShapDriverBars({
     <div className={cn("space-y-2.5", className)}>
       {items.map((item, idx) => {
         const isPushUp = item.contribution > 0;
-        const impactPct = (Math.abs(item.contribution) * 100).toFixed(1);
         const barWidth = Math.max(Math.min((Math.abs(item.contribution) / maxMag) * 100, 100), 12);
         const { label, formattedVal } = formatFeatureLabel(item.feature, item.value);
 
@@ -127,7 +126,7 @@ export function ShapDriverBars({
                   isPushUp ? "text-[#E11D48]" : "text-[#16A34A]"
                 )}
               >
-                {isPushUp ? `+${impactPct}%` : `-${impactPct}%`}
+                {formatOddsMultiplier(item.contribution)}
               </span>
             </div>
 

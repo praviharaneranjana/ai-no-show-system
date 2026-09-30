@@ -82,36 +82,32 @@ export default async function AnalyticsPage() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
         <StatCard
           title="Observed No-Show Rate"
-          value={noShowRate !== null ? `${noShowRate.toFixed(1)}%` : "15.9%"}
+          value={noShowRate !== null ? `${noShowRate.toFixed(1)}%` : "—"}
           icon={Percent}
           delta={{
             value:
               recordedOutcomes.length > 0
                 ? `${noShows} no-show / ${attended} attended`
-                : "Historical baseline",
+                : "No outcomes recorded yet",
             isPositive: false,
           }}
-          sparklineData={[17.2, 16.8, 16.1, 15.8, 16.0, noShowRate || 15.9]}
         />
         <StatCard
           title="Prediction Coverage"
           value={`${predictionCoverage.toFixed(0)}%`}
           icon={Sparkles}
           delta={{ value: `${predicted.length} scored`, isPositive: true }}
-          sparklineData={[70, 75, 82, 88, 95, predictionCoverage || 100]}
         />
         <StatCard
           title="Outreach Pending"
           value={outreachNeeded}
           icon={AlertTriangle}
           delta={{ value: `${categoryCounts.High} high risk`, isPositive: false }}
-          sparklineData={[14, 18, 12, 16, 20, outreachNeeded || 15]}
         />
         <StatCard
           title="Total Appointments"
           value={records.length}
           icon={CalendarDays}
-          sparklineData={[40, 48, 55, 62, 70, records.length || 75]}
         />
       </div>
 

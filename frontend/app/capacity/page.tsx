@@ -68,34 +68,29 @@ export default async function CapacityPage() {
           title="Total Capacity"
           value={optimization.total_capacity}
           icon={Layers}
-          sparklineData={[110, 115, 118, 120, 122, optimization.total_capacity]}
         />
         <StatCard
           title="Total Booked"
           value={optimization.total_booked}
           icon={CalendarDays}
-          sparklineData={[80, 85, 92, 88, 94, optimization.total_booked]}
         />
         <StatCard
           title="Predicted No-Shows"
           value={optimization.total_predicted_no_shows}
           icon={AlertTriangle}
           delta={{ value: "High risk slots", isPositive: false }}
-          sparklineData={[18, 15, 20, 16, 14, optimization.total_predicted_no_shows]}
         />
         <StatCard
           title="Safe Overbooks"
           value={`+${optimization.total_recommended_overbooks}`}
           icon={TrendingUp}
           delta={{ value: "Buffered capacity", isPositive: true }}
-          sparklineData={[4, 6, 8, 7, 9, optimization.total_recommended_overbooks]}
         />
         <StatCard
           title="Revenue Recovery"
           value={formatLkr(optimization.estimated_revenue_recovery_lkr)}
           icon={Wallet}
           delta={{ value: "Estimated upside", isPositive: true }}
-          sparklineData={[45000, 60000, 75000, 82000, 91000, optimization.estimated_revenue_recovery_lkr]}
         />
       </div>
 

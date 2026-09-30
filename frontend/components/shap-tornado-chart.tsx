@@ -1,5 +1,5 @@
 import { TrendingUp, TrendingDown, Info } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatOddsMultiplier } from "@/lib/utils";
 import type { FeatureContribution } from "@/lib/types";
 import { formatFeatureLabel } from "@/components/shap-driver-bars";
 
@@ -48,7 +48,6 @@ export function ShapTornadoChart({
         {sorted.slice(0, 6).map((c, idx) => {
           const { title, subtitle } = formatFeature(c.feature, c.value);
           const isPushUp = c.contribution > 0;
-          const impactPct = (Math.abs(c.contribution) * 100).toFixed(1);
           const barWidth = Math.max(Math.min((Math.abs(c.contribution) / maxAbs) * 100, 100), 8);
 
           return (
@@ -64,7 +63,7 @@ export function ShapTornadoChart({
                     isPushUp ? "text-[#E11D48]" : "text-[#16A34A]"
                   )}
                 >
-                  {isPushUp ? `+${impactPct}%` : `-${impactPct}%`}
+                  {formatOddsMultiplier(c.contribution)}
                 </span>
               </div>
 

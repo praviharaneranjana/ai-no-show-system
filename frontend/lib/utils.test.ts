@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { cn, formatLkr } from "@/lib/utils";
+import { cn, formatLkr, formatOddsMultiplier } from "@/lib/utils";
 
 describe("formatLkr", () => {
   it("formats millions with 2 decimal places", () => {
@@ -34,5 +34,13 @@ describe("cn", () => {
 
   it("drops falsy values", () => {
     expect(cn("a", false, null, undefined, "b")).toBe("a b");
+  });
+});
+
+describe("formatOddsMultiplier", () => {
+  it("turns SHAP log-odds into an odds multiplier", () => {
+    expect(formatOddsMultiplier(0)).toBe("×1.00");
+    expect(formatOddsMultiplier(Math.log(2))).toBe("×2.00");
+    expect(formatOddsMultiplier(-Math.log(2))).toBe("×0.50");
   });
 });

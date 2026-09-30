@@ -85,28 +85,23 @@ export default async function OutreachPage() {
           title="Total Conversations"
           value={total}
           icon={MessagesSquare}
-          sparklineData={[12, 18, 22, 28, 35, total || 42]}
         />
         <StatCard
           title="Confirmation Rate"
           value={`${pct(confirmed)}%`}
           icon={CheckCircle2}
-          delta={{ value: "+8% vs baseline", isPositive: true }}
-          sparklineData={[45, 52, 58, 62, 60, pct(confirmed) || 68]}
         />
         <StatCard
           title="Autonomous Reschedule"
           value={`${pct(rescheduled)}%`}
           icon={CalendarClock}
           delta={{ value: "Slots preserved", isPositive: true }}
-          sparklineData={[10, 14, 12, 18, 16, pct(rescheduled) || 20]}
         />
         <StatCard
           title="Telehealth Conversion"
           value={`${pct(telehealth)}%`}
           icon={Video}
           delta={{ value: "Virtual slots", isPositive: true }}
-          sparklineData={[5, 8, 7, 12, 10, pct(telehealth) || 12]}
         />
       </div>
 

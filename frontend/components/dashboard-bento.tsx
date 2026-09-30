@@ -21,6 +21,8 @@ import { DotRingGauge } from "@/components/dot-ring-gauge";
 import { RingProgress } from "@/components/ring-progress";
 import { ShapDriverBars } from "@/components/shap-driver-bars";
 import { JourneyMap } from "@/components/journey-map";
+import { useStaffName } from "@/components/use-staff-name";
+import { ROI_SIMULATOR_DEFAULTS } from "@/lib/roi";
 import { NoShowTrendChart } from "@/components/charts/no-show-trend-chart";
 import { AppointmentsTable } from "@/components/appointments-table";
 
@@ -29,8 +31,19 @@ interface DashboardBentoProps {
   doctorSessions: DoctorSession[];
 }
 
+// Revenue per predicted no-show: standard consultation fee + ancillary revenue (same
+// assumptions as the ROI simulator, see lib/roi.ts).
+const ANCILLARY_MULTIPLIER = 1.6;
+const DAY_MS = 86_400_000;
+
+// Local calendar date as YYYY-MM-DD (en-CA formats that way), offset by whole days.
+function localDay(offsetDays = 0): string {
+  return new Date(Date.now() + offsetDays * DAY_MS).toLocaleDateString("en-CA");
+}
+
 export function DashboardBento({ records, doctorSessions }: DashboardBentoProps) {
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const staffName = useStaffName();
+  const todayStr = localDay(0);
 
   // Derive metrics
   const totalUpcoming = records.filter(
@@ -70,9 +83,34 @@ export function DashboardBento({ records, doctorSessions }: DashboardBentoProps)
     worklist[0] ||
     records[0];
 
-  // Revenue at risk (using standard LKR consultation fee Rs. 4,500 + ancillary)
-  const predictedCount = highRiskUpcoming.length;
-  const revenueAtRiskLkr = predictedCount * 4500 * 1.6;
+  // Real per-day series for the stat cards (no placeholder data).
+  const countOn = (day: string) => records.filter((r) => r.appointment.appointment_day === day).length;
+  const pastSix = [-5, -4, -3, -2, -1, 0].map((o) => countOn(localDay(o)));
+  const maxPast = Math.max(...pastSix, 1);
+  const yesterdayCount = pastSix[4];
+  const todayCount = pastSix[5];
+
+  // Expected no-shows = sum of calibrated risk over the next 7 days (still awaiting an outcome).
+  const nextSevenDays = Array.from({ length: 7 }, (_, i) => localDay(i));
+  const expectedOn = (day: string) =>
+    records
+      .filter((r) => r.appointment.appointment_day === day && r.appointment.no_show === null)
+      .reduce((sum, r) => sum + (r.prediction?.risk_score ?? 0), 0);
+  const expectedPerDay = nextSevenDays.map(expectedOn);
+  const expectedNoShows = expectedPerDay.reduce((a, b) => a + b, 0);
+  const bookedNextSeven = records.filter(
+    (r) => nextSevenDays.includes(r.appointment.appointment_day) && r.appointment.no_show === null
+  ).length;
+
+  const feeLkr = ROI_SIMULATOR_DEFAULTS.avg_consultation_fee_lkr;
+  const revenueAtRiskLkr = expectedNoShows * feeLkr * ANCILLARY_MULTIPLIER;
+  const revenuePerDay = expectedPerDay.map((e) => e * feeLkr * ANCILLARY_MULTIPLIER);
+  const maxRevenueDay = Math.max(...revenuePerDay, 1);
+
+  const highRiskToday = todayAppointments.filter((r) => r.prediction?.risk_category === "High").length;
+  const highRiskNextSeven = highRiskUpcoming.filter((r) =>
+    nextSevenDays.includes(r.appointment.appointment_day)
+  ).length;
 
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6 lg:p-8">
@@ -80,18 +118,17 @@ export function DashboardBento({ records, doctorSessions }: DashboardBentoProps)
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="font-heading text-2xl font-extrabold text-foreground tracking-tight sm:text-3xl">
-            Welcome back, Clinical Operations!
+            Welcome back{staffName ? `, ${staffName}` : ""}!
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5 flex flex-wrap items-center gap-2">
             <span>
-              You have{" "}
               <strong className="text-[#E11D48] font-bold">
-                {highRiskUpcoming.length} high-risk appointments
+                {highRiskToday} high-risk {highRiskToday === 1 ? "appointment" : "appointments"}
               </strong>{" "}
-              scheduled today.
+              today
             </span>
             <span className="size-1 rounded-full bg-muted-foreground/60" />
-            <span>4 urgent front-desk interventions required</span>
+            <span>{highRiskNextSeven} high-risk in the next 7 days</span>
           </p>
         </div>
 
@@ -172,38 +209,40 @@ export function DashboardBento({ records, doctorSessions }: DashboardBentoProps)
         </div>
       )}
 
-      {/* ROW 1: 3 STAT CARDS (LKR & Sri Lankan Clinical Operations) */}
+      {/* ROW 1: 3 STAT CARDS — every number and chart below is computed from real records */}
       <section className="grid grid-cols-1 md:grid-cols-3 gap-4 lg:gap-5">
         <StatCard
           label="Today's Appointments"
-          value={todayAppointments.length}
-          subvalue={`${records.length} total scheduled`}
-          delta="↑ 25%"
-          deltaDirection="up"
+          value={todayCount}
+          subvalue={`${totalUpcoming.length} upcoming`}
+          delta={
+            yesterdayCount > 0
+              ? `${todayCount >= yesterdayCount ? "↑" : "↓"} ${Math.abs(
+                  Math.round(((todayCount - yesterdayCount) / yesterdayCount) * 100)
+                )}% vs yesterday`
+              : undefined
+          }
+          deltaDirection={todayCount >= yesterdayCount ? "up" : "down"}
           icon={<CalendarDays className="size-5" />}
           chartType="bars"
-          barValues={[35, 45, 55, 60, 50, 75]}
+          barValues={pastSix.map((c) => (c / maxPast) * 100)}
         />
 
         <StatCard
-          label="Predicted No-Shows"
-          value={highRiskUpcoming.length}
-          subvalue={`(${totalUpcoming.length > 0 ? Math.round((highRiskUpcoming.length / totalUpcoming.length) * 100) : 0}%)`}
-          delta="↓ 12%"
-          deltaDirection="down"
+          label="Expected No-Shows · 7 days"
+          value={Math.round(expectedNoShows)}
+          subvalue={`(${bookedNextSeven > 0 ? Math.round((expectedNoShows / bookedNextSeven) * 100) : 0}% of ${bookedNextSeven})`}
           icon={<AlertTriangle className="size-5 text-rose-400" />}
           chartType="sparkline"
-          sparklineData={[18, 16, 17, 15, 14, 13, 11]}
+          sparklineData={expectedPerDay}
         />
 
         <StatCard
-          label="Revenue at Risk (LKR)"
+          label="Revenue at Risk · 7 days"
           value={`Rs. ${(revenueAtRiskLkr / 1000).toFixed(0)}k`}
-          delta="+Rs. 24k"
-          deltaDirection="down"
           icon={<span className="font-bold text-xs tracking-tight text-[#8B7CF6]">LKR</span>}
           chartType="bars"
-          barValues={[50, 65, 55, 70, 60, 85]}
+          barValues={revenuePerDay.slice(0, 6).map((v) => (v / maxRevenueDay) * 100)}
         />
       </section>
 

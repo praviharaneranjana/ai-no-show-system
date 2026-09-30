@@ -139,7 +139,7 @@ export default async function AppointmentDetailPage({
           </div>
 
           <div className="pt-3 border-t border-border/60 text-[10px] text-muted-foreground">
-            Values derived via TreeExplainer log-odds attribution.
+            ×N = how much each factor multiplies the odds of a no-show (SHAP log-odds, exponentiated).
           </div>
         </div>
 
