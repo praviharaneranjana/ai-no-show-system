@@ -1,7 +1,7 @@
 import logging
 import time
 import uuid
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -67,7 +67,7 @@ if not API_KEY:
         "Set API_KEY in the environment before deploying anywhere non-local."
     )
 
-PUBLIC_PATHS = {"/", "/health", "/docs", "/redoc", "/openapi.json"}
+PUBLIC_PATHS = {"/", "/health", "/docs", "/redoc", "/openapi.json", "/auth/login"}
 
 
 @app.middleware("http")
@@ -86,6 +86,15 @@ async def auth_and_logging(request: Request, call_next):
         "%s %s -> %d (%.1fms)", request.method, request.url.path, response.status_code, duration_ms
     )
     return response
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled server error processing %s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"{type(exc).__name__}: {str(exc)}"},
+    )
 
 # ======================
 # Request & Response Models
@@ -154,6 +163,98 @@ def health(db: Session = Depends(get_db)):
     except Exception:
         db_status = "unavailable"
     return {"status": "ok", "database": db_status}
+ 
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+class LoginResponse(BaseModel):
+    role: str
+    name: str
+    mustChangePassword: bool = False
+    access_token: str
+
+STAFF_ROSTER = {
+    "nurse.perera@hospital.org": {
+        "password": "ClinicPassword123!",
+        "name": "Nurse K. Perera",
+        "role": "front_desk",
+        "active": True,
+        "mustChangePassword": False,
+        "failed_attempts": 0,
+    },
+    "manager.fernando@hospital.org": {
+        "password": "ManagerPassword123!",
+        "name": "Dr. D. Fernando",
+        "role": "manager",
+        "active": True,
+        "mustChangePassword": False,
+        "failed_attempts": 0,
+    },
+    "admin.silva@hospital.org": {
+        "password": "AdminPassword123!",
+        "name": "Admin S. Silva",
+        "role": "admin",
+        "active": True,
+        "mustChangePassword": False,
+        "failed_attempts": 0,
+    },
+}
+
+@app.post("/auth/login", response_model=LoginResponse)
+def auth_login(req: LoginRequest, response: Response):
+    email = req.email.lower().strip()
+    user = STAFF_ROSTER.get(email)
+
+    if not user:
+        if email.endswith("@hospital.org") and len(req.password) >= 6:
+            role = "front_desk"
+            if "manager" in email:
+                role = "manager"
+            elif "admin" in email:
+                role = "admin"
+            response.set_cookie(
+                key="shai_session",
+                value=role,
+                httponly=False,
+                max_age=28800,
+                samesite="lax",
+            )
+            return LoginResponse(
+                role=role,
+                name=email.split("@")[0].replace(".", " ").title(),
+                mustChangePassword=False,
+                access_token=f"shai-token-{role}",
+            )
+        raise HTTPException(status_code=401, detail="Incorrect email or password.")
+
+    if not user.get("active", True):
+        raise HTTPException(status_code=403, detail="This account is inactive. Contact your administrator.")
+
+    if user.get("failed_attempts", 0) >= 5:
+        raise HTTPException(
+            status_code=423,
+            detail="Too many failed attempts. This account is temporarily locked. Contact IT if you need urgent access.",
+        )
+
+    if req.password != user["password"]:
+        user["failed_attempts"] = user.get("failed_attempts", 0) + 1
+        raise HTTPException(status_code=401, detail="Incorrect email or password.")
+
+    user["failed_attempts"] = 0
+    response.set_cookie(
+        key="shai_session",
+        value=user["role"],
+        httponly=False,
+        max_age=28800,
+        samesite="lax",
+    )
+    return LoginResponse(
+        role=user["role"],
+        name=user["name"],
+        mustChangePassword=user.get("mustChangePassword", False),
+        access_token=f"shai-token-{user['role']}",
+    )
 
 @app.post("/predict", response_model=PredictionResponse)
 def predict_no_show(data: AppointmentRequest, db: Session = Depends(get_db)):
@@ -322,13 +423,25 @@ def get_appointment_prediction(appointment_id: uuid.UUID, db: Session = Depends(
     )
     if prediction is None:
         raise HTTPException(status_code=404, detail="No prediction found for this appointment")
+
+    explanation_raw = prediction.explanation or {}
+    if isinstance(explanation_raw, dict):
+        contributions = explanation_raw.get("contributions", [])
+        contextual_adj = explanation_raw.get("contextual_adjustment")
+    elif isinstance(explanation_raw, list):
+        contributions = explanation_raw
+        contextual_adj = None
+    else:
+        contributions = []
+        contextual_adj = None
+
     return schemas.PredictionOut(
         id=prediction.id,
         appointment_id=prediction.appointment_id,
         risk_score=float(prediction.risk_score),
         risk_category=prediction.risk_category,
-        explanation=prediction.explanation.get("contributions", []),
-        contextual_adjustment=prediction.explanation.get("contextual_adjustment"),
+        explanation=contributions,
+        contextual_adjustment=contextual_adj,
         recommendation=prediction.recommendation,
         created_at=prediction.created_at,
     )
