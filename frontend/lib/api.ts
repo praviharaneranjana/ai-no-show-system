@@ -15,9 +15,7 @@ import type {
   StoredPrediction,
   WaitlistEntry,
 } from "@/lib/types";
-
-const API_BASE_URL = process.env.BACKEND_API_URL ?? "http://localhost:8000";
-const API_KEY = process.env.BACKEND_API_KEY;
+import { getBackendConfig } from "@/lib/backend-config";
 
 export class ApiError extends Error {
   status: number;
@@ -29,18 +27,42 @@ export class ApiError extends Error {
   }
 }
 
+export type AuthRole = "front_desk" | "manager" | "admin";
+
+export type LoginRequest = {
+  email: string;
+  password: string;
+};
+
+export type LoginResponse = {
+  role: AuthRole;
+  name?: string;
+  mustChangePassword?: boolean;
+  access_token?: string;
+};
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const { baseUrl, apiKey } = await getBackendConfig();
+  if (!baseUrl) {
+    throw new ApiError(0, "Backend server is not configured.");
+  }
+
   const headers = new Headers(init?.headers);
   headers.set("Content-Type", "application/json");
-  if (API_KEY) headers.set("X-API-Key", API_KEY);
+  if (apiKey) headers.set("X-API-Key", apiKey);
 
-  const res = await fetch(`${API_BASE_URL}${path}`, {
+  const res = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers,
     cache: "no-store",
   });
 
   if (!res.ok) {
+    if (res.status === 401 && typeof window !== "undefined") {
+      if (window.location.pathname !== "/login") {
+        window.location.href = "/login?reason=inactivity";
+      }
+    }
     let detail = res.statusText;
     try {
       const body = await res.json();
@@ -53,6 +75,13 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
+}
+
+export function login(data: LoginRequest) {
+  return apiFetch<LoginResponse>("/auth/login", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
 }
 
 export function listPatients() {

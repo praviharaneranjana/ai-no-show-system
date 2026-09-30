@@ -3,13 +3,19 @@
 import { useState, type ReactNode } from "react";
 import { Menu, X, Activity } from "lucide-react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 import { AppSidebar } from "@/components/app-sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 
 export function AppLayout({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  if (pathname === "/login") {
+    return <main className="min-h-screen w-full">{children}</main>;
+  }
 
   return (
     <div className="flex min-h-screen w-full bg-background text-foreground">

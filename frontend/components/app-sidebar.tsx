@@ -12,6 +12,7 @@ import {
   Gauge,
   MessagesSquare,
   Calculator,
+  LogOut,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -70,6 +71,15 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
       description: "Intake & risk prediction",
     },
   ];
+
+  function handleSignOut() {
+    document.cookie = "shai_session=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    try {
+      localStorage.removeItem("shai_user_role");
+      localStorage.removeItem("shai_user_name");
+    } catch {}
+    window.location.href = "/login";
+  }
 
   return (
     <aside
@@ -169,9 +179,21 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
         <div className="flex items-center justify-between pt-1">
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <ShieldCheck className="size-3.5 text-emerald-600 dark:text-emerald-400" />
-            <span className="text-[11px]">Front-Desk Portal</span>
+            <span className="text-[11px]">Staff Portal</span>
           </div>
-          <ThemeToggle />
+          <div className="flex items-center gap-1">
+            <ThemeToggle />
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={handleSignOut}
+              title="Sign out of shared workstation"
+              className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+            >
+              <LogOut className="size-4" />
+              <span className="sr-only">Sign out</span>
+            </Button>
+          </div>
         </div>
       </div>
     </aside>
