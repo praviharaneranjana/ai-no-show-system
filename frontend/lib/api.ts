@@ -17,7 +17,10 @@ import type {
   StoredPrediction,
   WaitlistEntry,
 } from "@/lib/types";
+import { redirect } from "next/navigation";
+
 import { getBackendConfig } from "@/lib/backend-config";
+import { getSessionToken } from "@/lib/session";
 
 export class ApiError extends Error {
   status: number;
@@ -43,7 +46,13 @@ export type LoginResponse = {
   access_token?: string;
 };
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+// `auth: false` is for the few public endpoints (login) that must not carry a session
+// and must not redirect to the login page on a 401.
+async function apiFetch<T>(
+  path: string,
+  init?: RequestInit,
+  opts: { auth?: boolean } = {}
+): Promise<T> {
   const { baseUrl, apiKey } = await getBackendConfig();
   if (!baseUrl) {
     throw new ApiError(0, "Backend server is not configured.");
@@ -52,6 +61,10 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   headers.set("Content-Type", "application/json");
   if (apiKey) headers.set("X-API-Key", apiKey);
+  if (opts.auth !== false) {
+    const token = await getSessionToken();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+  }
 
   const res = await fetch(`${baseUrl}${path}`, {
     ...init,
@@ -60,17 +73,17 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!res.ok) {
-    if (res.status === 401 && typeof window !== "undefined") {
-      if (window.location.pathname !== "/login") {
-        window.location.href = "/login?reason=inactivity";
-      }
-    }
     let detail = res.statusText;
     try {
       const body = await res.json();
       detail = body.detail ?? JSON.stringify(body);
     } catch {
       // response wasn't JSON — fall back to statusText
+    }
+    if (opts.auth !== false) {
+      // Session missing, expired, revoked or rejected: send the user to sign in again.
+      if (res.status === 401) redirect("/login?reason=session_expired");
+      if (res.status === 403 && /password change required/i.test(detail)) redirect("/change-password");
     }
     throw new ApiError(res.status, detail);
   }
@@ -80,9 +93,17 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export function login(data: LoginRequest) {
-  return apiFetch<LoginResponse>("/auth/login", {
+  return apiFetch<LoginResponse>(
+    "/auth/login",
+    { method: "POST", body: JSON.stringify(data) },
+    { auth: false }
+  );
+}
+
+export function changePassword(currentPassword: string, newPassword: string) {
+  return apiFetch<void>("/auth/change-password", {
     method: "POST",
-    body: JSON.stringify(data),
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
   });
 }
 

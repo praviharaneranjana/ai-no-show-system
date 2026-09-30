@@ -3,6 +3,8 @@
 import { cookies } from "next/headers";
 
 import { ApiError, login, type AuthRole, type LoginRequest } from "@/lib/api";
+import { SESSION_COOKIE, sessionCookieOptions } from "@/lib/session";
+import { decodeToken } from "@/lib/session-token";
 
 export type LoginActionResult =
   | { ok: true; role: AuthRole; name?: string; mustChangePassword?: boolean }
@@ -11,15 +13,15 @@ export type LoginActionResult =
 export async function loginAction(data: LoginRequest): Promise<LoginActionResult> {
   try {
     const res = await login(data);
-    const role = res.role ?? "front_desk";
+    const payload = decodeToken(res.access_token);
+    if (!res.access_token || !payload) {
+      return { ok: false, status: 502, message: "The server returned an invalid session." };
+    }
 
-    (await cookies()).set("shai_session", role, {
-      path: "/",
-      maxAge: 28800,
-      sameSite: "lax",
-    });
+    // The signed token itself is the session. It is httpOnly, so page scripts cannot read it.
+    (await cookies()).set(SESSION_COOKIE, res.access_token, sessionCookieOptions(payload.exp));
 
-    return { ok: true, role, name: res.name, mustChangePassword: res.mustChangePassword };
+    return { ok: true, role: res.role, name: res.name, mustChangePassword: res.mustChangePassword };
   } catch (err) {
     if (err instanceof ApiError) {
       return { ok: false, status: err.status, message: err.message };
@@ -30,4 +32,9 @@ export async function loginAction(data: LoginRequest): Promise<LoginActionResult
       message: err instanceof Error ? err.message : "Unknown error",
     };
   }
+}
+
+// httpOnly cookies can only be removed on the server, so sign-out is a server action.
+export async function logoutAction(): Promise<void> {
+  (await cookies()).delete(SESSION_COOKIE);
 }

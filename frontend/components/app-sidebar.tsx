@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { logoutAction } from "@/app/login/actions";
+import { hasRole, type SessionRole } from "@/lib/session-token";
 import { ShaiLogo } from "@/components/shai-logo";
 import { ThemePill } from "@/components/theme-pill";
 
@@ -102,8 +104,13 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
     },
   ];
 
-  function handleSignOut() {
-    document.cookie = "shai_session=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  // Pages only managers/admins may open. The backend enforces the same rule; this just hides the links.
+  const MANAGER_ONLY = new Set(["/capacity", "/simulator"]);
+  const isManager = hasRole(storedRole as SessionRole, "manager");
+
+  async function handleSignOut() {
+    // The session cookie is httpOnly, so it can only be cleared on the server.
+    await logoutAction();
     try {
       localStorage.removeItem("shai_user_role");
       localStorage.removeItem("shai_user_name");
@@ -138,7 +145,7 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
 
         {/* Navigation Items (Dropify-style active gradient pill with chevron) */}
         <nav className="flex flex-col gap-1.5" aria-label="Main Navigation">
-          {NAV_ITEMS.map((item) => {
+          {NAV_ITEMS.filter((item) => isManager || !MANAGER_ONLY.has(item.href)).map((item) => {
             const Icon = item.icon;
             const isActive = item.exact
               ? pathname === item.href

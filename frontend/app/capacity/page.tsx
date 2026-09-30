@@ -17,6 +17,7 @@ import { DoctorSessionPanel } from "@/app/capacity/doctor-session-panel";
 import { StatCard } from "@/components/stat-card";
 import { RingProgress } from "@/components/ring-progress";
 import { formatLkr } from "@/lib/utils";
+import { requireRole } from "@/lib/session";
 
 const RISK_BADGES: Record<string, string> = {
   Safe: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20",
@@ -25,6 +26,7 @@ const RISK_BADGES: Record<string, string> = {
 };
 
 export default async function CapacityPage() {
+  await requireRole("manager");
   let sessions, waitlist, optimization;
   try {
     [sessions, waitlist, optimization] = await Promise.all([

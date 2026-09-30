@@ -1,8 +1,10 @@
 import { Calculator, Sparkles } from "lucide-react";
 
 import { RoiSimulator } from "@/app/simulator/roi-simulator";
+import { requireRole } from "@/lib/session";
 
-export default function SimulatorPage() {
+export default async function SimulatorPage() {
+  await requireRole("manager");
   return (
     <div className="flex w-full flex-col gap-6 p-4 sm:p-6 lg:p-8 max-w-[1400px] mx-auto animate-in fade-in duration-300">
       {/* Header */}
