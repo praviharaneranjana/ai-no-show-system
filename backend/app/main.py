@@ -458,6 +458,19 @@ def _prediction_out(prediction: models.Prediction) -> schemas.PredictionOut:
     )
 
 
+@app.get("/appointments/{appointment_id}/interventions", response_model=List[schemas.InterventionOut])
+def list_appointment_interventions(appointment_id: uuid.UUID, db: Session = Depends(get_db)):
+    """Outreach conversations logged for one appointment, newest first."""
+    if db.get(models.Appointment, appointment_id) is None:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    return (
+        db.query(models.Intervention)
+        .filter(models.Intervention.appointment_id == appointment_id)
+        .order_by(models.Intervention.created_at.desc())
+        .all()
+    )
+
+
 @app.get("/appointments/{appointment_id}/prediction", response_model=schemas.PredictionOut)
 def get_appointment_prediction(appointment_id: uuid.UUID, db: Session = Depends(get_db)):
     prediction = (

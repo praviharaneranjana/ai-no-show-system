@@ -11,12 +11,19 @@ import {
   Send,
 } from "lucide-react";
 
-import { ApiError, getAppointment, getPatient, getPrediction } from "@/lib/api";
+import {
+  ApiError,
+  getAppointment,
+  getPatient,
+  getPrediction,
+  listAppointmentInterventions,
+} from "@/lib/api";
 import { OutcomeActions } from "@/app/appointments/[id]/outcome-actions";
 import { ShapTornadoChart } from "@/components/shap-tornado-chart";
 import { DotRingGauge } from "@/components/dot-ring-gauge";
 import { RiskPill } from "@/components/risk-pill";
 import { JourneyMap } from "@/components/journey-map";
+import { OutreachHistory } from "@/components/outreach-history";
 
 function calculateAge(dobStr: string): number {
   const dob = new Date(dobStr);
@@ -47,6 +54,9 @@ export default async function AppointmentDetailPage({
     if (err instanceof ApiError && err.status === 404) return null;
     throw err;
   });
+
+  // Outreach history is supplementary: never let it take the page down.
+  const interventions = await listAppointmentInterventions(id).catch(() => []);
 
   const age = calculateAge(patient.date_of_birth);
 
@@ -343,6 +353,9 @@ export default async function AppointmentDetailPage({
             </span>
           </div>
         </div>
+
+        {/* Outreach history (full width) */}
+        <OutreachHistory interventions={interventions} className="lg:col-span-12" />
 
       </div>
     </div>

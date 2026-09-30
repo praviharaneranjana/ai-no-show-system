@@ -171,6 +171,10 @@ export function assignWaitlistSlot(waitlistId: string) {
   });
 }
 
+export function listAppointmentInterventions(appointmentId: string) {
+  return apiFetch<Intervention[]>(`/appointments/${appointmentId}/interventions`);
+}
+
 export function listConversations() {
   return apiFetch<Intervention[]>("/outreach/conversations");
 }
