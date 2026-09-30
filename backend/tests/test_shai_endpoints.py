@@ -277,68 +277,50 @@ def test_simulator_evaluate_rejects_out_of_range_params(client):
 
 
 # ===================================
-# /predict contextual adjustment integration
+# /predict (SHAI model: features derived server-side)
 # ===================================
 
-VALID_PREDICT_FEATURES = {
-    "Age": 45,
-    "Scholarship": 0,
-    "Hipertension": 1,
-    "Diabetes": 0,
-    "Alcoholism": 0,
-    "Handcap": 0,
-    "SMS_received": 1,
-    "DaysAhead": 7,
-    "DayOfWeek": 2,
-    "IsWeekend": 0,
-    "Month": 8,
-}
-
-
-def test_predict_without_contextual_fields_is_neutral(client):
-    # AppointmentCreate defaults booking_channel/payment_mode to real values
-    # (Doc990 / NSR-protected) when omitted, so this test must explicitly
-    # null them out to exercise the true "no context available" path.
-    patient = make_patient(client)
-    appointment = make_appointment(client, patient["id"], booking_channel=None, payment_mode=None)
-
-    resp = client.post("/predict", json={
-        "appointment_id": appointment["id"],
-        **VALID_PREDICT_FEATURES,
-    })
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-
-    adjustment = body["contextual_adjustment"]
-    assert adjustment["combined_multiplier"] == 1.0
-    assert adjustment["final_risk_score"] == adjustment["ml_risk_score"]
-    assert body["risk_score"] == adjustment["final_risk_score"]
-
-
-def test_predict_with_contextual_fields_shifts_score(client):
+def test_predict_is_model_native_without_contextual_layer(client):
     patient = make_patient(client, distance_km=62.5, city="Kandy")
-    appointment = make_appointment(
-        client,
-        patient["id"],
-        doctor_name="Dr. Neluka Fernando",
-        booking_channel="Hospital Counter",
-        payment_mode="Cash",
-    )
+    appointment = make_appointment(client, patient["id"], booking_channel="Hospital Counter", payment_mode="Cash")
 
-    resp = client.post("/predict", json={
-        "appointment_id": appointment["id"],
-        **VALID_PREDICT_FEATURES,
-    })
+    resp = client.post("/predict", json={"appointment_id": appointment["id"]})
     assert resp.status_code == 200, resp.text
     body = resp.json()
 
-    adjustment = body["contextual_adjustment"]
-    assert adjustment["distance_multiplier"] > 1.0
-    assert adjustment["channel_multiplier"] > 1.0
-    assert adjustment["payment_multiplier"] > 1.0
-    assert adjustment["final_risk_score"] > adjustment["ml_risk_score"]
-    assert body["risk_score"] == adjustment["final_risk_score"]
+    assert body["contextual_adjustment"] is None
+    assert 0.0 <= body["risk_score"] <= 1.0
+    # SHAP features come from the SHAI schema, not the legacy Kaggle columns.
+    assert {c["feature"] for c in body["explanation"]} <= set(shai_model_columns())
 
-    # Persisted prediction should carry the same breakdown on read-back.
     stored = client.get(f"/appointments/{appointment['id']}/prediction").json()
-    assert stored["contextual_adjustment"]["final_risk_score"] == adjustment["final_risk_score"]
+    assert stored["risk_score"] == body["risk_score"]
+    assert stored["contextual_adjustment"] is None
+
+
+def test_predict_uses_visit_history_and_heavy_rain(client):
+    patient = make_patient(client)
+    # Three past no-shows on record for this patient.
+    for days_ago in (90, 60, 30):
+        past = client.post("/appointments", json={
+            "patient_id": patient["id"],
+            "scheduled_day": (date.today() - timedelta(days=days_ago + 5)).isoformat(),
+            "appointment_day": (date.today() - timedelta(days=days_ago)).isoformat(),
+        }).json()
+        client.patch(f"/appointments/{past['id']}/outcome", json={"no_show": True})
+    repeat = make_appointment(client, patient["id"])
+
+    fresh_patient = make_patient(client)
+    fresh = make_appointment(client, fresh_patient["id"])
+
+    repeat_score = client.post("/predict", json={"appointment_id": repeat["id"]}).json()["risk_score"]
+    fresh_score = client.post("/predict", json={"appointment_id": fresh["id"]}).json()["risk_score"]
+    assert repeat_score > fresh_score
+
+    rainy = client.post("/predict", json={"appointment_id": fresh["id"], "heavy_rain": 1}).json()["risk_score"]
+    assert rainy >= fresh_score
+
+
+def shai_model_columns():
+    from app.main import shai
+    return shai.columns

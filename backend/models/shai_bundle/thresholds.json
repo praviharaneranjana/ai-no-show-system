@@ -1,0 +1,1 @@
+{"high": 0.27222222089767456, "medium": 0.16545189917087555, "rule": "High = top 10% / Medium = next 20% of validation-set calibrated risk"}

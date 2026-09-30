@@ -8,36 +8,22 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from typing import List, Optional
-import pandas as pd
-import pickle
 import os
 
-from app import contextual, models, schemas
+import pandas as pd
+
+from app import models, schemas, shai_model
 from app.database import get_db
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("noshow_api")
 
 # ======================
-# Load Model & Explainer
+# Load Model Bundle
 # ======================
-MODEL_PATH = "models/xgboost_model.pkl"
-EXPLAINER_PATH = "models/shap_explainer.pkl"
-
-if not os.path.exists(MODEL_PATH) or not os.path.exists(EXPLAINER_PATH):
-    raise FileNotFoundError("Model or SHAP explainer not found. Please run train.py first.")
-
-with open(MODEL_PATH, "rb") as f:
-    model = pickle.load(f)
-
-with open(EXPLAINER_PATH, "rb") as f:
-    explainer = pickle.load(f)
-
-# Feature order must match training
-FEATURE_COLUMNS = [
-    "Age", "Scholarship", "Hipertension", "Diabetes", "Alcoholism",
-    "Handcap", "SMS_received", "DaysAhead", "DayOfWeek", "IsWeekend", "Month"
-]
+# XGBoost (native JSON) + isotonic calibration + capacity-based tiers, exported
+# from the Colab notebook. Raises FileNotFoundError if the bundle is missing.
+shai = shai_model.ShaiModel()
 
 # ======================
 # FastAPI App
@@ -100,18 +86,25 @@ async def global_exception_handler(request: Request, exc: Exception):
 # Request & Response Models
 # ======================
 class AppointmentRequest(BaseModel):
-    appointment_id: uuid.UUID = Field(..., description="ID of an existing appointment to attach this prediction to")
-    Age: int = Field(..., ge=0, le=120, example=45)
-    Scholarship: int = Field(..., ge=0, le=1, example=0)
-    Hipertension: int = Field(..., ge=0, le=1, example=1)
-    Diabetes: int = Field(..., ge=0, le=1, example=0)
-    Alcoholism: int = Field(..., ge=0, le=1, example=0)
-    Handcap: int = Field(..., ge=0, le=4, example=0)
-    SMS_received: int = Field(..., ge=0, le=1, example=1)
-    DaysAhead: int = Field(..., ge=0, example=7)
-    DayOfWeek: int = Field(..., ge=0, le=6, example=2)   # 0=Monday
-    IsWeekend: int = Field(..., ge=0, le=1, example=0)
-    Month: int = Field(..., ge=1, le=12, example=5)
+    """Only ``appointment_id`` (and optionally ``heavy_rain``) drive the prediction.
+
+    Model features are derived server-side from the stored patient, appointment and
+    visit history. The legacy Kaggle-style fields below are still accepted (and
+    validated) so older clients keep working, but they are ignored.
+    """
+    appointment_id: uuid.UUID = Field(..., description="ID of an existing appointment to predict")
+    heavy_rain: int = Field(0, ge=0, le=1, description="1 if heavy rain is forecast for the appointment day")
+    Age: Optional[int] = Field(None, ge=0, le=120)
+    Scholarship: Optional[int] = Field(None, ge=0, le=1)
+    Hipertension: Optional[int] = Field(None, ge=0, le=1)
+    Diabetes: Optional[int] = Field(None, ge=0, le=1)
+    Alcoholism: Optional[int] = Field(None, ge=0, le=1)
+    Handcap: Optional[int] = Field(None, ge=0, le=4)
+    SMS_received: Optional[int] = Field(None, ge=0, le=1)
+    DaysAhead: Optional[int] = Field(None, ge=0)
+    DayOfWeek: Optional[int] = Field(None, ge=0, le=6)
+    IsWeekend: Optional[int] = Field(None, ge=0, le=1)
+    Month: Optional[int] = Field(None, ge=1, le=12)
 
 class FeatureContribution(BaseModel):
     feature: str
@@ -129,20 +122,24 @@ class PredictionResponse(BaseModel):
 # Helper Functions
 # ======================
 def get_risk_category(score: float) -> str:
-    if score >= 0.65:
-        return "High"
-    elif score >= 0.40:
-        return "Medium"
-    else:
-        return "Low"
+    return shai.category(score)
 
 def get_recommendation(score: float) -> str:
-    if score >= 0.65:
-        return "High risk: Send multiple reminders + offer rescheduling + consider phone call."
-    elif score >= 0.40:
-        return "Medium risk: Send SMS + Email reminder 48 hours before."
-    else:
-        return "Low risk: Standard SMS reminder is enough."
+    return shai.recommendation(shai.category(score))
+
+def _patient_history(db: Session, appointment: models.Appointment) -> tuple[int, int]:
+    """(prior attended-or-no-show visits, prior no-shows) before this appointment's date."""
+    prior = (
+        db.query(models.Appointment.no_show)
+        .filter(
+            models.Appointment.patient_id == appointment.patient_id,
+            models.Appointment.id != appointment.id,
+            models.Appointment.appointment_day < appointment.appointment_day,
+            models.Appointment.no_show.isnot(None),
+        )
+        .all()
+    )
+    return len(prior), sum(1 for (ns,) in prior if ns)
 
 # ======================
 # API Endpoints
@@ -263,50 +260,42 @@ def predict_no_show(data: AppointmentRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Appointment not found")
 
     try:
-        # Convert input to DataFrame with correct column order
-        input_dict = data.model_dump(exclude={"appointment_id"})
-        df = pd.DataFrame([input_dict])[FEATURE_COLUMNS]
-
-        # Predict probability — this is the only ML-trained component; it
-        # only ever sees the Kaggle-derived FEATURE_COLUMNS above.
-        ml_risk_score = float(model.predict_proba(df)[0][1])
-
-        # SHAP explanation of the ML component
-        shap_values = explainer.shap_values(df)[0]
-
-        # Get top contributing features
-        contributions = []
-        for feature, value, shap_val in zip(FEATURE_COLUMNS, df.iloc[0], shap_values):
-            contributions.append({
-                "feature": feature,
-                "contribution": round(float(shap_val), 4),
-                "value": float(value)
-            })
-
-        # Sort by absolute contribution (most important first)
-        contributions = sorted(contributions, key=lambda x: abs(x["contribution"]), reverse=True)
-        top_contributions = contributions[:6]  # Top 6 features
-
-        # Contextual Risk Adjustment Layer — rule-based, applied on top of
-        # the ML score using fields the model was never trained on. See
-        # app/contextual.py for the rationale behind each multiplier.
-        adjustment = contextual.apply_contextual_adjustment(
-            ml_risk_score,
-            distance_km=float(appointment.patient.distance_km) if appointment.patient and appointment.patient.distance_km is not None else None,
+        patient = appointment.patient
+        prior_appts, prior_no_shows = _patient_history(db, appointment)
+        features = shai_model.engineer(
+            model=shai,
+            age=max(appointment.appointment_day.year - patient.date_of_birth.year
+                    - ((appointment.appointment_day.month, appointment.appointment_day.day)
+                       < (patient.date_of_birth.month, patient.date_of_birth.day)), 0),
+            gender=patient.gender,
+            distance_km=float(patient.distance_km) if patient.distance_km is not None else None,
+            scheduled_day=appointment.scheduled_day,
+            appointment_day=appointment.appointment_day,
+            scheduled_time=appointment.scheduled_time,
+            department=appointment.department,
             booking_channel=appointment.booking_channel,
             payment_mode=appointment.payment_mode,
+            sms_sent=appointment.sms_received,
+            hypertension=patient.hypertension,
+            diabetes=patient.diabetes,
+            prior_appts=prior_appts,
+            prior_no_shows=prior_no_shows,
+            heavy_rain=data.heavy_rain,
         )
-        final_risk_score = adjustment["final_risk_score"]
+        df = shai.frame([features])
+        _, calibrated = shai.score(df)
+        risk_score = round(float(calibrated[0]), 4)
+        category = shai.category(risk_score)
+        top_contributions = shai.explain(df)[0]
 
         result = {
-            "risk_score": final_risk_score,
-            "risk_category": get_risk_category(final_risk_score),
+            "risk_score": risk_score,
+            "risk_category": category,
             "explanation": top_contributions,
-            "contextual_adjustment": adjustment,
-            "recommendation": get_recommendation(final_risk_score)
+            "contextual_adjustment": None,
+            "recommendation": shai.recommendation(category),
         }
-
-        explanation_payload = {"contributions": top_contributions, "contextual_adjustment": adjustment}
+        explanation_payload = {"contributions": top_contributions, "model_version": shai.version}
 
         # Persist (or update) the prediction for this appointment
         existing = (

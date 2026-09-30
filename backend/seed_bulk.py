@@ -1,6 +1,6 @@
 """Bulk-seed the Postgres DB with a large synthetic Sri Lankan hospital
-dataset: patients, appointments, real model+SHAP predictions (contextually
-adjusted, same as POST /predict would produce), doctor sessions, waitlist,
+dataset: patients, appointments, real SHAI model+SHAP predictions (same
+pipeline as POST /predict), doctor sessions, waitlist,
 and a sample of outreach interventions.
 
 Unlike seed.py (a handful of hand-written demo records), this is meant to
@@ -16,7 +16,6 @@ this script owns first (patients/appointments/predictions/interventions/
 doctor_sessions/waitlist).
 """
 import argparse
-import pickle
 import uuid
 from datetime import date, timedelta
 
@@ -24,7 +23,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import insert
 
-from app import contextual, models
+from app import models, shai_model
 from app.database import Base, SessionLocal, engine
 from fake_data_lk import (
     AI_ACTION_STATUSES,
@@ -33,14 +32,6 @@ from fake_data_lk import (
     add_hospital_fields,
     generate_core_dataframe,
 )
-
-MODEL_PATH = "models/xgboost_model.pkl"
-EXPLAINER_PATH = "models/shap_explainer.pkl"
-
-FEATURE_COLUMNS = [
-    "Age", "Scholarship", "Hipertension", "Diabetes", "Alcoholism",
-    "Handcap", "SMS_received", "DaysAhead", "DayOfWeek", "IsWeekend", "Month",
-]
 
 INTERVENTION_TEMPLATES = [
     dict(language="en", status="confirmed", patient_reply="Yes, I will be attending. Thank you.",
@@ -54,22 +45,6 @@ INTERVENTION_TEMPLATES = [
     dict(language="si", status="confirmed", patient_reply="Hari, enawa.",
          intent_detected="Confirmation (Sinhala)", offered_slot="Slot Confirmed"),
 ]
-
-
-def get_risk_category(score: float) -> str:
-    if score >= 0.65:
-        return "High"
-    elif score >= 0.40:
-        return "Medium"
-    return "Low"
-
-
-def get_recommendation(score: float) -> str:
-    if score >= 0.65:
-        return "High risk: Send multiple reminders + offer rescheduling + consider phone call."
-    elif score >= 0.40:
-        return "Medium risk: Send SMS + Email reminder 48 hours before."
-    return "Low risk: Standard SMS reminder is enough."
 
 
 def chunked(seq, size):
@@ -143,54 +118,48 @@ def build_patients_and_appointments(n: int, seed: int) -> tuple[list[dict], list
     return patient_rows, appointment_rows, full
 
 
-def build_predictions(appointment_rows: list[dict], full: pd.DataFrame, model, explainer) -> list[dict]:
-    features = pd.DataFrame({
-        "Age": full["age"],
-        "Scholarship": full["scholarship"],
-        "Hipertension": full["hypertension"],
-        "Diabetes": full["diabetes"],
-        "Alcoholism": full["alcoholism"],
-        "Handcap": full["handicap"],
-        "SMS_received": full["sms_received"],
-        "DaysAhead": full["days_ahead"],
-        "DayOfWeek": full["day_of_week"],
-        "IsWeekend": full["is_weekend"],
-        "Month": full["month"],
-    })[FEATURE_COLUMNS]
+def build_predictions(appointment_rows: list[dict], full: pd.DataFrame, shai: shai_model.ShaiModel) -> list[dict]:
+    # Every seeded patient has exactly one appointment, so there is no visit history:
+    # prior_appts = prior_no_shows = 0 (first visit) for all rows.
+    records = [
+        shai_model.engineer(
+            model=shai,
+            age=int(row["age"]),
+            gender=row["gender"],
+            distance_km=float(row["distance_km"]),
+            scheduled_day=pd.Timestamp(row["scheduled_day"]).date(),
+            appointment_day=pd.Timestamp(row["appointment_day"]).date(),
+            scheduled_time=row["scheduled_time"],
+            department=row["department"],
+            booking_channel=row["booking_channel"],
+            payment_mode=row["payment_mode"],
+            sms_sent=bool(row["sms_received"]),
+            hypertension=bool(row["hypertension"]),
+            diabetes=bool(row["diabetes"]),
+            prior_appts=0,
+            prior_no_shows=0,
+        )
+        for _, row in full.iterrows()
+    ]
+    features = shai.frame(records)
 
-    print(f"Running model.predict_proba on {len(features):,} rows...")
-    ml_scores = model.predict_proba(features)[:, 1]
+    print(f"Scoring {len(features):,} rows with the SHAI model...")
+    _, calibrated = shai.score(features)
 
     print("Running SHAP explainer (batched)...")
-    shap_values = explainer.shap_values(features)
+    contributions = shai.explain(features)
 
     prediction_rows = []
     for i, appt in enumerate(appointment_rows):
-        contributions = sorted(
-            (
-                {"feature": feat, "contribution": round(float(sv), 4), "value": float(features.iloc[i][feat])}
-                for feat, sv in zip(FEATURE_COLUMNS, shap_values[i])
-            ),
-            key=lambda c: abs(c["contribution"]),
-            reverse=True,
-        )[:6]
-
-        row = full.iloc[i]
-        adjustment = contextual.apply_contextual_adjustment(
-            float(ml_scores[i]),
-            distance_km=float(row["distance_km"]),
-            booking_channel=row["booking_channel"],
-            payment_mode=row["payment_mode"],
-        )
-        final_score = adjustment["final_risk_score"]
-
+        score = round(float(calibrated[i]), 4)
+        category = shai.category(score)
         prediction_rows.append(dict(
             id=uuid.uuid4(),
             appointment_id=appt["id"],
-            risk_score=final_score,
-            risk_category=get_risk_category(final_score),
-            explanation={"contributions": contributions, "contextual_adjustment": adjustment},
-            recommendation=get_recommendation(final_score),
+            risk_score=score,
+            risk_category=category,
+            explanation={"contributions": contributions[i], "model_version": shai.version},
+            recommendation=shai.recommendation(category),
         ))
 
     return prediction_rows
@@ -268,10 +237,7 @@ def main():
     parser.add_argument("--truncate", action="store_true", help="Clear existing data in owned tables first")
     args = parser.parse_args()
 
-    with open(MODEL_PATH, "rb") as f:
-        model = pickle.load(f)
-    with open(EXPLAINER_PATH, "rb") as f:
-        explainer = pickle.load(f)
+    shai = shai_model.ShaiModel()
 
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
@@ -292,7 +258,7 @@ def main():
             db.execute(insert(models.Appointment), chunk)
         db.commit()
 
-        prediction_rows = build_predictions(appointment_rows, full, model, explainer)
+        prediction_rows = build_predictions(appointment_rows, full, shai)
         print("Inserting predictions...")
         for chunk in chunked(prediction_rows, args.chunk_size):
             db.execute(insert(models.Prediction), chunk)

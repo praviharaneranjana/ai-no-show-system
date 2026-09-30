@@ -1,0 +1,85 @@
+{
+ "test_metrics_tuned": {
+  "ROC_AUC": 0.6724897349952136,
+  "PR_AUC": 0.26591121761438236,
+  "Brier": 0.12373014387724196,
+  "Recall_top20": 0.3630089717046239,
+  "Precision_top20": 0.28023441662226956,
+  "Lift_top20": 1.8150448585231194
+ },
+ "comparison_table": [
+  {
+   "model": "Logistic Regression",
+   "ROC_AUC": 0.664,
+   "PR_AUC": 0.267,
+   "Brier": 0.219,
+   "Recall_top20": 0.36,
+   "Precision_top20": 0.278,
+   "Lift_top20": 1.798
+  },
+  {
+   "model": "Decision Tree",
+   "ROC_AUC": 0.643,
+   "PR_AUC": 0.237,
+   "Brier": 0.222,
+   "Recall_top20": 0.343,
+   "Precision_top20": 0.265,
+   "Lift_top20": 1.715
+  },
+  {
+   "model": "Random Forest",
+   "ROC_AUC": 0.659,
+   "PR_AUC": 0.268,
+   "Brier": 0.192,
+   "Recall_top20": 0.371,
+   "Precision_top20": 0.286,
+   "Lift_top20": 1.853
+  },
+  {
+   "model": "XGBoost (plain)",
+   "ROC_AUC": 0.668,
+   "PR_AUC": 0.275,
+   "Brier": 0.124,
+   "Recall_top20": 0.373,
+   "Precision_top20": 0.288,
+   "Lift_top20": 1.867
+  },
+  {
+   "model": "XGBoost (scale_pos_weight)",
+   "ROC_AUC": 0.668,
+   "PR_AUC": 0.274,
+   "Brier": 0.214,
+   "Recall_top20": 0.375,
+   "Precision_top20": 0.29,
+   "Lift_top20": 1.877
+  }
+ ],
+ "oracle_auc": 0.7680293086751536,
+ "n_rows": 64444,
+ "base_rate": 0.15902178635714728,
+ "split": {
+  "train": 42693,
+  "val": 12366,
+  "test": 9385
+ },
+ "top_shap": {
+  "lead_days": 0.3003000020980835,
+  "prior_no_show_rate": 0.18240000307559967,
+  "payment_mode_Prepaid_Online": 0.13230000436306,
+  "sms_sent": 0.11840000003576279,
+  "chronic_count": 0.08699999749660492,
+  "booking_channel_Counter": 0.08560000360012054,
+  "heavy_rain": 0.07029999792575836,
+  "appt_hour": 0.0681999996304512,
+  "age": 0.06629999727010727,
+  "distance_km": 0.06530000269412994
+ },
+ "optuna_best": {
+  "lr": 0.1001154974349885,
+  "depth": 2,
+  "mcw": 28,
+  "sub": 0.549297059562424,
+  "col": 0.5113949721857537,
+  "l2": 0.6207478546107209
+ }
+}
