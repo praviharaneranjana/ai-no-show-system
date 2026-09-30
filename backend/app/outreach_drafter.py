@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 logger = logging.getLogger("noshow_api")
 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 LANGUAGES = {"en": "English", "si": "Sinhala (සිංහල script)", "ta": "Tamil (தமிழ் script)"}
 
 # SHAP feature -> coarse reason category (only positive contributions count as reasons).
@@ -112,14 +112,14 @@ def _prompt(language: str, first_name: str, department: str, when: str, tier: st
         f"Patient first name: {first_name}. Department: {department}. Appointment: {when}.\n"
         f"Priority: {tier}. Tailor the message to this: {guidance}.\n"
         "Rules: at most 45 words; polite and warm; never scolding; do NOT mention risk scores, AI, "
-        "predictions or medical advice; do NOT invent phone numbers, links, prices or doctor names; "
+        "predictions, the date being far away, or medical advice; do NOT invent phone numbers, links, prices or doctor names; "
         "end by telling the patient to reply 1 to CONFIRM, 2 to RESCHEDULE"
         + (", or 3 for a video consultation" if _TELEHEALTH_REASONS & set(reasons) else "")
         + ". Output only the message text."
     )
 
 
-def _call_gemini(prompt: str, attempts: int = 3) -> str | None:
+def _call_gemini(prompt: str, attempts: int = 2) -> str | None:
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         return None
@@ -130,7 +130,7 @@ def _call_gemini(prompt: str, attempts: int = 3) -> str | None:
         logger.warning("google-genai is not installed; using template drafts")
         return None
 
-    client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=15000))
+    client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=12000))
     try:
         for attempt in range(attempts):
             try:

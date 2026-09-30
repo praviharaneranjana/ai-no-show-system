@@ -34,7 +34,7 @@ def test_draft_endpoint_falls_back_to_template_without_api_key(client, monkeypat
 
 
 def test_draft_endpoint_uses_gemini_text_when_available(client, monkeypatch):
-    monkeypatch.setattr(outreach_drafter, "_call_gemini", lambda prompt, attempts=3: "Hello! Please reply 1 to confirm.")
+    monkeypatch.setattr(outreach_drafter, "_call_gemini", lambda prompt, attempts=2: "Hello! Please reply 1 to confirm.")
     patient = make_patient(client)
     appt = make_appointment(client, patient["id"])
     body = client.post("/outreach/draft", json={"appointment_id": appt["id"], "language": "en"}).json()
