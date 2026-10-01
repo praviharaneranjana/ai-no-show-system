@@ -16,7 +16,8 @@ import pandas as pd
 from contextlib import asynccontextmanager
 
 from app import auth, geo, insights, models, outreach_drafter, schemas, shai_model
-from app.services import capacity_service, geo_service, scoring
+from app.his import get_his_connector, connector as his_connector
+from app.services import capacity_service, geo_service, his_sync, scoring
 from app.services.uhid import LK_TZ
 from app.database import get_db
 
@@ -999,6 +1000,99 @@ def calculate_distance_endpoint(
 ):
     dist_km, source = geo_service.calculate_distance(req.latitude, req.longitude)
     return schemas.DistanceResponse(distance_km=dist_km, source=source)
+
+
+# ===================================
+# HIS Connector & Sync Endpoints
+# ===================================
+
+@app.get("/his/status", response_model=schemas.HISStatusResponse)
+def get_his_status(db: Session = Depends(get_db)):
+    connector = get_his_connector(db=db)
+    connector_type = "http" if isinstance(connector, his_connector.HttpHISConnector) else "simulated"
+    is_healthy = connector.health_check()
+
+    last_run = (
+        db.query(models.HISSyncRun)
+        .order_by(models.HISSyncRun.started_at.desc())
+        .first()
+    )
+
+    total_his = db.query(models.HISAppointment).count()
+    today_lk = datetime.now(LK_TZ).date()
+    synced_today = (
+        db.query(models.Appointment)
+        .filter(
+            models.Appointment.source == "his_sync",
+            models.Appointment.appointment_day == today_lk,
+        )
+        .count()
+    )
+
+    return schemas.HISStatusResponse(
+        connector_type=connector_type,
+        connector_healthy=is_healthy,
+        last_sync_run=schemas.HISLastSyncRun.model_validate(last_run) if last_run else None,
+        total_his_records=total_his,
+        synced_appointments_today=synced_today,
+    )
+
+
+@app.post("/his/sync", response_model=schemas.HISSyncResponse)
+def trigger_his_sync(
+    date_val: Optional[date] = Query(None, alias="date"),
+    current_user: Optional[models.User] = Depends(auth.require_user),
+    db: Session = Depends(get_db),
+):
+    target_date = date_val or datetime.now(LK_TZ).date()
+    actor = current_user.email if current_user else "staff"
+    connector = get_his_connector(db=db)
+    result = his_sync.sync_day(
+        target_date=target_date,
+        db=db,
+        connector=connector,
+        triggered_by=actor,
+        trigger="manual",
+    )
+    return schemas.HISSyncResponse(
+        run_id=result.run_id,
+        target_date=result.target_date,
+        status=result.status,
+        fetched=result.fetched,
+        created=result.created,
+        updated=result.updated,
+        unchanged=result.unchanged,
+        failed=result.failed,
+        error=result.error,
+    )
+
+
+@app.post("/his/simulate/arrivals", response_model=schemas.HISSimulateArrivalsResponse)
+def simulate_his_arrivals(
+    count: int = Query(5, ge=1, le=50),
+    db: Session = Depends(get_db),
+):
+    """Dev-only endpoint that marks a random subset of today's booked appointments as arrived in simulated HIS."""
+    today_lk = datetime.now(LK_TZ).date()
+    appts = (
+        db.query(models.HISAppointment)
+        .filter(
+            models.HISAppointment.appointment_date == today_lk,
+            models.HISAppointment.his_status == "booked",
+        )
+        .limit(count)
+        .all()
+    )
+    external_refs = []
+    for a in appts:
+        a.his_status = "arrived"
+        external_refs.append(a.his_ref)
+    db.commit()
+    return schemas.HISSimulateArrivalsResponse(
+        marked_arrived_count=len(external_refs),
+        external_refs=external_refs,
+    )
+
 
 
 # ===================================

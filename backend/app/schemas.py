@@ -980,3 +980,50 @@ class SimulatorEvaluateResponse(BaseModel):
     expense_drag_pct: float = 0.0
     expense_category_breakdown: dict[str, float] = Field(default_factory=dict)
 
+
+# ===================================
+# HIS Connector & Sync Schemas
+# ===================================
+
+class HISLastSyncRun(BaseModel):
+    id: uuid.UUID
+    target_date: date
+    status: str
+    trigger: str
+    fetched: int
+    created: int
+    updated: int
+    unchanged: int
+    failed: int
+    error: str | None = None
+    started_at: datetime
+    finished_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class HISStatusResponse(BaseModel):
+    connector_type: str
+    connector_healthy: bool
+    last_sync_run: HISLastSyncRun | None = None
+    total_his_records: int
+    synced_appointments_today: int
+
+
+class HISSyncResponse(BaseModel):
+    run_id: uuid.UUID
+    target_date: date
+    status: str
+    fetched: int
+    created: int
+    updated: int
+    unchanged: int
+    failed: int
+    error: str | None = None
+
+
+class HISSimulateArrivalsResponse(BaseModel):
+    marked_arrived_count: int
+    external_refs: list[str]
+
+
