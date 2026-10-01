@@ -1,36 +1,119 @@
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, time
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, Numeric, String
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, Numeric, SmallInteger, String, Text, Time
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from app.database import Base
 
 
+# ===================================
+# Reference Data Models
+# ===================================
+
+class Department(Base):
+    __tablename__ = "departments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    model_category: Mapped[str | None] = mapped_column(Text, nullable=True)
+    icon: Mapped[str] = mapped_column(Text, nullable=False, default="stethoscope")
+    telehealth_ok: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    doctors: Mapped[list["Doctor"]] = relationship(back_populates="department")
+
+
+class Doctor(Base):
+    __tablename__ = "doctors"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title: Mapped[str] = mapped_column(Text, nullable=False, default="Dr.")
+    full_name: Mapped[str] = mapped_column(Text, nullable=False)
+    department_id: Mapped[int] = mapped_column(ForeignKey("departments.id"), nullable=False)
+    his_doctor_code: Mapped[str | None] = mapped_column(Text, unique=True, nullable=True)
+    default_room: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    needs_review: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    department: Mapped["Department"] = relationship(back_populates="doctors")
+    sessions: Mapped[list["DoctorClinicSession"]] = relationship(back_populates="doctor", cascade="all, delete-orphan")
+    appointments: Mapped[list["Appointment"]] = relationship(back_populates="doctor")
+
+
+class DoctorClinicSession(Base):
+    __tablename__ = "doctor_clinic_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    doctor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("doctors.id", ondelete="CASCADE"), nullable=False)
+    weekday: Mapped[int] = mapped_column(SmallInteger, nullable=False)  # 0 = Monday
+    label: Mapped[str] = mapped_column(Text, nullable=False)  # Morning, Afternoon, Evening
+    start_time: Mapped[time] = mapped_column(Time, nullable=False)
+    end_time: Mapped[time] = mapped_column(Time, nullable=False)
+    room: Mapped[str] = mapped_column(Text, nullable=False)
+    max_patients: Mapped[int] = mapped_column(Integer, nullable=False, default=25)
+    slot_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=12)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    doctor: Mapped["Doctor"] = relationship(back_populates="sessions")
+    appointments: Mapped[list["Appointment"]] = relationship(back_populates="clinic_session")
+
+
+class Location(Base):
+    __tablename__ = "locations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    name_norm: Mapped[str] = mapped_column(Text, nullable=False)
+    district: Mapped[str | None] = mapped_column(Text, nullable=True)
+    province: Mapped[str | None] = mapped_column(Text, nullable=True)
+    kind: Mapped[str] = mapped_column(Text, nullable=False, default="town")
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    population: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    aliases: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
+    source: Mapped[str] = mapped_column(Text, nullable=False, default="geonames")
+
+    patients: Mapped[list["Patient"]] = relationship(back_populates="location")
+
+
+# ===================================
+# Core Patient & Appointment Models
+# ===================================
+
 class Patient(Base):
     __tablename__ = "patients"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    uhid: Mapped[str | None] = mapped_column(String, nullable=True)
+    uhid: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     full_name: Mapped[str] = mapped_column(String, nullable=False)
     date_of_birth: Mapped[date] = mapped_column(Date, nullable=False)
     gender: Mapped[str | None] = mapped_column(String)
     phone: Mapped[str | None] = mapped_column(String)
     email: Mapped[str | None] = mapped_column(String)
     city: Mapped[str | None] = mapped_column(String, nullable=True)
+    district: Mapped[str | None] = mapped_column(Text, nullable=True)
+    address_line: Mapped[str | None] = mapped_column(Text, nullable=True)
+    location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"), nullable=True)
     distance_km: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
+    distance_source: Mapped[str | None] = mapped_column(Text, nullable=True)  # road_osrm, estimated, manual
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    preferred_language: Mapped[str] = mapped_column(Text, nullable=False, default="en")  # en, si, ta
+    his_patient_ref: Mapped[str | None] = mapped_column(Text, unique=True, nullable=True)
+    nic: Mapped[str | None] = mapped_column(Text, nullable=True)
     scholarship: Mapped[bool] = mapped_column(Boolean, default=False)
     hypertension: Mapped[bool] = mapped_column(Boolean, default=False)
     diabetes: Mapped[bool] = mapped_column(Boolean, default=False)
     alcoholism: Mapped[bool] = mapped_column(Boolean, default=False)
     handicap: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     appointments: Mapped[list["Appointment"]] = relationship(back_populates="patient")
+    location: Mapped["Location | None"] = relationship(back_populates="patients")
 
 
 class Appointment(Base):
@@ -41,27 +124,42 @@ class Appointment(Base):
     scheduled_day: Mapped[date] = mapped_column(Date, nullable=False)
     appointment_day: Mapped[date] = mapped_column(Date, nullable=False)
     department: Mapped[str | None] = mapped_column(String)
-    # No column-level `default=` here on purpose: SQLAlchemy's Python-side
-    # default fires even when a value is explicitly set to None, which would
-    # silently coerce a genuine "unknown channel/payment" into a fake value
-    # and feed a wrong signal into the contextual risk adjustment layer.
-    # AppointmentCreate already supplies sensible defaults when a field is
-    # omitted entirely — this column stays nullable=True (default) so an
-    # explicit null is respected as "not on record".
-    doctor_name: Mapped[str | None] = mapped_column(String)
+    doctor_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("doctors.id"), nullable=True)
+    clinic_session_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("doctor_clinic_sessions.id"), nullable=True)
+    doctor_name: Mapped[str | None] = mapped_column(String)  # denormalized display copy
+    source: Mapped[str] = mapped_column(Text, nullable=False, default="manual")  # manual, his_sync
+    external_ref: Mapped[str | None] = mapped_column(Text, nullable=True)  # his_ref
+    his_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    booked_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    booking_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     booking_channel: Mapped[str | None] = mapped_column(String)
     payment_mode: Mapped[str | None] = mapped_column(String)
     scheduled_time: Mapped[str | None] = mapped_column(String)
     queue_number: Mapped[int | None] = mapped_column(Integer)
     ai_action_status: Mapped[str | None] = mapped_column(String)
+    sms_reminder_opt_in: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     sms_received: Mapped[bool] = mapped_column(Boolean, default=False)
-    status: Mapped[str] = mapped_column(String, default="scheduled")
+    reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String, default="scheduled")  # scheduled, completed, no_show, cancelled
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancel_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    late_cancel: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    rescheduled_from_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("appointments.id"), nullable=True)
+    checked_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     no_show: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    no_show_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    outcome_recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    outcome_recorded_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    outcome_source: Mapped[str | None] = mapped_column(Text, nullable=True)  # staff, system, his_sync
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     patient: Mapped["Patient"] = relationship(back_populates="appointments")
+    doctor: Mapped["Doctor | None"] = relationship(back_populates="appointments")
+    clinic_session: Mapped["DoctorClinicSession | None"] = relationship(back_populates="appointments")
     prediction: Mapped["Prediction"] = relationship(back_populates="appointment", uselist=False)
     interventions: Mapped[list["Intervention"]] = relationship(back_populates="appointment")
+    events: Mapped[list["AppointmentEvent"]] = relationship(back_populates="appointment", cascade="all, delete-orphan")
+    prediction_logs: Mapped[list["PredictionLog"]] = relationship(back_populates="appointment", cascade="all, delete-orphan")
 
 
 class Prediction(Base):
@@ -73,11 +171,12 @@ class Prediction(Base):
     risk_category: Mapped[str] = mapped_column(String, nullable=False)
     explanation: Mapped[dict] = mapped_column(JSONB, nullable=False)
     recommendation: Mapped[str] = mapped_column(String, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     appointment: Mapped["Appointment"] = relationship(back_populates="prediction")
 
 
+# Legacy DoctorSession kept for backward compatibility with existing tests
 class DoctorSession(Base):
     __tablename__ = "doctor_sessions"
 
@@ -91,7 +190,7 @@ class DoctorSession(Base):
     delay_minutes: Mapped[int] = mapped_column(Integer, default=0)
     avg_consultation_mins: Mapped[int] = mapped_column(Integer, default=12)
     max_capacity: Mapped[int] = mapped_column(Integer, default=25)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Intervention(Base):
@@ -105,7 +204,7 @@ class Intervention(Base):
     patient_reply: Mapped[str | None] = mapped_column(String, nullable=True)
     intent_detected: Mapped[str | None] = mapped_column(String, nullable=True)
     offered_slot: Mapped[str | None] = mapped_column(String, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     appointment: Mapped["Appointment"] = relationship(back_populates="interventions")
 
@@ -121,8 +220,7 @@ class WaitlistEntry(Base):
     urgency_level: Mapped[str] = mapped_column(String, default="Normal")  # High, Normal, Routine
     preferred_days: Mapped[str] = mapped_column(String, default="Any weekday evening")
     status: Mapped[str] = mapped_column(String, default="waiting")  # waiting, offered, accepted, expired
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class User(Base):
@@ -139,4 +237,116 @@ class User(Base):
     failed_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ===================================
+# Audit & Prediction Log Models
+# ===================================
+
+class AppointmentEvent(Base):
+    __tablename__ = "appointment_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    appointment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("appointments.id", ondelete="CASCADE"), nullable=False)
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)  # booked, synced, sms_queued, sms_sent, outcome, etc.
+    from_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    to_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    actor: Mapped[str | None] = mapped_column(Text, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    appointment: Mapped["Appointment"] = relationship(back_populates="events")
+
+
+class PredictionLog(Base):
+    __tablename__ = "prediction_log"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    appointment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("appointments.id", ondelete="CASCADE"), nullable=False)
+    stage: Mapped[str] = mapped_column(Text, nullable=False)  # booking, import, rescore
+    features: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    risk_score: Mapped[float] = mapped_column(Numeric(5, 4), nullable=False)
+    risk_category: Mapped[str] = mapped_column(Text, nullable=False)
+    model_version: Mapped[str] = mapped_column(Text, nullable=False)
+    prediction_run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    appointment: Mapped["Appointment"] = relationship(back_populates="prediction_logs")
+
+
+# ===================================
+# Simulated Hospital Information System (HIS)
+# ===================================
+
+class HISAppointment(Base):
+    __tablename__ = "his_appointments"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    his_ref: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    his_patient_ref: Mapped[str] = mapped_column(Text, nullable=False)
+    patient_name: Mapped[str] = mapped_column(Text, nullable=False)
+    date_of_birth: Mapped[date] = mapped_column(Date, nullable=False)
+    gender: Mapped[str | None] = mapped_column(Text, nullable=True)
+    phone: Mapped[str | None] = mapped_column(Text, nullable=True)
+    nic: Mapped[str | None] = mapped_column(Text, nullable=True)
+    city: Mapped[str | None] = mapped_column(Text, nullable=True)
+    doctor_code: Mapped[str] = mapped_column(Text, nullable=False)
+    doctor_name: Mapped[str] = mapped_column(Text, nullable=False)
+    department: Mapped[str] = mapped_column(Text, nullable=False)
+    appointment_date: Mapped[date] = mapped_column(Date, nullable=False)
+    appointment_time: Mapped[time] = mapped_column(Time, nullable=False)
+    booked_on: Mapped[date] = mapped_column(Date, nullable=False)
+    booking_channel: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payment_mode: Mapped[str | None] = mapped_column(Text, nullable=True)
+    token_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    his_status: Mapped[str] = mapped_column(Text, nullable=False, default="booked")  # booked, arrived, completed, no_show, cancelled
+    hypertension: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    diabetes: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    alcoholism: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    handicap: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    scholarship: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    sms_sent: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class HISSyncRun(Base):
+    __tablename__ = "his_sync_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    target_date: Mapped[date] = mapped_column(Date, nullable=False)
+    trigger: Mapped[str] = mapped_column(Text, nullable=False)  # manual, auto, combined_run
+    status: Mapped[str] = mapped_column(Text, nullable=False)  # running, done, failed
+    fetched: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    unchanged: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    triggered_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PredictionRun(Base):
+    __tablename__ = "prediction_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_date: Mapped[date] = mapped_column(Date, nullable=False)
+    doctor_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("doctors.id"), nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False)  # queued, running, done, failed
+    stage: Mapped[str] = mapped_column(Text, nullable=False, default="queued")
+    with_sync: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    scored: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    high: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    medium: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    low: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expected_no_shows: Mapped[float | None] = mapped_column(Numeric(6, 2), nullable=True)
+    model_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    triggered_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

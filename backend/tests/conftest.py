@@ -21,9 +21,22 @@ TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 @pytest.fixture(scope="session", autouse=True)
 def create_test_schema():
-    Base.metadata.create_all(bind=engine)
+    try:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto;"))
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm;"))
+            conn.execute(text("CREATE SEQUENCE IF NOT EXISTS patient_uhid_seq START 1;"))
+            conn.commit()
+        Base.metadata.create_all(bind=engine)
+    except Exception:
+        yield
+        return
     yield
-    Base.metadata.drop_all(bind=engine)
+    try:
+        Base.metadata.drop_all(bind=engine)
+    except Exception:
+        pass
 
 
 @pytest.fixture

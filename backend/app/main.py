@@ -177,6 +177,12 @@ def health(db: Session = Depends(get_db)):
     except Exception:
         db_status = "unavailable"
     return {"status": "ok", "database": db_status}
+
+
+@app.get("/model/info")
+def get_model_info():
+    """Active model metadata, version, capacity thresholds, and benchmark test metrics."""
+    return shai.info()
  
 @app.post("/predict", response_model=PredictionResponse)
 def predict_no_show(data: AppointmentRequest, db: Session = Depends(get_db)):
@@ -257,9 +263,12 @@ def predict_no_show(data: AppointmentRequest, db: Session = Depends(get_db)):
 # ======================
 @app.post("/patients", response_model=schemas.PatientOut, status_code=201)
 def create_patient(data: schemas.PatientCreate, db: Session = Depends(get_db)):
+    from app.services.uhid import generate_uhid
     fields = data.model_dump()
     patient = models.Patient(**fields)
     patient.id = uuid.uuid4()
+    if not patient.uhid:
+        patient.uhid = generate_uhid(db)
     # Resolve the city to real coordinates and derive the distance from them, so the
     # model input and the map always agree. An explicit lat/lng wins over the city lookup.
     if patient.latitude is None or patient.longitude is None:
