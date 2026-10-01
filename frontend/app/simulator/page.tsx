@@ -1,10 +1,12 @@
 import { Calculator, Sparkles } from "lucide-react";
-
+import { fetchExpenseDataAction } from "@/app/simulator/actions";
 import { RoiSimulator } from "@/app/simulator/roi-simulator";
 import { requireRole } from "@/lib/session";
 
 export default async function SimulatorPage() {
   await requireRole("manager");
+  const { categories, expenses } = await fetchExpenseDataAction();
+
   return (
     <div className="flex w-full flex-col gap-6 p-4 sm:p-6 lg:p-8 max-w-[1400px] mx-auto animate-in fade-in duration-300">
       {/* Header */}
@@ -21,17 +23,17 @@ export default async function SimulatorPage() {
             </div>
           </div>
           <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
-            Adjust clinic scale and intervention parameters to model financial upside for hospital leadership.
+            Adjust clinic scale, hospital expense profiles, and patient giveaways to model true boardroom EBITDA.
           </p>
         </div>
 
         <div className="inline-flex items-center gap-2 self-start md:self-auto px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-medium">
           <Sparkles className="size-3.5" />
-          <span>Parametric Economic Model · Currency in LKR</span>
+          <span>Parametric CapEx/OpEx Model · Currency in LKR</span>
         </div>
       </div>
 
-      <RoiSimulator />
+      <RoiSimulator initialCategories={categories} initialExpenses={expenses} />
     </div>
   );
 }

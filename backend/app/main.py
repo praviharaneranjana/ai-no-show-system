@@ -5,9 +5,9 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session, joinedload
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import List, Optional
 import os
 
@@ -16,6 +16,8 @@ import pandas as pd
 from contextlib import asynccontextmanager
 
 from app import auth, geo, insights, models, outreach_drafter, schemas, shai_model
+from app.services import capacity_service, geo_service
+from app.services.uhid import LK_TZ
 from app.database import get_db
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -427,6 +429,231 @@ def get_appointment_prediction(appointment_id: uuid.UUID, db: Session = Depends(
 
 
 # ===================================
+# Reference Data & Discovery Endpoints
+# ===================================
+
+@app.get("/departments", response_model=List[schemas.DepartmentOut])
+def list_departments(db: Session = Depends(get_db)):
+    depts = (
+        db.query(
+            models.Department,
+            func.count(models.Doctor.id).label("doc_count"),
+        )
+        .outerjoin(
+            models.Doctor,
+            (models.Doctor.department_id == models.Department.id)
+            & (models.Doctor.active == True),
+        )
+        .filter(models.Department.active == True)
+        .group_by(models.Department.id)
+        .order_by(models.Department.name.asc())
+        .all()
+    )
+    result = []
+    for dept, doc_count in depts:
+        result.append(
+            schemas.DepartmentOut(
+                id=dept.id,
+                name=dept.name,
+                model_category=dept.model_category,
+                icon=dept.icon,
+                telehealth_ok=dept.telehealth_ok,
+                active=dept.active,
+                doctor_count=doc_count,
+            )
+        )
+    return result
+
+
+@app.get("/doctors", response_model=List[schemas.DoctorOut])
+def list_doctors(
+    department_id: Optional[int] = Query(None),
+    q: Optional[str] = Query(None),
+    active: bool = Query(True),
+    db: Session = Depends(get_db),
+):
+    query = (
+        db.query(models.Doctor)
+        .options(
+            joinedload(models.Doctor.department),
+            joinedload(models.Doctor.sessions),
+        )
+        .filter(models.Doctor.active == active)
+    )
+    if department_id is not None:
+        query = query.filter(models.Doctor.department_id == department_id)
+    if q and q.strip():
+        term = f"%{q.strip().lower()}%"
+        query = query.filter(func.lower(models.Doctor.full_name).like(term))
+
+    doctors = query.order_by(models.Doctor.full_name.asc()).all()
+
+    now_lk = datetime.now(LK_TZ)
+    today_lk = now_lk.date()
+    current_time = now_lk.time()
+
+    out = []
+    for doc in doctors:
+        disp_name = f"{doc.title} {doc.full_name}".strip()
+        active_sessions = [s for s in doc.sessions if s.active]
+        active_weekdays = {s.weekday for s in active_sessions}
+
+        next_date = None
+        if active_weekdays:
+            for d in range(8):
+                cand_date = today_lk + timedelta(days=d)
+                cand_weekday = cand_date.weekday()
+                if cand_weekday in active_weekdays:
+                    if d == 0:
+                        today_sessions = [s for s in active_sessions if s.weekday == cand_weekday]
+                        if any(s.end_time > current_time for s in today_sessions):
+                            next_date = cand_date
+                            break
+                    else:
+                        next_date = cand_date
+                        break
+
+        sessions_out = [
+            schemas.ClinicSessionOut(
+                id=s.id,
+                doctor_id=s.doctor_id,
+                weekday=s.weekday,
+                label=s.label,
+                start_time=s.start_time,
+                end_time=s.end_time,
+                room=s.room,
+                max_patients=s.max_patients,
+                slot_minutes=s.slot_minutes,
+                active=s.active,
+            )
+            for s in active_sessions
+        ]
+
+        dept_out = None
+        if doc.department:
+            dept_out = schemas.DepartmentOut(
+                id=doc.department.id,
+                name=doc.department.name,
+                model_category=doc.department.model_category,
+                icon=doc.department.icon,
+                telehealth_ok=doc.department.telehealth_ok,
+                active=doc.department.active,
+                doctor_count=0,
+            )
+
+        out.append(
+            schemas.DoctorOut(
+                id=doc.id,
+                title=doc.title,
+                full_name=doc.full_name,
+                display_name=disp_name,
+                department_id=doc.department_id,
+                department=dept_out,
+                default_room=doc.default_room,
+                active=doc.active,
+                needs_review=doc.needs_review,
+                sessions=sessions_out,
+                next_clinic_date=next_date,
+            )
+        )
+    return out
+
+
+@app.get("/doctors/{doctor_id}/availability", response_model=schemas.AvailabilityResponse)
+def get_doctor_availability(
+    doctor_id: uuid.UUID,
+    from_date: Optional[date] = Query(None, alias="from"),
+    days: int = Query(21, ge=1, le=60),
+    db: Session = Depends(get_db),
+):
+    doc = db.get(models.Doctor, doctor_id)
+    if not doc or not doc.active:
+        raise HTTPException(status_code=404, detail="Doctor not found or inactive")
+
+    start_date = from_date or datetime.now(LK_TZ).date()
+
+    active_sessions = (
+        db.query(models.DoctorClinicSession)
+        .filter(
+            models.DoctorClinicSession.doctor_id == doctor_id,
+            models.DoctorClinicSession.active == True,
+        )
+        .order_by(models.DoctorClinicSession.start_time.asc())
+        .all()
+    )
+
+    day_list = []
+    for day_offset in range(days):
+        target_date = start_date + timedelta(days=day_offset)
+        target_weekday = target_date.weekday()
+        matching_sessions = [s for s in active_sessions if s.weekday == target_weekday]
+        if not matching_sessions:
+            continue
+
+        session_items = []
+        for s in matching_sessions:
+            booked = (
+                db.query(models.Appointment)
+                .filter(
+                    models.Appointment.doctor_id == doctor_id,
+                    models.Appointment.appointment_day == target_date,
+                    models.Appointment.clinic_session_id == s.id,
+                    models.Appointment.status != "cancelled",
+                )
+                .count()
+            )
+            remaining = max(0, s.max_patients - booked)
+            next_token = booked + 1
+            session_items.append(
+                schemas.AvailabilitySession(
+                    session_id=s.id,
+                    label=s.label,
+                    start_time=s.start_time.strftime("%H:%M"),
+                    end_time=s.end_time.strftime("%H:%M"),
+                    room=s.room,
+                    max_patients=s.max_patients,
+                    booked=booked,
+                    remaining=remaining,
+                    next_token=next_token,
+                )
+            )
+
+        day_list.append(
+            schemas.AvailabilityDay(
+                date=target_date,
+                sessions=session_items,
+            )
+        )
+
+    return schemas.AvailabilityResponse(days=day_list)
+
+
+@app.get("/locations", response_model=List[schemas.LocationOut])
+def get_locations(
+    q: str = Query("", min_length=0),
+    limit: int = Query(8, ge=1, le=50),
+    db: Session = Depends(get_db),
+):
+    results = geo_service.search_locations(db, q, limit)
+    return [schemas.LocationOut(**r) for r in results]
+
+
+@app.get("/locations/geocode")
+def geocode_location(
+    q: str = Query("", min_length=0),
+):
+    return geo_service.geocode_photon(q)
+
+
+@app.post("/distance", response_model=schemas.DistanceResponse)
+def calculate_distance_endpoint(
+    req: schemas.DistanceRequest,
+):
+    dist_km, source = geo_service.calculate_distance(req.latitude, req.longitude)
+    return schemas.DistanceResponse(distance_km=dist_km, source=source)
+
+
+# ===================================
 # 1. Doctor Sessions & Queue Tracking
 # ===================================
 @app.get("/doctors/sessions", response_model=List[schemas.DoctorSessionOut])
@@ -493,94 +720,163 @@ def update_doctor_delay(
 
 
 # ===================================
-# 2. Prescriptive Capacity & Overbooking
+# 2. Prescriptive Capacity & Overbooking v2
 # ===================================
+
 @app.post("/capacity/optimize", response_model=schemas.CapacityOptimizeResponse, dependencies=[Depends(auth.require_role("manager"))])
 def optimize_capacity(req: schemas.CapacityOptimizeRequest, db: Session = Depends(get_db)):
-    target_date = req.session_date or pd.to_datetime("today").date()
-    sessions = db.query(models.DoctorSession).all()
-    if not sessions:
-        list_doctor_sessions(db)
-        sessions = db.query(models.DoctorSession).all()
-
-    appointments = db.query(models.Appointment).filter(models.Appointment.appointment_day >= target_date).all()
-    
-    session_details = []
-    total_cap = 0
-    total_booked = 0
-    total_pred_no_shows = 0
-    total_rec_overbooks = 0
-    total_rev_recovery = 0.0
-
-    consultation_fee = 4500.0  # LKR average consultant fee
-
-    for sess in sessions:
-        sess_appts = [a for a in appointments if a.doctor_name == sess.doctor_name or a.department == sess.specialty]
-        booked_count = max(len(sess_appts), 14)  # baseline realistic count
-        
-        # Calculate predicted no-show count based on stored predictions or baseline
-        high_risk_count = 0
-        predicted_no_show_count = 0
-        for a in sess_appts:
-            if a.prediction:
-                if a.prediction.risk_category == "High":
-                    high_risk_count += 1
-                    predicted_no_show_count += 1
-                elif a.prediction.risk_category == "Medium":
-                    predicted_no_show_count += 0.5
-        
-        if not sess_appts:
-            high_risk_count = 4
-            predicted_no_show_count = 5
-
-        # Mathematical overbooking rule:
-        # Overbook up to predicted no-shows while keeping expected queue wait below tolerance
-        # Expected extra wait time ~ (overbooks * avg_consultation_mins) * (1 - no_show_rate)
-        rec_overbook = max(1, min(int(predicted_no_show_count * 0.75), 3))
-        est_extra_wait = round(rec_overbook * (sess.avg_consultation_mins * 0.35), 1)
-        rev_gain = rec_overbook * consultation_fee
-
-        if est_extra_wait > req.max_wait_time_tolerance_mins:
-            rec_overbook = max(0, rec_overbook - 1)
-            est_extra_wait = round(rec_overbook * (sess.avg_consultation_mins * 0.35), 1)
-            rev_gain = rec_overbook * consultation_fee
-
-        risk_lvl = "Safe" if est_extra_wait <= 8 else ("Moderate" if est_extra_wait <= 15 else "Caution")
-        advice = (
-            f"Overbook +{rec_overbook} slots. High certainty of attendance recovery with under {est_extra_wait}m added wait."
-            if rec_overbook > 0 else "Optimal capacity reached. Do not overbook to maintain zero queue delay."
-        )
-
-        detail = schemas.SessionOptimizationDetail(
-            doctor_name=sess.doctor_name,
-            specialty=sess.specialty,
-            room_number=sess.room_number,
-            total_booked=booked_count,
-            predicted_no_shows=int(predicted_no_show_count),
-            high_risk_slots=high_risk_count,
-            recommended_overbook_count=rec_overbook,
-            expected_revenue_gain_lkr=rev_gain,
-            expected_wait_time_mins=est_extra_wait,
-            risk_level=risk_lvl,
-            status_advice=advice,
-        )
-        session_details.append(detail)
-
-        total_cap += sess.max_capacity
-        total_booked += booked_count
-        total_pred_no_shows += int(predicted_no_show_count)
-        total_rec_overbooks += rec_overbook
-        total_rev_recovery += rev_gain
-
-    return schemas.CapacityOptimizeResponse(
-        session_date=target_date,
-        total_capacity=total_cap,
-        total_booked=total_booked,
-        total_predicted_no_shows=total_pred_no_shows,
-        total_recommended_overbooks=total_rec_overbooks,
-        estimated_revenue_recovery_lkr=total_rev_recovery,
-        sessions=session_details,
+    """Optimizes session capacity using calibrated probabilities, Poisson-binomial bounds, and queue simulation."""
+    return capacity_service.get_capacity_overview(
+        db=db,
+        session_date=req.session_date,
+        max_wait_tolerance=req.max_wait_time_tolerance_mins,
+        persist_run=True,
     )
+
+
+@app.get("/capacity/overview", response_model=schemas.CapacityOptimizeResponse, dependencies=[Depends(auth.require_role("manager"))])
+def get_capacity_overview_endpoint(
+    date: Optional[date] = None,
+    doctor_id: Optional[uuid.UUID] = None,
+    max_wait_tolerance: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    """Retrieve full capacity overview, session recommendations, and department mix."""
+    return capacity_service.get_capacity_overview(
+        db=db,
+        session_date=date,
+        target_doctor_id=doctor_id,
+        max_wait_tolerance=max_wait_tolerance,
+        persist_run=False,
+    )
+
+
+@app.get("/capacity/slots", response_model=schemas.CapacitySlotsResponse, dependencies=[Depends(auth.require_role("manager"))])
+def get_capacity_slots_endpoint(
+    date: Optional[date] = None,
+    db: Session = Depends(get_db),
+):
+    """Feature A: Slot-level overbooking heatmap grid with booked patient details."""
+    target_date = date or pd.to_datetime("today").date()
+    return capacity_service.get_capacity_slots(db=db, target_date=target_date)
+
+
+@app.post("/capacity/what-if", response_model=schemas.WhatIfResponse, dependencies=[Depends(auth.require_role("manager"))])
+def evaluate_what_if_endpoint(
+    req: schemas.WhatIfRequest,
+    db: Session = Depends(get_db),
+):
+    """Feature B: Non-persisting live debounced simulation comparing baseline vs what-if policy."""
+    return capacity_service.evaluate_what_if_scenario(db=db, req=req)
+
+
+@app.get("/capacity/scenarios", response_model=List[schemas.CapacityScenarioOut], dependencies=[Depends(auth.require_role("manager"))])
+def list_capacity_scenarios(db: Session = Depends(get_db)):
+    """Feature B: List stored manager what-if scenarios."""
+    return db.query(models.CapacityScenario).order_by(models.CapacityScenario.created_at.desc()).limit(10).all()
+
+
+@app.post("/capacity/scenarios", response_model=schemas.CapacityScenarioOut, dependencies=[Depends(auth.require_role("manager"))])
+def create_capacity_scenario(
+    req: schemas.CapacityScenarioCreate,
+    current_user: models.User = Depends(auth.require_user),
+    db: Session = Depends(get_db),
+):
+    """Feature B: Save a what-if experiment scenario."""
+    scen = models.CapacityScenario(
+        name=req.name,
+        params=req.params,
+        results=req.results,
+        created_by=current_user.full_name,
+    )
+    db.add(scen)
+    db.commit()
+    db.refresh(scen)
+    return scen
+
+
+@app.delete("/capacity/scenarios/{scenario_id}", dependencies=[Depends(auth.require_role("manager"))])
+def delete_capacity_scenario(scenario_id: uuid.UUID, db: Session = Depends(get_db)):
+    """Feature B: Delete a saved scenario."""
+    scen = db.get(models.CapacityScenario, scenario_id)
+    if not scen:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    db.delete(scen)
+    db.commit()
+    return {"message": "Scenario deleted"}
+
+
+@app.get("/capacity/settings", response_model=schemas.CapacitySettingOut, dependencies=[Depends(auth.require_role("manager"))])
+def get_capacity_settings_endpoint(
+    department_id: Optional[int] = None,
+    doctor_id: Optional[uuid.UUID] = None,
+    db: Session = Depends(get_db),
+):
+    """Retrieve active capacity settings for hospital, department, or doctor scope."""
+    return capacity_service.get_effective_settings(db, department_id, doctor_id)
+
+
+@app.put("/capacity/settings", response_model=schemas.CapacitySettingOut, dependencies=[Depends(auth.require_role("manager"))])
+def update_capacity_settings_endpoint(
+    req: schemas.CapacitySettingUpdate,
+    department_id: Optional[int] = None,
+    doctor_id: Optional[uuid.UUID] = None,
+    db: Session = Depends(get_db),
+):
+    """Update capacity settings."""
+    setting = capacity_service.get_effective_settings(db, department_id, doctor_id)
+    update_data = req.model_dump(exclude_unset=True)
+    for field, val in update_data.items():
+        setattr(setting, field, val)
+    db.commit()
+    db.refresh(setting)
+    return setting
+
+
+@app.get("/capacity/forecast", response_model=schemas.ForecastResponse, dependencies=[Depends(auth.require_role("manager"))])
+def get_capacity_forecast_endpoint(
+    horizon: int = Query(7, ge=7, le=30),
+    db: Session = Depends(get_db),
+):
+    """Feature D: Next 7 / 14 / 30 day forward projections with Poisson-binomial confidence intervals."""
+    return capacity_service.get_capacity_forecast(db=db, horizon_days=horizon)
+
+
+@app.get("/capacity/accuracy", response_model=schemas.AccuracyResponse, dependencies=[Depends(auth.require_role("manager"))])
+def get_capacity_accuracy_endpoint(db: Session = Depends(get_db)):
+    """Feature E: Calibration curve, Brier score, and overbooking regret analysis."""
+    return capacity_service.get_capacity_accuracy(db=db)
+
+
+@app.get("/capacity/slot-offers", response_model=List[schemas.SlotOfferOut], dependencies=[Depends(auth.require_role("front_desk"))])
+def get_slot_offers_endpoint(db: Session = Depends(get_db)):
+    """Feature C: List open freed slot offers with ranked candidate recommendations."""
+    return capacity_service.get_freed_slot_offers(db=db)
+
+
+@app.post("/capacity/slot-offers/{offer_id}/act", response_model=schemas.SlotOfferOut, dependencies=[Depends(auth.require_role("front_desk"))])
+def act_on_slot_offer_endpoint(
+    offer_id: uuid.UUID,
+    req: schemas.SlotOfferActionRequest,
+    current_user: models.User = Depends(auth.require_user),
+    db: Session = Depends(get_db),
+):
+    """Feature C: Approve, decline, or undo a freed slot candidate offer."""
+    try:
+        return capacity_service.act_on_slot_offer(
+            db=db,
+            offer_id=offer_id,
+            action=req.action,
+            acted_by=current_user.full_name,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/capacity/nav-counts", response_model=schemas.NavCountsOut)
+def get_capacity_nav_counts(db: Session = Depends(get_db)):
+    """G10: Drive sidebar badges with real live counts."""
+    return capacity_service.get_nav_live_counts(db=db)
 
 
 # ===================================
@@ -750,24 +1046,55 @@ def simulate_patient_agent(req: schemas.AgentSimulateRequest, db: Session = Depe
 
     elif is_telehealth:
         intent = "telehealth"
-        if req.language == "si":
-            response_text = (
-                f"නියමයි! {appt.doctor_name} මහතා සමඟ Video Teleconsultation එකක් සූදානම් කළ හැක. "
-                "අපගේ Asiri MyHealth සබැඳිය ඔස්සේ එක්වන්න: https://telehealth.asirihealth.com/room/4892"
-            )
-        elif req.language == "ta":
-            response_text = (
-                f"சிறப்பு! {appt.doctor_name} அவர்களுடன் Video Teleconsultation செய்ய முடியும். "
-                "இணைப்பு: https://telehealth.asirihealth.com/room/4892"
-            )
+        dept_name = appt.department or "General Medicine"
+        raw_doc = appt.doctor_name or "the specialist"
+        doc_display = raw_doc if raw_doc.startswith("Dr") else f"Dr. {raw_doc}"
+        eligible = outreach_drafter.is_telehealth_eligible(dept_name)
+
+        if not eligible:
+            # Clinical guardrail: Specialty requires physical exam / procedures
+            if req.language == "si":
+                response_text = (
+                    f"{doc_display} මහතාගේ ({dept_name}) පරීක්ෂාව සඳහා රෝගියා පෞද්ගලිකව පැමිණ "
+                    "ශාරීරික පරීක්ෂාවක් (Physical Examination) හෝ X-Ray/පරීක්ෂණ සිදුකිරීම අත්‍යවශ්‍ය බැවින් "
+                    "Video Call මගින් සිදුකළ නොහැක. ලබන සෙනසුරාදා උදෑසන 10:00 ට රෝහලේදී හමුවීමට නව Slot එකක් වෙන්කර දිය හැක. "
+                    "ඔබ ඊට කැමතිද? (✅ ඔව් ලෙස පිළිතුරු දෙන්න)"
+                )
+            elif req.language == "ta":
+                response_text = (
+                    f"{doc_display} அவர்களின் ({dept_name}) ஆலோசனைக்கு நேரடி உடல் பரிசோதனை "
+                    "அல்லது ஸ்கேன்/எக்ஸ்-ரே அவசியம் என்பதால் Video Call மூலம் செய்ய முடியாது. "
+                    "வரும் சனிக்கிழமை காலை 10:00 மணிக்கு மருத்துவமனையில் புதிய நேரம் ஒதுக்க முடியும். "
+                    "உறுதிப்படுத்தவா? (✅ ஆம் என பதிலளிக்கவும்)"
+                )
+            else:
+                response_text = (
+                    f"{doc_display}'s consultation ({dept_name}) requires an in-person physical examination "
+                    "or imaging and cannot be conducted virtually. "
+                    "We have an in-person slot available this Saturday at 10:00 AM. Would you like to reserve this instead? (Reply 'Yes' to confirm)"
+                )
+            action_text = f"Telehealth Ineligible ({dept_name}): Physical Exam Required. In-Person Reschedule Offered."
+            appt.ai_action_status = "In-Person Required (Reschedule Offered)"
+            new_status = "rescheduled"
         else:
-            response_text = (
-                f"Great! We can switch your consultation with {appt.doctor_name} to a Video Telehealth call. "
-                "Your secure consultation room link: https://telehealth.asirihealth.com/room/4892"
-            )
-        action_text = "Converted to Virtual Video Consultation"
-        appt.ai_action_status = "Telehealth Converted"
-        new_status = "telehealth_requested"
+            if req.language == "si":
+                response_text = (
+                    f"නියමයි! {doc_display} මහතා සමඟ Video Teleconsultation එකක් සූදානම් කළ හැක. "
+                    "අපගේ Asiri MyHealth සබැඳිය ඔස්සේ එක්වන්න: https://telehealth.asirihealth.com/room/4892"
+                )
+            elif req.language == "ta":
+                response_text = (
+                    f"சிறப்பு! {doc_display} அவர்களுடன் Video Teleconsultation செய்ய முடியும். "
+                    "இணைப்பு: https://telehealth.asirihealth.com/room/4892"
+                )
+            else:
+                response_text = (
+                    f"Great! We can switch your consultation with {doc_display} to a Video Telehealth call. "
+                    "Your secure consultation room link: https://telehealth.asirihealth.com/room/4892"
+                )
+            action_text = "Converted to Virtual Video Consultation"
+            appt.ai_action_status = "Telehealth Converted"
+            new_status = "telehealth_requested"
 
     elif is_prep:
         intent = "prep_inquiry"
@@ -819,20 +1146,182 @@ def simulate_patient_agent(req: schemas.AgentSimulateRequest, db: Session = Depe
         agent_response=response_text,
         language=req.language,
         suggested_action=action_text,
+        action_executed=action_text,
         status_updated=new_status,
     )
 
 
 # ===================================
-# 5. Executive ROI & Value Simulator
+# 5. Executive ROI & Value Simulator + Hospital CapEx/OpEx
 # ===================================
+
+DEFAULT_EXPENSE_CATEGORIES = [
+    {
+        "key": "patient_incentives",
+        "name": "Patient Incentives & Giveaways",
+        "icon": "gift",
+        "description": "Transport vouchers, medication discounts, and free diagnostic checkups given to patients to boost clinic attendance",
+        "display_order": 1,
+    },
+    {
+        "key": "telco_outreach",
+        "name": "Telco & Messaging Gateways",
+        "icon": "message-square",
+        "description": "SMS bundles (Dialog/Mobitel) and Meta WhatsApp Business API conversation costs",
+        "display_order": 2,
+    },
+    {
+        "key": "tech_infrastructure",
+        "name": "Technology & IT Licensing",
+        "icon": "cpu",
+        "description": "SHAI AI core platform licensing, HIS/EMR vendor API integration, and cloud hosting",
+        "display_order": 3,
+    },
+    {
+        "key": "staff_overtime",
+        "name": "Staff Allowances & Overtime",
+        "icon": "users",
+        "description": "Nursing and front-desk phone outreach allowances, overtime, and shift coordination",
+        "display_order": 4,
+    },
+    {
+        "key": "admin_overhead",
+        "name": "Administrative & Facility Overhead",
+        "icon": "building-2",
+        "description": "Clinic stationery, triage paperwork, and executive operational coordination",
+        "display_order": 5,
+    },
+]
+
+
+def _ensure_expense_categories(db: Session) -> list[models.ExpenseCategory]:
+    cats = db.query(models.ExpenseCategory).order_by(models.ExpenseCategory.display_order.asc()).all()
+    if not cats:
+        cats = [models.ExpenseCategory(**item) for item in DEFAULT_EXPENSE_CATEGORIES]
+        db.add_all(cats)
+        db.commit()
+        for cat in cats:
+            db.refresh(cat)
+    return cats
+
+
+def _ensure_default_expenses(db: Session, categories: list[models.ExpenseCategory]) -> list[models.HospitalExpense]:
+    expenses = db.query(models.HospitalExpense).all()
+    if not expenses:
+        cat_map = {c.key: c.id for c in categories}
+        initial_items = [
+            models.HospitalExpense(
+                hospital_name="Default Hospital",
+                category_id=cat_map.get("patient_incentives", categories[0].id),
+                title="PickMe & Transport Vouchers for Chronic Patients",
+                amount_lkr=450000.0,
+                recurrence="annual",
+                is_active=True,
+                notes="Subsidized transport for elderly diabetic/cardiac patients travelling > 15 km",
+            ),
+            models.HospitalExpense(
+                hospital_name="Default Hospital",
+                category_id=cat_map.get("telco_outreach", categories[1].id),
+                title="Dialog SMS & WhatsApp Gateway Package",
+                amount_lkr=380000.0,
+                recurrence="annual",
+                is_active=True,
+                notes="Monthly bulk SMS quota and WhatsApp session messages",
+            ),
+            models.HospitalExpense(
+                hospital_name="Default Hospital",
+                category_id=cat_map.get("tech_infrastructure", categories[2].id),
+                title="SHAI Core Platform & HIS Integration Run-rate",
+                amount_lkr=1800000.0,
+                recurrence="annual",
+                is_active=True,
+                notes="Fixed annual infrastructure, server run-rate, and model maintenance",
+            ),
+        ]
+        db.add_all(initial_items)
+        db.commit()
+        expenses = db.query(models.HospitalExpense).all()
+    return expenses
+
+
+@app.get("/expenses/categories", response_model=List[schemas.ExpenseCategoryResponse], dependencies=[Depends(auth.require_role("manager"))])
+def list_expense_categories(db: Session = Depends(get_db)):
+    return _ensure_expense_categories(db)
+
+
+@app.get("/expenses", response_model=List[schemas.HospitalExpenseResponse], dependencies=[Depends(auth.require_role("manager"))])
+def list_hospital_expenses(db: Session = Depends(get_db)):
+    cats = _ensure_expense_categories(db)
+    _ensure_default_expenses(db, cats)
+    return db.query(models.HospitalExpense).join(models.ExpenseCategory).order_by(models.HospitalExpense.created_at.desc()).all()
+
+
+@app.post("/expenses", response_model=schemas.HospitalExpenseResponse, dependencies=[Depends(auth.require_role("manager"))])
+def create_hospital_expense(expense: schemas.HospitalExpenseCreate, db: Session = Depends(get_db)):
+    cat = db.get(models.ExpenseCategory, expense.category_id)
+    if not cat:
+        raise HTTPException(status_code=404, detail="Expense category not found")
+    record = models.HospitalExpense(
+        hospital_name=expense.hospital_name,
+        category_id=expense.category_id,
+        title=expense.title.strip(),
+        amount_lkr=expense.amount_lkr,
+        recurrence=expense.recurrence,
+        is_active=expense.is_active,
+        notes=expense.notes.strip() if expense.notes else None,
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+@app.patch("/expenses/{expense_id}", response_model=schemas.HospitalExpenseResponse, dependencies=[Depends(auth.require_role("manager"))])
+def update_hospital_expense(expense_id: uuid.UUID, updates: schemas.HospitalExpenseUpdate, db: Session = Depends(get_db)):
+    record = db.get(models.HospitalExpense, expense_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Hospital expense not found")
+    
+    if updates.category_id is not None:
+        cat = db.get(models.ExpenseCategory, updates.category_id)
+        if not cat:
+            raise HTTPException(status_code=404, detail="Expense category not found")
+        record.category_id = updates.category_id
+    if updates.hospital_name is not None:
+        record.hospital_name = updates.hospital_name.strip()
+    if updates.title is not None:
+        record.title = updates.title.strip()
+    if updates.amount_lkr is not None:
+        record.amount_lkr = updates.amount_lkr
+    if updates.recurrence is not None:
+        record.recurrence = updates.recurrence
+    if updates.is_active is not None:
+        record.is_active = updates.is_active
+    if updates.notes is not None:
+        record.notes = updates.notes.strip() if updates.notes else None
+    
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+@app.delete("/expenses/{expense_id}", dependencies=[Depends(auth.require_role("manager"))])
+def delete_hospital_expense(expense_id: uuid.UUID, db: Session = Depends(get_db)):
+    record = db.get(models.HospitalExpense, expense_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Hospital expense not found")
+    db.delete(record)
+    db.commit()
+    return {"ok": True, "id": str(expense_id)}
+
+
 @app.post("/simulator/evaluate", response_model=schemas.SimulatorEvaluateResponse, dependencies=[Depends(auth.require_role("manager"))])
 def evaluate_roi_simulation(params: schemas.SimulatorEvaluateRequest):
     # Calculations based on Sri Lankan Private Hospital Outpatient Metrics
     daily_consultations = params.daily_clinics_count * 20  # ~20 patients per consultant clinic
     daily_at_risk_slots = daily_consultations * params.baseline_no_show_rate
     
-    annual_operational_days = 310
+    annual_operational_days = params.operational_days_year
     total_annual_lost_slots = daily_at_risk_slots * annual_operational_days
     
     # Financial Leakage (Direct Doctor + Hospital Facility Fee + Ancillary Lab/Pharmacy estimate)
@@ -857,10 +1346,41 @@ def evaluate_roi_simulation(params: schemas.SimulatorEvaluateRequest):
     # Nurse/Staff phone hours eliminated (each patient confirmation call takes ~3.5 mins)
     monthly_calls_automated = (daily_consultations * 0.85) * 26  # 26 working days/month
     nurse_hours_saved_monthly = (monthly_calls_automated * 3.5) / 60.0
+    direct_labor_savings = (nurse_hours_saved_monthly * 12.0) * params.staff_hourly_rate_lkr
 
-    # ROI Multiple relative to typical SaaS/AI infrastructure cost
-    estimated_annual_system_cost = 1_800_000.0  # LKR 1.8M / year
-    net_roi = round(annual_revenue_recovered / max(estimated_annual_system_cost, 1.0), 1)
+    # Dynamic CapEx/OpEx Normalization
+    category_breakdown: dict[str, float] = {}
+    if params.custom_expenses is not None:
+        total_annual_expenses = 0.0
+        for item in params.custom_expenses:
+            if not item.is_active:
+                continue
+            cat_key = item.category_key or "other"
+            if item.recurrence == "monthly":
+                annual_cost = item.amount_lkr * 12.0
+            elif item.recurrence == "per_patient":
+                annual_cost = item.amount_lkr * (intervened_slots * annual_operational_days)
+            else:  # "annual" or "one_off"
+                annual_cost = item.amount_lkr
+            
+            total_annual_expenses += annual_cost
+            category_breakdown[cat_key] = round(category_breakdown.get(cat_key, 0.0) + annual_cost, 2)
+    else:
+        total_annual_expenses = 1_800_000.0  # LKR 1.8M / year default baseline
+        category_breakdown["tech_infrastructure"] = 1_800_000.0
+
+    total_gross_value = annual_revenue_recovered + direct_labor_savings
+    true_net_profit = total_gross_value - total_annual_expenses
+    
+    payback_days = 0.0
+    if total_gross_value > 0:
+        payback_days = round((total_annual_expenses / total_gross_value) * 365.0, 1)
+
+    expense_drag = 0.0
+    if total_gross_value > 0:
+        expense_drag = round((total_annual_expenses / total_gross_value) * 100.0, 2)
+
+    net_roi = round(annual_revenue_recovered / max(total_annual_expenses, 1.0), 1)
 
     return schemas.SimulatorEvaluateResponse(
         daily_slots_at_risk=round(daily_at_risk_slots, 1),
@@ -869,4 +1389,12 @@ def evaluate_roi_simulation(params: schemas.SimulatorEvaluateRequest):
         recovered_doctor_hours_annual=round(annual_doctor_hours, 1),
         nurse_phone_hours_saved_monthly=round(nurse_hours_saved_monthly, 1),
         net_roi_multiple=net_roi,
+        total_annual_expenses_lkr=round(total_annual_expenses, 2),
+        gross_revenue_recovered_lkr=round(annual_revenue_recovered, 0),
+        direct_labor_savings_lkr=round(direct_labor_savings, 0),
+        total_gross_value_created_lkr=round(total_gross_value, 0),
+        true_net_profit_lkr=round(true_net_profit, 0),
+        payback_period_days=payback_days,
+        expense_drag_pct=expense_drag,
+        expense_category_breakdown=category_breakdown,
     )
