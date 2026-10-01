@@ -305,6 +305,7 @@ class IntakeRequest(BaseModel):
     payment_mode: str = "Cash"
     sms_reminder_opt_in: bool = False
     notes: str | None = None
+    heavy_rain: bool | None = None
 
     @field_validator("booking_channel", mode="before")
     @classmethod
@@ -363,6 +364,36 @@ class IntakeResponse(BaseModel):
     appointment: AppointmentOut
     prediction: PredictionOut | None = None
     slot: IntakeSlotOut
+
+
+class PredictPreviewRequest(BaseModel):
+    patient_id: uuid.UUID | None = None
+    patient: PatientCreate | None = None
+    doctor_id: uuid.UUID
+    clinic_session_id: uuid.UUID | None = None
+    appointment_day: date
+    scheduled_time: str | None = None
+    booking_channel: str = "Counter"
+    payment_mode: str = "Cash"
+    heavy_rain: bool | None = None
+
+
+class PatientSearchResult(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    uhid: str
+    full_name: str
+    phone: str | None = None
+    nic: str | None = None
+    date_of_birth: date
+    gender: str | None = None
+    city: str | None = None
+    district: str | None = None
+    distance_km: float | None = None
+    total_visits: int = 0
+    prior_no_shows: int = 0
+    last_visit_date: date | None = None
 
 
 class AppointmentOverviewRow(BaseModel):
@@ -853,6 +884,66 @@ class AccuracyResponse(BaseModel):
 
 
 
+# ===================================
+# Hospital Expenses & CapEx/OpEx Schemas
+# ===================================
+
+class ExpenseCategoryResponse(BaseModel):
+    id: uuid.UUID
+    key: str
+    name: str
+    icon: str
+    description: str | None = None
+    display_order: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class HospitalExpenseEvaluateItem(BaseModel):
+    id: str | None = None
+    category_key: str | None = None
+    title: str
+    amount_lkr: float = Field(..., ge=0.0)
+    recurrence: str = Field("annual", pattern="^(annual|monthly|one_off|per_patient)$")
+    is_active: bool = True
+
+
+class HospitalExpenseCreate(BaseModel):
+    category_id: uuid.UUID
+    hospital_name: str = "Default Hospital"
+    title: str = Field(..., min_length=1, max_length=200)
+    amount_lkr: float = Field(..., ge=0.0)
+    recurrence: str = Field("annual", pattern="^(annual|monthly|one_off|per_patient)$")
+    is_active: bool = True
+    notes: str | None = None
+
+
+class HospitalExpenseUpdate(BaseModel):
+    category_id: uuid.UUID | None = None
+    hospital_name: str | None = None
+    title: str | None = Field(None, min_length=1, max_length=200)
+    amount_lkr: float | None = Field(None, ge=0.0)
+    recurrence: str | None = Field(None, pattern="^(annual|monthly|one_off|per_patient)$")
+    is_active: bool | None = None
+    notes: str | None = None
+
+
+class HospitalExpenseResponse(BaseModel):
+    id: uuid.UUID
+    hospital_name: str
+    category_id: uuid.UUID
+    category: ExpenseCategoryResponse | None = None
+    title: str
+    amount_lkr: float
+    recurrence: str
+    is_active: bool
+    notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class SimulatorEvaluateRequest(BaseModel):
     daily_clinics_count: int = Field(30, ge=1, le=150)
     avg_consultation_fee_lkr: float = Field(4500.0, ge=1000.0, le=30000.0)
@@ -861,6 +952,14 @@ class SimulatorEvaluateRequest(BaseModel):
     patient_reachability_rate: float = Field(0.85, ge=0.50, le=1.0)
     reschedule_success_rate: float = Field(0.65, ge=0.20, le=1.0)
     overbooking_fill_rate: float = Field(0.70, ge=0.20, le=1.0)
+    
+    # Enhanced parameters (with sensible private-hospital defaults)
+    hospital_retained_fee_pct: float = Field(0.30, ge=0.05, le=1.0)
+    ancillary_revenue_per_attended_lkr: float = Field(3500.0, ge=0.0, le=50000.0)
+    staff_hourly_rate_lkr: float = Field(850.0, ge=100.0, le=10000.0)
+    telco_cost_per_msg_lkr: float = Field(2.0, ge=0.0, le=50.0)
+    operational_days_year: int = Field(310, ge=100, le=365)
+    custom_expenses: list[HospitalExpenseEvaluateItem] | None = None
 
 
 class SimulatorEvaluateResponse(BaseModel):
@@ -870,3 +969,14 @@ class SimulatorEvaluateResponse(BaseModel):
     recovered_doctor_hours_annual: float
     nurse_phone_hours_saved_monthly: float
     net_roi_multiple: float
+
+    # Enhanced metrics
+    total_annual_expenses_lkr: float = 1800000.0
+    gross_revenue_recovered_lkr: float = 0.0
+    direct_labor_savings_lkr: float = 0.0
+    total_gross_value_created_lkr: float = 0.0
+    true_net_profit_lkr: float = 0.0
+    payback_period_days: float = 0.0
+    expense_drag_pct: float = 0.0
+    expense_category_breakdown: dict[str, float] = Field(default_factory=dict)
+

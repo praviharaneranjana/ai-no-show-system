@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, text
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session, joinedload
 from datetime import date, datetime, timedelta
 from typing import List, Optional
@@ -16,7 +16,7 @@ import pandas as pd
 from contextlib import asynccontextmanager
 
 from app import auth, geo, insights, models, outreach_drafter, schemas, shai_model
-from app.services import capacity_service, geo_service
+from app.services import capacity_service, geo_service, scoring
 from app.services.uhid import LK_TZ
 from app.database import get_db
 
@@ -193,71 +193,419 @@ def predict_no_show(data: AppointmentRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Appointment not found")
 
     try:
-        patient = appointment.patient
-        prior_appts, prior_no_shows = _patient_history(db, appointment)
-        features = shai_model.engineer(
-            model=shai,
-            age=max(appointment.appointment_day.year - patient.date_of_birth.year
-                    - ((appointment.appointment_day.month, appointment.appointment_day.day)
-                       < (patient.date_of_birth.month, patient.date_of_birth.day)), 0),
-            gender=patient.gender,
-            distance_km=float(patient.distance_km) if patient.distance_km is not None else None,
-            scheduled_day=appointment.scheduled_day,
-            appointment_day=appointment.appointment_day,
-            scheduled_time=appointment.scheduled_time,
-            department=appointment.department,
-            booking_channel=appointment.booking_channel,
-            payment_mode=appointment.payment_mode,
-            sms_sent=appointment.sms_received,
-            hypertension=patient.hypertension,
-            diabetes=patient.diabetes,
-            prior_appts=prior_appts,
-            prior_no_shows=prior_no_shows,
+        result = scoring.score_appointment(
+            db=db,
+            appointment=appointment,
+            stage="booking" if appointment.source == "manual" else "rescore",
             heavy_rain=data.heavy_rain,
+            persist=True,
+            shai_instance=shai,
         )
-        df = shai.frame([features])
-        _, calibrated = shai.score(df)
-        risk_score = round(float(calibrated[0]), 4)
-        category = shai.category(risk_score)
-        top_contributions = shai.explain(df)[0]
-
-        result = {
-            "risk_score": risk_score,
-            "risk_category": category,
-            "explanation": top_contributions,
-            "contextual_adjustment": None,
-            "recommendation": shai.recommendation(category),
-        }
-        explanation_payload = {"contributions": top_contributions, "model_version": shai.version}
-
-        # Persist (or update) the prediction for this appointment
-        existing = (
-            db.query(models.Prediction)
-            .filter(models.Prediction.appointment_id == data.appointment_id)
-            .first()
-        )
-        if existing:
-            existing.risk_score = result["risk_score"]
-            existing.risk_category = result["risk_category"]
-            existing.explanation = explanation_payload
-            existing.recommendation = result["recommendation"]
-        else:
-            db.add(models.Prediction(
-                appointment_id=data.appointment_id,
-                risk_score=result["risk_score"],
-                risk_category=result["risk_category"],
-                explanation=explanation_payload,
-                recommendation=result["recommendation"],
-            ))
         db.commit()
-
         return result
-
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/predict/preview")
+def predict_preview(data: schemas.PredictPreviewRequest, db: Session = Depends(get_db)):
+    if data.patient_id:
+        patient = db.get(models.Patient, data.patient_id)
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found")
+    elif data.patient:
+        patient = models.Patient(
+            id=uuid.uuid4(),
+            uhid="PREVIEW",
+            full_name=data.patient.full_name,
+            date_of_birth=data.patient.date_of_birth,
+            gender=data.patient.gender,
+            phone=data.patient.phone,
+            city=data.patient.city,
+            district=data.patient.district,
+            location_id=data.patient.location_id,
+            distance_km=data.patient.distance_km,
+            hypertension=data.patient.hypertension,
+            diabetes=data.patient.diabetes,
+            scholarship=data.patient.scholarship,
+            alcoholism=data.patient.alcoholism,
+            handicap=data.patient.handicap,
+        )
+        if patient.distance_km is None and patient.location_id:
+            loc = db.get(models.Location, patient.location_id)
+            if loc:
+                dist_km, _ = geo_service.calculate_distance(loc.latitude, loc.longitude)
+                patient.distance_km = dist_km
+    else:
+        raise HTTPException(status_code=400, detail="Either patient_id or patient must be provided")
+
+    doctor = db.get(models.Doctor, data.doctor_id)
+    if not doctor:
+        raise HTTPException(status_code=404, detail="Doctor not found")
+
+    dept_name = doctor.department.model_category or doctor.department.name if doctor.department else "General Medicine"
+    today_lk = datetime.now(LK_TZ).date()
+
+    appt = models.Appointment(
+        id=uuid.uuid4(),
+        patient_id=patient.id,
+        doctor_id=doctor.id,
+        scheduled_day=today_lk,
+        appointment_day=data.appointment_day,
+        scheduled_time=data.scheduled_time or "09:00",
+        department=dept_name,
+        booking_channel=schemas.normalise_channel(data.booking_channel) or "Counter",
+        payment_mode=schemas.normalise_payment(data.payment_mode) or "Cash",
+        status="scheduled",
+    )
+    appt.patient = patient
+    appt.doctor = doctor
+
+    result = scoring.score_appointment(
+        db=db,
+        appointment=appt,
+        stage="preview",
+        heavy_rain=data.heavy_rain,
+        persist=False,
+        shai_instance=shai,
+    )
+    return result
+
+
+@app.get("/patients/search", response_model=List[schemas.PatientSearchResult])
+def search_patients(
+    q: str = Query("", min_length=1),
+    limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
+):
+    q_clean = q.strip()
+    if not q_clean:
+        return []
+
+    term = f"%{q_clean.lower()}%"
+    patients = (
+        db.query(models.Patient)
+        .filter(
+            or_(
+                func.lower(models.Patient.phone).like(term),
+                func.lower(models.Patient.nic).like(term),
+                func.lower(models.Patient.uhid).like(term),
+                func.lower(models.Patient.full_name).like(term),
+            )
+        )
+        .order_by(models.Patient.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    out = []
+    for p in patients:
+        prior = (
+            db.query(models.Appointment)
+            .filter(
+                models.Appointment.patient_id == p.id,
+                models.Appointment.status != "cancelled",
+            )
+            .order_by(models.Appointment.appointment_day.desc())
+            .all()
+        )
+        total_visits = len(prior)
+        prior_no_shows = sum(1 for a in prior if a.no_show is True)
+        last_visit = prior[0].appointment_day if prior else None
+
+        out.append(
+            schemas.PatientSearchResult(
+                id=p.id,
+                uhid=p.uhid,
+                full_name=p.full_name,
+                phone=p.phone,
+                nic=p.nic,
+                date_of_birth=p.date_of_birth,
+                gender=p.gender,
+                city=p.city,
+                district=p.district,
+                distance_km=float(p.distance_km) if p.distance_km is not None else None,
+                total_visits=total_visits,
+                prior_no_shows=prior_no_shows,
+                last_visit_date=last_visit,
+            )
+        )
+    return out
+
+
+@app.post("/appointments/intake", response_model=schemas.IntakeResponse)
+def create_appointment_intake(
+    req: schemas.IntakeRequest,
+    current_user: Optional[models.User] = Depends(auth.require_user),
+    db: Session = Depends(get_db),
+):
+    # 1. Validation: Doctor active
+    doctor = db.get(models.Doctor, req.doctor_id)
+    if not doctor or not doctor.active:
+        raise HTTPException(status_code=400, detail="Doctor not found or inactive")
+
+    if not req.clinic_session_id:
+        raise HTTPException(status_code=400, detail="clinic_session_id is required")
+
+    session = db.get(models.DoctorClinicSession, req.clinic_session_id)
+    if not session or not session.active or session.doctor_id != doctor.id:
+        raise HTTPException(status_code=400, detail="Clinic session not found for this doctor")
+
+    today_lk = datetime.now(LK_TZ).date()
+    if req.appointment_day < today_lk:
+        raise HTTPException(status_code=400, detail="Cannot book appointments in the past")
+
+    if req.appointment_day.weekday() != session.weekday:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Doctor does not hold this clinic session on weekday {req.appointment_day.weekday()} (session is weekday {session.weekday})",
+        )
+
+    # Check capacity & find next available if full
+    booked_count = (
+        db.query(models.Appointment)
+        .filter(
+            models.Appointment.doctor_id == doctor.id,
+            models.Appointment.clinic_session_id == session.id,
+            models.Appointment.appointment_day == req.appointment_day,
+            models.Appointment.status != "cancelled",
+        )
+        .count()
+    )
+    if booked_count >= session.max_patients:
+        next_avail = None
+        for d in range(1, 29):
+            cand_date = req.appointment_day + timedelta(days=d)
+            if cand_date.weekday() == session.weekday:
+                c_booked = (
+                    db.query(models.Appointment)
+                    .filter(
+                        models.Appointment.doctor_id == doctor.id,
+                        models.Appointment.clinic_session_id == session.id,
+                        models.Appointment.appointment_day == cand_date,
+                        models.Appointment.status != "cancelled",
+                    )
+                    .count()
+                )
+                if c_booked < session.max_patients:
+                    next_avail = cand_date.isoformat()
+                    break
+
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "session_full",
+                "message": f"Clinic session is full ({booked_count}/{session.max_patients})",
+                "next_available": {"date": next_avail, "session_id": str(session.id)},
+            },
+        )
+
+    # 2. Upsert Patient
+    patient = None
+    if req.patient_id:
+        patient = db.get(models.Patient, req.patient_id)
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found")
+    elif req.patient:
+        if req.patient.nic and req.patient.nic.strip():
+            patient = (
+                db.query(models.Patient)
+                .filter(func.lower(models.Patient.nic) == req.patient.nic.strip().lower())
+                .first()
+            )
+        if not patient and req.patient.phone and req.patient.phone.strip():
+            patient = (
+                db.query(models.Patient)
+                .filter(
+                    models.Patient.phone == req.patient.phone.strip(),
+                    func.lower(models.Patient.full_name) == req.patient.full_name.strip().lower(),
+                )
+                .first()
+            )
+
+        if patient:
+            if req.patient.location_id and not patient.location_id:
+                patient.location_id = req.patient.location_id
+            if req.patient.city and not patient.city:
+                patient.city = req.patient.city
+            if req.patient.district and not patient.district:
+                patient.district = req.patient.district
+        else:
+            from app.services.uhid import generate_uhid
+            new_uhid = generate_uhid(db)
+            patient = models.Patient(
+                id=uuid.uuid4(),
+                uhid=new_uhid,
+                full_name=req.patient.full_name.strip(),
+                date_of_birth=req.patient.date_of_birth,
+                gender=req.patient.gender,
+                phone=req.patient.phone.strip() if req.patient.phone else None,
+                email=req.patient.email,
+                city=req.patient.city,
+                district=req.patient.district,
+                address_line=req.patient.address_line,
+                location_id=req.patient.location_id,
+                distance_km=req.patient.distance_km,
+                distance_source=req.patient.distance_source,
+                latitude=req.patient.latitude,
+                longitude=req.patient.longitude,
+                preferred_language=req.patient.preferred_language or "en",
+                nic=req.patient.nic.strip() if req.patient.nic else None,
+                scholarship=req.patient.scholarship,
+                hypertension=req.patient.hypertension,
+                diabetes=req.patient.diabetes,
+                alcoholism=req.patient.alcoholism,
+                handicap=req.patient.handicap,
+            )
+
+            if patient.distance_km is None:
+                if patient.location_id:
+                    loc = db.get(models.Location, patient.location_id)
+                    if loc:
+                        d_km, src = geo_service.calculate_distance(loc.latitude, loc.longitude)
+                        patient.distance_km = d_km
+                        patient.distance_source = src
+                        patient.latitude = loc.latitude
+                        patient.longitude = loc.longitude
+                        patient.district = patient.district or loc.district
+                        patient.city = patient.city or loc.name
+                elif patient.latitude is not None and patient.longitude is not None:
+                    d_km, src = geo_service.calculate_distance(patient.latitude, patient.longitude)
+                    patient.distance_km = d_km
+                    patient.distance_source = src
+
+            db.add(patient)
+            db.flush()
+    else:
+        raise HTTPException(status_code=400, detail="Either patient_id or patient payload must be provided")
+
+    # Check duplicate appointment
+    duplicate = (
+        db.query(models.Appointment)
+        .filter(
+            models.Appointment.patient_id == patient.id,
+            models.Appointment.doctor_id == doctor.id,
+            models.Appointment.appointment_day == req.appointment_day,
+            models.Appointment.status == "scheduled",
+        )
+        .first()
+    )
+    if duplicate:
+        raise HTTPException(
+            status_code=409,
+            detail="Patient already has a scheduled appointment with this doctor on this date",
+        )
+
+    # 3. Row-locked queue number assignment:
+    # Lock the clinic session row to serialize token assignment for this doctor session without aggregate FOR UPDATE error
+    db.query(models.DoctorClinicSession).filter_by(id=session.id).with_for_update().first()
+    max_token = (
+        db.query(func.coalesce(func.max(models.Appointment.queue_number), 0))
+        .filter(
+            models.Appointment.doctor_id == doctor.id,
+            models.Appointment.appointment_day == req.appointment_day,
+            models.Appointment.clinic_session_id == session.id,
+        )
+        .scalar()
+    ) or 0
+    queue_number = int(max_token) + 1
+
+    session_start_datetime = datetime.combine(req.appointment_day, session.start_time)
+    slot_delta = timedelta(minutes=(queue_number - 1) * session.slot_minutes)
+    slot_time = min((session_start_datetime + slot_delta).time(), session.end_time)
+
+    dept_name = doctor.department.model_category or doctor.department.name if doctor.department else "General Medicine"
+    booked_by_user = current_user.email if current_user else "staff"
+
+    appointment = models.Appointment(
+        id=uuid.uuid4(),
+        patient_id=patient.id,
+        doctor_id=doctor.id,
+        clinic_session_id=session.id,
+        doctor_name=f"{doctor.title} {doctor.full_name}".strip(),
+        scheduled_day=today_lk,
+        appointment_day=req.appointment_day,
+        scheduled_time=slot_time.strftime("%H:%M"),
+        queue_number=queue_number,
+        department=dept_name,
+        booking_channel=schemas.normalise_channel(req.booking_channel) or "Counter",
+        payment_mode=schemas.normalise_payment(req.payment_mode) or "Cash",
+        sms_reminder_opt_in=req.sms_reminder_opt_in,
+        booking_notes=req.notes,
+        source="manual",
+        booked_by=booked_by_user,
+        status="scheduled",
+    )
+    db.add(appointment)
+    db.flush()
+
+    event = models.AppointmentEvent(
+        id=uuid.uuid4(),
+        appointment_id=appointment.id,
+        event_type="booked",
+        from_status=None,
+        to_status="scheduled",
+        actor=booked_by_user,
+        note="Booked via intake",
+        payload={
+            "token": queue_number,
+            "session_label": session.label,
+            "room": session.room,
+        },
+    )
+    db.add(event)
+
+    appointment.patient = patient
+    appointment.doctor = doctor
+    appointment.clinic_session = session
+
+    pred_res = scoring.score_appointment(
+        db=db,
+        appointment=appointment,
+        stage="booking",
+        heavy_rain=req.heavy_rain,
+        persist=True,
+        shai_instance=shai,
+    )
+    db.commit()
+
+    db.refresh(patient)
+    db.refresh(appointment)
+
+    pred_out = None
+    if appointment.prediction:
+        explanation_list = [
+            schemas.FeatureContribution(**c)
+            for c in appointment.prediction.explanation.get("contributions", [])
+        ]
+        pred_out = schemas.PredictionOut(
+            id=appointment.prediction.id,
+            appointment_id=appointment.id,
+            risk_score=float(appointment.prediction.risk_score),
+            risk_category=appointment.prediction.risk_category,
+            explanation=explanation_list,
+            contextual_adjustment=None,
+            recommendation=appointment.prediction.recommendation,
+            created_at=appointment.prediction.created_at,
+        )
+
+    slot_info = schemas.IntakeSlotOut(
+        doctor=f"{doctor.title} {doctor.full_name}".strip(),
+        date=appointment.appointment_day,
+        start_time=appointment.scheduled_time or "09:00",
+        room=session.room,
+        token=queue_number,
+    )
+
+    return schemas.IntakeResponse(
+        patient=schemas.PatientOut.model_validate(patient),
+        appointment=schemas.AppointmentOut.model_validate(appointment),
+        prediction=pred_out,
+        slot=slot_info,
+    )
 
 
 # ======================
