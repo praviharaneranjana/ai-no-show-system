@@ -78,9 +78,10 @@ export default async function AppointmentDetailPage({
           </h1>
         </div>
 
-        {/* Outcome Actions (Mark Attended / Mark No-Show) */}
+        {/* Outcome Actions (Mark Attended / Mark No-Show / Undo) */}
         <OutcomeActions
           appointmentId={appointment.id}
+          currentStatus={appointment.status}
         />
       </div>
 

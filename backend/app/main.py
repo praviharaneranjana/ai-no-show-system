@@ -722,7 +722,16 @@ def record_appointment_outcome(
     if appointment is None:
         raise HTTPException(status_code=404, detail="Appointment not found")
     appointment.no_show = data.no_show
-    appointment.status = "no_show" if data.no_show else "completed"
+    if data.cancelled:
+        appointment.status = "cancelled"
+    elif data.no_show is True:
+        appointment.status = "no_show"
+    elif data.no_show is False:
+        appointment.status = "completed"
+    else:
+        appointment.status = "scheduled"
+    if data.reason:
+        appointment.no_show_reason = data.reason
     db.commit()
     db.refresh(appointment)
     return appointment
