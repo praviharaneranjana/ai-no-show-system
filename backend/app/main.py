@@ -1,13 +1,13 @@
 import logging
 import time
 import uuid
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session, joinedload
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 import os
 
@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 
 from app import auth, geo, insights, models, outreach_drafter, schemas, shai_model
 from app.his import get_his_connector, connector as his_connector
-from app.services import capacity_service, geo_service, his_sync, scoring
+from app.services import capacity_service, geo_service, his_sync, prediction_runner, scoring
 from app.services.uhid import LK_TZ
 from app.database import get_db
 
@@ -1092,6 +1092,291 @@ def simulate_his_arrivals(
         marked_arrived_count=len(external_refs),
         external_refs=external_refs,
     )
+
+
+# ===================================
+# Batch Prediction Engine Endpoints
+# ===================================
+
+def _prediction_run_response(run: models.PredictionRun) -> schemas.PredictionRunResponse:
+    pct = round((run.scored / max(run.total, 1)) * 100.0, 1) if run.total > 0 else (100.0 if run.status == "done" else 0.0)
+    return schemas.PredictionRunResponse(
+        id=run.id,
+        run_date=run.run_date,
+        doctor_id=run.doctor_id,
+        status=run.status,
+        stage=run.stage,
+        with_sync=run.with_sync,
+        total=run.total,
+        scored=run.scored,
+        failed=run.failed,
+        high=run.high,
+        medium=run.medium,
+        low=run.low,
+        expected_no_shows=float(run.expected_no_shows) if run.expected_no_shows is not None else None,
+        percent_complete=pct,
+        error=run.error,
+        triggered_by=run.triggered_by,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+    )
+
+
+def _run_predictions_background(
+    run_id: uuid.UUID,
+    run_date: date,
+    doctor_id: Optional[uuid.UUID],
+    with_sync: bool,
+    heavy_rain: bool,
+    actor_email: str,
+):
+    from app.database import SessionLocal
+    bg_db = SessionLocal()
+    try:
+        user = bg_db.query(models.User).filter_by(email=actor_email).first()
+        prediction_runner.run_predictions(
+            run_date=run_date,
+            doctor_id=doctor_id,
+            with_sync=with_sync,
+            heavy_rain=heavy_rain,
+            db=bg_db,
+            user=user,
+            run_id=run_id,
+        )
+    finally:
+        bg_db.close()
+
+
+@app.post("/predictions/runs", response_model=schemas.PredictionRunResponse)
+def create_prediction_run(
+    req: schemas.PredictionRunCreateRequest,
+    background_tasks: BackgroundTasks,
+    run_sync: bool = Query(False),
+    current_user: Optional[models.User] = Depends(auth.require_user),
+    db: Session = Depends(get_db),
+):
+    target_date = req.run_date or datetime.now(LK_TZ).date()
+    actor_email = current_user.email if current_user else "staff"
+
+    run = models.PredictionRun(
+        id=uuid.uuid4(),
+        run_date=target_date,
+        doctor_id=req.doctor_id,
+        status="running",
+        stage="queued",
+        with_sync=req.with_sync,
+        triggered_by=actor_email,
+        started_at=datetime.now(timezone.utc),
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    if run_sync:
+        prediction_runner.run_predictions(
+            run_date=target_date,
+            doctor_id=req.doctor_id,
+            with_sync=req.with_sync,
+            heavy_rain=req.heavy_rain,
+            db=db,
+            user=current_user,
+            run_id=run.id,
+        )
+        db.refresh(run)
+    else:
+        background_tasks.add_task(
+            _run_predictions_background,
+            run_id=run.id,
+            run_date=target_date,
+            doctor_id=req.doctor_id,
+            with_sync=req.with_sync,
+            heavy_rain=req.heavy_rain,
+            actor_email=actor_email,
+        )
+
+    return _prediction_run_response(run)
+
+
+@app.get("/predictions/runs/{run_id}", response_model=schemas.PredictionRunResponse)
+def get_prediction_run(run_id: uuid.UUID, db: Session = Depends(get_db)):
+    run = db.get(models.PredictionRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Prediction run not found")
+    return _prediction_run_response(run)
+
+
+@app.get("/predictions/today", response_model=schemas.PredictionTodayResponse)
+def get_predictions_today(
+    target_date: Optional[date] = Query(None, alias="date"),
+    db: Session = Depends(get_db),
+):
+    day = target_date or datetime.now(LK_TZ).date()
+
+    appts = (
+        db.query(models.Appointment)
+        .options(
+            joinedload(models.Appointment.patient),
+            joinedload(models.Appointment.prediction),
+            joinedload(models.Appointment.doctor).joinedload(models.Doctor.department),
+            joinedload(models.Appointment.clinic_session),
+        )
+        .filter(models.Appointment.appointment_day == day)
+        .order_by(models.Appointment.scheduled_time.asc())
+        .all()
+    )
+
+    total_count = len(appts)
+    scored_count = 0
+    high_count = 0
+    medium_count = 0
+    low_count = 0
+    lost_revenue = 0.0
+    risk_sum = 0.0
+
+    doctor_groups: dict[str, dict] = {}
+
+    for a in appts:
+        doc_id = a.doctor_id or uuid.uuid4()
+        doc_key = str(doc_id)
+
+        if doc_key not in doctor_groups:
+            dept_name = a.doctor.department.name if a.doctor and a.doctor.department else (a.department or "General")
+            room_name = a.clinic_session.room if a.clinic_session else (a.doctor.default_room if a.doctor else None)
+            session_time = (
+                f"{a.clinic_session.start_time.strftime('%H:%M')} - {a.clinic_session.end_time.strftime('%H:%M')}"
+                if a.clinic_session
+                else None
+            )
+            doctor_groups[doc_key] = {
+                "doctor_id": doc_id,
+                "doctor_name": a.doctor_name or (f"{a.doctor.title} {a.doctor.full_name}" if a.doctor else "Unknown Doctor"),
+                "department": dept_name,
+                "room": room_name,
+                "session_time": session_time,
+                "total": 0,
+                "scored": 0,
+                "high": 0,
+                "medium": 0,
+                "low": 0,
+                "appointments": [],
+            }
+
+        grp = doctor_groups[doc_key]
+        grp["total"] += 1
+
+        risk_score = None
+        risk_category = None
+        top_reasons = []
+
+        if a.prediction:
+            risk_score = float(a.prediction.risk_score)
+            risk_category = a.prediction.risk_category
+            scored_count += 1
+            grp["scored"] += 1
+            risk_sum += risk_score
+
+            cat_lower = risk_category.lower()
+            if cat_lower == "high":
+                high_count += 1
+                grp["high"] += 1
+                fee = 4500.0
+                if a.doctor and a.doctor.department and a.doctor.department.default_consultation_fee_lkr:
+                    fee = float(a.doctor.department.default_consultation_fee_lkr)
+                lost_revenue += fee
+            elif cat_lower == "medium":
+                medium_count += 1
+                grp["medium"] += 1
+            else:
+                low_count += 1
+                grp["low"] += 1
+
+            # Extract top 3 SHAP reasons
+            exp_data = a.prediction.explanation or {}
+            contribs = exp_data.get("contributions", []) if isinstance(exp_data, dict) else exp_data
+            if isinstance(contribs, list):
+                # Filter positive risk drivers, sorted by magnitude desc
+                pos_drivers = [c for c in contribs if isinstance(c, dict) and c.get("contribution", 0) > 0]
+                pos_drivers.sort(key=lambda x: x.get("contribution", 0), reverse=True)
+                top_reasons = [p.get("feature_label") or p.get("feature") for p in pos_drivers[:3]]
+
+        actions = ["call", "sms"]
+        if a.doctor and a.doctor.department and a.doctor.department.telehealth_ok:
+            actions.append("telehealth")
+        actions.append("reschedule")
+
+        p_name = a.patient.full_name if a.patient else "Patient"
+        p_uhid = a.patient.uhid if a.patient else ""
+        p_phone = a.patient.phone if a.patient else None
+
+        grp["appointments"].append(
+            schemas.HubAppointmentItem(
+                appointment_id=a.id,
+                patient_id=a.patient_id,
+                patient_name=p_name,
+                uhid=p_uhid,
+                phone=p_phone,
+                token_number=a.queue_number,
+                scheduled_time=a.scheduled_time or "09:00",
+                risk_score=risk_score,
+                risk_category=risk_category,
+                top_reasons=[str(r) for r in top_reasons if r],
+                actions_available=actions,
+                status=a.status,
+                source=a.source or "manual",
+            )
+        )
+
+    avg_risk = round(risk_sum / max(scored_count, 1), 3)
+
+    kpis = schemas.HubKPIs(
+        total_appointments=total_count,
+        scored_count=scored_count,
+        high_risk_count=high_count,
+        medium_risk_count=medium_count,
+        low_risk_count=low_count,
+        estimated_lost_revenue_lkr=round(lost_revenue, 2),
+        average_no_show_risk=avg_risk,
+    )
+
+    by_doc_list = [schemas.HubDoctorGroup(**g) for g in doctor_groups.values()]
+    # Sort doctors: those with highest high-risk patients first
+    by_doc_list.sort(key=lambda d: (d.high, d.medium, d.total), reverse=True)
+
+    # Sync status
+    last_sync = (
+        db.query(models.HISSyncRun)
+        .order_by(models.HISSyncRun.started_at.desc())
+        .first()
+    )
+    last_sync_time = last_sync.finished_at or last_sync.started_at if last_sync else None
+    is_stale = False
+    if last_sync_time:
+        is_stale = (datetime.now(timezone.utc) - last_sync_time).total_seconds() > 1800
+
+    connector = get_his_connector(db=db)
+    connector_source = "http" if isinstance(connector, his_connector.HttpHISConnector) else "simulated"
+
+    sync_status = schemas.HubSyncStatus(
+        last_sync_timestamp=last_sync_time,
+        source=connector_source,
+        is_stale=is_stale,
+    )
+
+    last_run = (
+        db.query(models.PredictionRun)
+        .filter(models.PredictionRun.run_date == day)
+        .order_by(models.PredictionRun.started_at.desc())
+        .first()
+    )
+
+    return schemas.PredictionTodayResponse(
+        target_date=day,
+        kpis=kpis,
+        by_doctor=by_doc_list,
+        sync_status=sync_status,
+        last_run=_prediction_run_response(last_run) if last_run else None,
+    )
+
 
 
 

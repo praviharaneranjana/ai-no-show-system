@@ -1027,3 +1027,92 @@ class HISSimulateArrivalsResponse(BaseModel):
     external_refs: list[str]
 
 
+# ===================================
+# Prediction Hub & Batch Run Schemas
+# ===================================
+
+class PredictionRunCreateRequest(BaseModel):
+    run_date: date | None = None
+    doctor_id: uuid.UUID | None = None
+    with_sync: bool = True
+    heavy_rain: bool = False
+
+
+class PredictionRunResponse(BaseModel):
+    id: uuid.UUID
+    run_date: date
+    doctor_id: uuid.UUID | None = None
+    status: str
+    stage: str
+    with_sync: bool
+    total: int
+    scored: int
+    failed: int
+    high: int
+    medium: int
+    low: int
+    expected_no_shows: float | None = None
+    percent_complete: float = 0.0
+    error: str | None = None
+    triggered_by: str | None = None
+    started_at: datetime
+    finished_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class HubKPIs(BaseModel):
+    total_appointments: int
+    scored_count: int
+    high_risk_count: int
+    medium_risk_count: int
+    low_risk_count: int
+    estimated_lost_revenue_lkr: float
+    average_no_show_risk: float
+
+
+class HubAppointmentItem(BaseModel):
+    appointment_id: uuid.UUID
+    patient_id: uuid.UUID
+    patient_name: str
+    uhid: str
+    phone: str | None = None
+    token_number: int | None = None
+    scheduled_time: str
+    risk_score: float | None = None
+    risk_category: str | None = None
+    top_reasons: list[str] = Field(default_factory=list)
+    actions_available: list[str] = Field(default_factory=list)
+    status: str
+    source: str = "manual"
+
+
+class HubDoctorGroup(BaseModel):
+    doctor_id: uuid.UUID
+    doctor_name: str
+    department: str
+    room: str | None = None
+    session_time: str | None = None
+    total: int
+    scored: int
+    high: int
+    medium: int
+    low: int
+    appointments: list[HubAppointmentItem] = Field(default_factory=list)
+
+
+class HubSyncStatus(BaseModel):
+    last_sync_timestamp: datetime | None = None
+    source: str = "simulated"
+    is_stale: bool = False
+
+
+class PredictionTodayResponse(BaseModel):
+    target_date: date
+    kpis: HubKPIs
+    by_doctor: list[HubDoctorGroup] = Field(default_factory=list)
+    sync_status: HubSyncStatus
+    last_run: PredictionRunResponse | None = None
+
+
+
