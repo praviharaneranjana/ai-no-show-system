@@ -556,6 +556,32 @@ export type NavCounts = {
 
 export type CapacityNavCounts = NavCounts;
 
+export type ExpenseRecurrence = "annual" | "monthly" | "one_off" | "per_patient";
+
+export type ExpenseCategory = {
+  id: string;
+  key: string;
+  name: string;
+  icon: string;
+  description?: string | null;
+  display_order: number;
+};
+
+export type HospitalExpense = {
+  id: string;
+  hospital_name: string;
+  category_id: string;
+  category?: ExpenseCategory | null;
+  category_key?: string;
+  title: string;
+  amount_lkr: number;
+  recurrence: ExpenseRecurrence;
+  is_active: boolean;
+  notes?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export type SimulatorParams = {
   daily_clinics_count: number;
   avg_consultation_fee_lkr: number;
@@ -564,6 +590,13 @@ export type SimulatorParams = {
   patient_reachability_rate: number;
   reschedule_success_rate: number;
   overbooking_fill_rate: number;
+  // Advanced hospital economics
+  hospital_retained_fee_pct?: number;
+  ancillary_revenue_per_attended_lkr?: number;
+  staff_hourly_rate_lkr?: number;
+  telco_cost_per_msg_lkr?: number;
+  operational_days_year?: number;
+  custom_expenses?: HospitalExpense[];
 };
 
 export type SimulatorResult = {
@@ -573,6 +606,15 @@ export type SimulatorResult = {
   recovered_doctor_hours_annual: number;
   nurse_phone_hours_saved_monthly: number;
   net_roi_multiple: number;
+  // Enhanced boardroom metrics
+  total_annual_expenses_lkr: number;
+  gross_revenue_recovered_lkr: number;
+  direct_labor_savings_lkr: number;
+  total_gross_value_created_lkr: number;
+  true_net_profit_lkr: number;
+  payback_period_days: number;
+  expense_drag_pct: number;
+  expense_category_breakdown: Record<string, number>;
 };
 
 // ===================================
@@ -692,3 +734,264 @@ export type SessionDetail = {
     status: string;
   }[];
 };
+
+// ===================================
+// Reference Data & Discovery Types
+// ===================================
+
+export type DepartmentItem = {
+  id: number;
+  name: string;
+  model_category: string | null;
+  icon: string;
+  telehealth_ok: boolean;
+  active: boolean;
+  default_consultation_fee_lkr: number;
+  doctor_count: number;
+};
+
+export type DoctorClinicSessionSummary = {
+  session_id: string;
+  weekday: number;
+  label: string;
+  start_time: string;
+  end_time: string;
+  room: string;
+  max_patients: number;
+  slot_minutes: number;
+};
+
+export type DoctorItem = {
+  id: string;
+  title: string;
+  full_name: string;
+  department_id: number;
+  department_name: string;
+  his_doctor_code: string | null;
+  default_room: string | null;
+  active: boolean;
+  sessions: DoctorClinicSessionSummary[];
+};
+
+export type AvailabilitySessionItem = {
+  session_id: string;
+  label: string;
+  start_time: string;
+  end_time: string;
+  room: string;
+  max_patients: number;
+  booked: number;
+  remaining: number;
+  next_token: number;
+};
+
+export type AvailabilityDayItem = {
+  date: string;
+  sessions: AvailabilitySessionItem[];
+};
+
+export type AvailabilityResponse = {
+  days: AvailabilityDayItem[];
+};
+
+export type LocationItem = {
+  id: number;
+  name: string;
+  district: string | null;
+  province: string | null;
+  kind: string;
+  latitude: number;
+  longitude: number;
+  distance_km: number;
+  distance_source: "road_osrm" | "estimated" | "manual";
+};
+
+export type PatientSearchResult = {
+  id: string;
+  uhid: string;
+  full_name: string;
+  phone: string | null;
+  nic: string | null;
+  date_of_birth: string;
+  gender: string | null;
+  city: string | null;
+  district: string | null;
+  distance_km: number | null;
+  total_visits: number;
+  prior_no_shows: number;
+  last_visit_date: string | null;
+};
+
+// ===================================
+// Intake & Prediction Types
+// ===================================
+
+export type IntakePatientPayload = {
+  full_name: string;
+  date_of_birth: string;
+  gender?: string;
+  phone?: string;
+  nic?: string;
+  email?: string;
+  city?: string;
+  district?: string;
+  address_line?: string;
+  location_id?: number;
+  distance_km?: number;
+  distance_source?: "road_osrm" | "estimated" | "manual";
+  latitude?: number;
+  longitude?: number;
+  preferred_language?: string;
+  scholarship?: boolean;
+  hypertension?: boolean;
+  diabetes?: boolean;
+  alcoholism?: boolean;
+  handicap?: number;
+};
+
+export type IntakeRequest = {
+  patient_id?: string;
+  patient?: IntakePatientPayload;
+  doctor_id: string;
+  clinic_session_id: string;
+  appointment_day: string;
+  booking_channel?: string;
+  payment_mode?: string;
+  sms_reminder_opt_in?: boolean;
+  notes?: string;
+  heavy_rain?: boolean;
+};
+
+export type IntakeSlotOut = {
+  doctor: string;
+  date: string;
+  start_time: string;
+  room: string;
+  token: number;
+};
+
+export type IntakeResponse = {
+  patient: Patient;
+  appointment: Appointment;
+  prediction: StoredPrediction | null;
+  slot: IntakeSlotOut;
+};
+
+export type PredictPreviewRequest = {
+  patient_id?: string;
+  patient?: IntakePatientPayload;
+  doctor_id: string;
+  clinic_session_id?: string;
+  appointment_day: string;
+  booking_channel?: string;
+  payment_mode?: string;
+  heavy_rain?: boolean;
+};
+
+export type PredictPreviewResponse = {
+  risk_score: number;
+  risk_category: string;
+  explanation: { feature: string; feature_label?: string; contribution: number; value: unknown }[];
+  contextual_adjustment?: unknown;
+  recommendation: string;
+};
+
+// ===================================
+// Prediction Hub & Batch Run Types
+// ===================================
+
+export type PredictionRunResponse = {
+  id: string;
+  run_date: string;
+  doctor_id: string | null;
+  status: "queued" | "running" | "done" | "failed";
+  stage: string;
+  with_sync: boolean;
+  total: number;
+  scored: number;
+  failed: number;
+  high: number;
+  medium: number;
+  low: number;
+  expected_no_shows: number | null;
+  percent_complete: number;
+  error: string | null;
+  triggered_by: string | null;
+  started_at: string;
+  finished_at: string | null;
+};
+
+export type HubKPIs = {
+  total_appointments: number;
+  scored_count: number;
+  high_risk_count: number;
+  medium_risk_count: number;
+  low_risk_count: number;
+  estimated_lost_revenue_lkr: number;
+  average_no_show_risk: number;
+};
+
+export type HubAppointmentItem = {
+  appointment_id: string;
+  patient_id: string;
+  patient_name: string;
+  uhid: string;
+  phone: string | null;
+  token_number: number | null;
+  scheduled_time: string;
+  risk_score: number | null;
+  risk_category: string | null;
+  top_reasons: string[];
+  actions_available: string[];
+  status: string;
+  source: string;
+};
+
+export type HubDoctorGroup = {
+  doctor_id: string;
+  doctor_name: string;
+  department: string;
+  room: string | null;
+  session_time: string | null;
+  total: number;
+  scored: number;
+  high: number;
+  medium: number;
+  low: number;
+  appointments: HubAppointmentItem[];
+};
+
+export type HubSyncStatus = {
+  last_sync_timestamp: string | null;
+  source: string;
+  is_stale: boolean;
+};
+
+export type PredictionTodayResponse = {
+  target_date: string;
+  kpis: HubKPIs;
+  by_doctor: HubDoctorGroup[];
+  sync_status: HubSyncStatus;
+  last_run: PredictionRunResponse | null;
+};
+
+export type HISStatusResponse = {
+  connector_type: string;
+  connector_healthy: boolean;
+  last_sync_run: {
+    id: string;
+    target_date: string;
+    status: string;
+    trigger: string;
+    fetched: number;
+    created: number;
+    updated: number;
+    unchanged: number;
+    failed: number;
+    started_at: string;
+    finished_at: string | null;
+  } | null;
+  total_his_records: number;
+  synced_appointments_today: number;
+};
+

@@ -1,581 +1,1068 @@
 "use client";
 
+import { useEffect, useState, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { useActionState, useState, type ReactNode } from "react";
 import {
   User,
-  Calendar,
+  MapPin,
+  Stethoscope,
+  CheckCircle2,
   Sparkles,
-  ArrowRight,
+  Calendar,
+  Clock,
+  Printer,
   PlusCircle,
+  ArrowRight,
+  ArrowLeft,
+  Search,
+  AlertCircle,
+  Phone,
+  FileText,
+  CloudRain,
   ShieldAlert,
-  Loader2,
 } from "lucide-react";
-
-import { createAppointmentAction, type NewAppointmentState } from "@/app/new/actions";
-import { ShapTornadoChart } from "@/components/shap-tornado-chart";
-import { RiskPill } from "@/components/risk-pill";
-import { DotRingGauge } from "@/components/dot-ring-gauge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { ProgressStages } from "@/components/ui/progress-stages";
+import { Combobox } from "@/components/ui/combobox";
+import { DatePicker } from "@/components/ui/date-picker";
+import { PhoneInput } from "@/components/ui/phone-input";
+import { SegmentedCards, type SegmentedCardOption } from "@/components/ui/segmented-cards";
+import { RiskPill } from "@/components/risk-pill";
+import type {
+  DepartmentItem,
+  DoctorItem,
+  LocationItem,
+  PatientSearchResult,
+  IntakeResponse,
+  PredictPreviewResponse,
+  RiskCategory,
+} from "@/lib/types";
 
-const initialState: NewAppointmentState = {};
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-const DEPARTMENTS = [
-  "General Medicine",
-  "Cardiology",
-  "Orthopedics",
-  "Pediatrics",
-  "Dermatology",
-  "Ophthalmology",
-  "Neurology",
-  "Gynecology",
-  "Oncology",
+const STAGES = [
+  { id: "identity", label: "Patient Identity", description: "Demographics & NIC" },
+  { id: "commute", label: "Location & Commute", description: "Sri Lanka transit" },
+  { id: "clinical", label: "Clinical & Scheduling", description: "Department & Slot" },
+  { id: "review", label: "Booking & Review", description: "Payment & Confirmation" },
 ];
 
-const KNOWN_CONSULTANTS = ["Dr. Rohan Perera", "Dr. Neluka Fernando", "Dr. Anura Jayasinghe"];
+const CHANNELS: SegmentedCardOption[] = [
+  { value: "Phone", title: "Phone Call", description: "Inbound clinic telephone line" },
+  { value: "Counter", title: "Hospital Counter", description: "Walk-in registration desk" },
+  { value: "Doc990", title: "Doc990", description: "Telecommunications booking portal" },
+  { value: "eChannelling", title: "eChannelling", description: "National digital gateway" },
+  { value: "MyHealth", title: "MyHealth", description: "Hospital mobile application" },
+];
 
-const BOOKING_CHANNELS = ["Doc990", "eChannelling", "Asiri MyHealth", "Hospital Counter"];
-
-const PAYMENT_MODES = [
-  "Credit Card (NSR Protected)",
-  "Credit Card",
-  "Corporate Insurance",
-  "Cash",
+const PAYMENTS: SegmentedCardOption[] = [
+  { value: "Cash", title: "Cash", description: "Direct counter settlement" },
+  { value: "Card", title: "Credit/Debit Card", description: "Visa, Mastercard, or LankaPay" },
+  { value: "Prepaid_Online", title: "Prepaid Online", description: "Confirmed digital payment" },
+  { value: "Corporate", title: "Corporate Billing", description: "Employer credit account" },
+  { value: "Insurance", title: "Insurance Guarantee", description: "Prior cashless approval" },
 ];
 
 export function NewAppointmentForm() {
-  const [state, formAction, pending] = useActionState(
-    createAppointmentAction,
-    initialState
-  );
+  const router = useRouter();
 
-  const [scheduledDay, setScheduledDay] = useState(today());
-  const [appointmentDay, setAppointmentDay] = useState("");
-  const [selectedDept, setSelectedDept] = useState("General Medicine");
+  // Current wizard stage
+  const [currentStage, setCurrentStage] = useState(0);
+
+  // Reference data lists
+  const [departments, setDepartments] = useState<DepartmentItem[]>([]);
+  const [doctors, setDoctors] = useState<DoctorItem[]>([]);
+  const [locations, setLocations] = useState<LocationItem[]>([]);
+  const [patientMatches, setPatientMatches] = useState<PatientSearchResult[]>([]);
+
+  // Stage 1: Patient Identity
+  const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
+  const [patientSearchQ, setPatientSearchQ] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [nic, setNic] = useState("");
   const [dob, setDob] = useState("");
+  const [gender, setGender] = useState("male");
+  const [phone, setPhone] = useState("+94 ");
+  const [email, setEmail] = useState("");
+  const [preferredLanguage, setPreferredLanguage] = useState("en");
+  const [hasHypertension, setHasHypertension] = useState(false);
+  const [hasDiabetes, setHasDiabetes] = useState(false);
 
-  // Live age calculation
-  const calculatedAge = dob
-    ? Math.max(
-        0,
-        new Date().getFullYear() -
-          new Date(dob).getFullYear() -
-          (new Date().getMonth() < new Date(dob).getMonth() ||
-          (new Date().getMonth() === new Date(dob).getMonth() &&
-            new Date().getDate() < new Date(dob).getDate())
-            ? 1
-            : 0)
-      )
-    : null;
+  // Stage 2: Commute & Location
+  const [selectedLocationId, setSelectedLocationId] = useState<number | null>(null);
+  const [city, setCity] = useState("Colombo 07");
+  const [district, setDistrict] = useState("Colombo");
+  const [addressLine, setAddressLine] = useState("");
+  const [distanceKm, setDistanceKm] = useState<number>(3.5);
+  const [distanceSource, setDistanceSource] = useState<"road_osrm" | "estimated" | "manual">("estimated");
+
+  // Stage 3: Clinical & Scheduling
+  const [selectedDeptId, setSelectedDeptId] = useState<number | null>(null);
+  const [selectedDeptName, setSelectedDeptName] = useState("General Medicine");
+  const [selectedDoctorId, setSelectedDoctorId] = useState<string>("");
+  const [appointmentDay, setAppointmentDay] = useState("2026-10-01");
+  const [clinicSession, setClinicSession] = useState("Morning");
+
+  // Stage 4: Booking & Review
+  const [bookingChannel, setBookingChannel] = useState("Counter");
+  const [paymentMode, setPaymentMode] = useState("Cash");
+  const [smsReminderOptIn, setSmsReminderOptIn] = useState(true);
+  const [heavyRain, setHeavyRain] = useState(false);
+  const [notes, setNotes] = useState("");
+
+  // Live Ephemeral Prediction Preview State
+  const [preview, setPreview] = useState<PredictPreviewResponse | null>(null);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+
+  // Booking outcome state
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [confirmedBooking, setConfirmedBooking] = useState<IntakeResponse | null>(null);
+
+  // 1. Initial Reference Data Loading
+  useEffect(() => {
+    async function loadRefs() {
+      try {
+        const dRes = await fetch("/api/departments");
+        if (dRes.ok) {
+          const dData = await dRes.json();
+          setDepartments(dData);
+          if (dData.length > 0 && !selectedDeptId) {
+            setSelectedDeptId(dData[0].id);
+            setSelectedDeptName(dData[0].name);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load departments", e);
+      }
+    }
+    loadRefs();
+  }, []);
+
+  // 2. Fetch doctors when department changes
+  useEffect(() => {
+    async function loadDoctors() {
+      if (!selectedDeptId) return;
+      try {
+        const docRes = await fetch(`/api/doctors?department_id=${selectedDeptId}`);
+        if (docRes.ok) {
+          const docData = await docRes.json();
+          setDoctors(docData);
+          if (docData.length > 0) {
+            setSelectedDoctorId(docData[0].id);
+          } else {
+            setSelectedDoctorId("");
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load doctors", e);
+      }
+    }
+    loadDoctors();
+  }, [selectedDeptId]);
+
+  // 3. Search patients for lookup
+  useEffect(() => {
+    if (patientSearchQ.length < 2) {
+      setPatientMatches([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/patients/search?q=${encodeURIComponent(patientSearchQ)}`);
+        if (res.ok) {
+          const data = await res.json();
+          setPatientMatches(data);
+        }
+      } catch (e) {
+        console.error("Patient search error", e);
+      }
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [patientSearchQ]);
+
+  // Handle selecting an existing patient
+  function selectExistingPatient(p: PatientSearchResult) {
+    setSelectedPatientId(p.id);
+    setFullName(p.full_name);
+    setPhone(p.phone || "+94 ");
+    setDob(p.date_of_birth);
+    setGender(p.gender || "male");
+    if (p.nic) setNic(p.nic);
+    if (p.city) setCity(p.city);
+    if (p.district) setDistrict(p.district);
+    if (p.distance_km) setDistanceKm(p.distance_km);
+    setPatientMatches([]);
+    setPatientSearchQ("");
+  }
+
+  // Parse Sri Lanka NIC automatically
+  function handleNicChange(val: string) {
+    setNic(val);
+    const trimmed = val.trim();
+    if (/^[0-9]{9}[vVxX]$/.test(trimmed)) {
+      const year = 1900 + parseInt(trimmed.substring(0, 2), 10);
+      let dayOfYear = parseInt(trimmed.substring(2, 5), 10);
+      const isFemale = dayOfYear > 500;
+      if (isFemale) dayOfYear -= 500;
+      setGender(isFemale ? "female" : "male");
+      setDob(`${year}-06-15`);
+    } else if (/^[0-9]{12}$/.test(trimmed)) {
+      const year = parseInt(trimmed.substring(0, 4), 10);
+      let dayOfYear = parseInt(trimmed.substring(4, 7), 10);
+      const isFemale = dayOfYear > 500;
+      if (isFemale) dayOfYear -= 500;
+      setGender(isFemale ? "female" : "male");
+      setDob(`${year}-06-15`);
+    }
+  }
+
+  // Calculate age live
+  const calculatedAge = useMemo(() => {
+    if (!dob) return null;
+    const birthYear = new Date(dob).getFullYear();
+    const currentYear = new Date().getFullYear();
+    return Math.max(0, currentYear - birthYear);
+  }, [dob]);
+
+  // Initial location list loading
+  useEffect(() => {
+    async function loadInitialLocations() {
+      try {
+        const res = await fetch("/api/locations?q=&limit=8");
+        if (res.ok) {
+          const list = await res.json();
+          setLocations(list);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    loadInitialLocations();
+  }, []);
+
+  // Select location item
+  async function handleSelectLocation(locIdStr: string) {
+    const locId = Number(locIdStr);
+    const loc = locations.find((l) => l.id === locId);
+    if (!loc) return;
+
+    setSelectedLocationId(loc.id);
+    setCity(loc.name);
+    setDistrict(loc.district || "Colombo");
+    try {
+      const dRes = await fetch("/api/distance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ latitude: loc.latitude, longitude: loc.longitude }),
+      });
+      if (dRes.ok) {
+        const dData = await dRes.json();
+        setDistanceKm(dData.distance_km);
+        setDistanceSource(dData.source);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  // Live Ephemeral Prediction Preview Trigger
+  useEffect(() => {
+    if (!fullName || !dob || !selectedDoctorId) return;
+
+    const timer = setTimeout(async () => {
+      setIsPreviewLoading(true);
+      try {
+        const res = await fetch("/api/predict/preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            patient_id: selectedPatientId || undefined,
+            patient: !selectedPatientId
+              ? {
+                  full_name: fullName,
+                  date_of_birth: dob,
+                  gender,
+                  phone,
+                  email: email || undefined,
+                  city,
+                  district,
+                  location_id: selectedLocationId || undefined,
+                  distance_km: distanceKm,
+                  distance_source: distanceSource,
+                  preferred_language: preferredLanguage,
+                  nic: nic || undefined,
+                  hypertension: hasHypertension,
+                  diabetes: hasDiabetes,
+                }
+              : undefined,
+            doctor_id: selectedDoctorId,
+            appointment_day: appointmentDay,
+            booking_channel: bookingChannel,
+            payment_mode: paymentMode,
+            heavy_rain: heavyRain,
+          }),
+        });
+
+        if (res.ok) {
+          const previewJson = await res.json();
+          setPreview(previewJson);
+        }
+      } catch (e) {
+        console.error("Preview prediction error", e);
+      } finally {
+        setIsPreviewLoading(false);
+      }
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [
+    fullName,
+    dob,
+    gender,
+    selectedDoctorId,
+    appointmentDay,
+    bookingChannel,
+    paymentMode,
+    distanceKm,
+    heavyRain,
+    hasHypertension,
+    hasDiabetes,
+    selectedPatientId,
+  ]);
+
+  // Intake Submission Handler
+  async function submitIntake(redirectAfter: boolean) {
+    setIsSubmitting(true);
+    setSubmissionError(null);
+
+    const payload = {
+      patient_id: selectedPatientId || undefined,
+      patient: !selectedPatientId
+        ? {
+            full_name: fullName,
+            date_of_birth: dob,
+            gender,
+            phone,
+            email: email || undefined,
+            city,
+            district,
+            address_line: addressLine || undefined,
+            location_id: selectedLocationId || undefined,
+            distance_km: distanceKm,
+            distance_source: distanceSource,
+            preferred_language: preferredLanguage,
+            nic: nic || undefined,
+            hypertension: hasHypertension,
+            diabetes: hasDiabetes,
+          }
+        : undefined,
+      doctor_id: selectedDoctorId,
+      appointment_day: appointmentDay,
+      booking_channel: bookingChannel,
+      payment_mode: paymentMode,
+      sms_reminder_opt_in: smsReminderOptIn,
+      heavy_rain: heavyRain,
+      notes: notes || undefined,
+    };
+
+    try {
+      const res = await fetch("/api/appointments/intake", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Failed to confirm intake");
+      }
+
+      const result = (await res.json()) as IntakeResponse;
+      setConfirmedBooking(result);
+
+      if (redirectAfter) {
+        router.push(`/predictions?focus_appointment_id=${result.appointment.id}`);
+      }
+    } catch (e: any) {
+      setSubmissionError(e.message || "An unexpected error occurred during intake");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  // Reset Form for another booking
+  function resetForm() {
+    setConfirmedBooking(null);
+    setSelectedPatientId(null);
+    setFullName("");
+    setNic("");
+    setDob("");
+    setPhone("+94 ");
+    setCurrentStage(0);
+    setPreview(null);
+  }
+
+  // Render Confirmation Receipt View
+  if (confirmedBooking) {
+    const { appointment, patient, slot, prediction } = confirmedBooking;
+    const cat = (prediction?.risk_category || "Low") as RiskCategory;
+
+    return (
+      <Card className="border-emerald-500/40 bg-card shadow-xl ring-2 ring-emerald-500/20 max-w-2xl mx-auto animate-in fade-in-0 duration-300">
+        <CardContent className="p-8 flex flex-col gap-6">
+          <div className="flex items-center gap-3 border-b border-border/80 pb-5">
+            <div className="flex size-12 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-400">
+              <CheckCircle2 className="size-7" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-foreground">Appointment Confirmed</h2>
+              <p className="text-xs text-muted-foreground">
+                Official queue token issued for Colombo General Hospital
+              </p>
+            </div>
+          </div>
+
+          {/* Printable Token Slip */}
+          <div className="rounded-2xl border border-dashed border-border/80 bg-muted/20 p-6 flex flex-col gap-4">
+            <div className="flex items-center justify-between border-b border-border/60 pb-4">
+              <div>
+                <span className="text-[10px] uppercase font-mono tracking-wider text-muted-foreground">
+                  Queue Token
+                </span>
+                <div className="text-4xl font-extrabold text-foreground font-mono">
+                  #{slot.token}
+                </div>
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] uppercase font-mono tracking-wider text-muted-foreground">
+                  Patient UHID
+                </span>
+                <div className="text-base font-bold text-primary font-mono">{patient.uhid}</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 text-xs font-mono">
+              <div>
+                <span className="text-muted-foreground">Patient:</span>
+                <div className="text-foreground font-semibold text-sm">{patient.full_name}</div>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Consultant:</span>
+                <div className="text-foreground font-semibold text-sm">{slot.doctor}</div>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Clinic Session:</span>
+                <div className="text-foreground font-semibold">{slot.date} · {slot.start_time}</div>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Room:</span>
+                <div className="text-foreground font-semibold">{slot.room}</div>
+              </div>
+            </div>
+
+            {/* Prediction assessment chip */}
+            {prediction && (
+              <div className="mt-2 border-t border-border/60 pt-3 flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Attendance Assessment:</span>
+                <RiskPill category={cat} score={prediction.risk_score} />
+              </div>
+            )}
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
+            <Button
+              variant="outline"
+              onClick={() => window.print()}
+              className="w-full sm:w-1/2 gap-2 text-xs"
+            >
+              <Printer className="size-4" />
+              <span>Print Token Slip</span>
+            </Button>
+
+            <Button
+              onClick={() => router.push(`/predictions?focus_appointment_id=${appointment.id}`)}
+              className="w-full sm:w-1/2 gap-2 text-xs bg-primary text-primary-foreground font-semibold"
+            >
+              <Sparkles className="size-4" />
+              <span>Triage in Prediction Hub</span>
+            </Button>
+          </div>
+
+          <div className="text-center">
+            <button
+              onClick={resetForm}
+              className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5"
+            >
+              <PlusCircle className="size-3.5" />
+              <span>Book Another Patient</span>
+            </button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Prediction Result Reveal Card */}
-      {state.result && (
-        <Card className="border-primary/40 bg-card shadow-lg ring-2 ring-primary/20 animate-in fade-in-0 slide-in-from-top-4 duration-500">
-          <CardHeader className="border-b border-border/60 pb-3 bg-muted/20">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <div className="flex size-7 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                  <Sparkles className="size-4" />
-                </div>
-                <div>
-                  <CardTitle className="text-base">Instant AI Prediction Result</CardTitle>
-                  <CardDescription className="text-xs">
-                    Assessed for <strong>{state.result.patient.full_name}</strong>
-                  </CardDescription>
-                </div>
-              </div>
-              <RiskPill
-                category={state.result.prediction.risk_category}
-                score={state.result.prediction.risk_score}
-                size="default"
-              />
-            </div>
-          </CardHeader>
+      {/* Guided Progress Stages */}
+      <ProgressStages
+        stages={STAGES}
+        currentStageIndex={currentStage}
+        onStageClick={(idx) => {
+          if (idx <= currentStage) setCurrentStage(idx);
+        }}
+      />
 
-          <CardContent className="flex flex-col gap-5 p-5">
-            <div className="flex flex-col sm:flex-row items-center gap-5 rounded-2xl border border-border/80 bg-muted/20 p-5">
-              <DotRingGauge
-                score={state.result.prediction.risk_score}
-                category={state.result.prediction.risk_category}
-                size={140}
-              />
-
-              <div className="flex flex-1 flex-col gap-2">
+      {/* Main Wizard Form Body */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left 2 Cols: Wizard Inputs */}
+        <div className="lg:col-span-2 flex flex-col gap-6">
+          {/* Stage 0: Patient Identity */}
+          {currentStage === 0 && (
+            <div className="rounded-xl border border-border/80 bg-card p-6 flex flex-col gap-5 shadow-xs">
+              <div className="border-b border-border/60 pb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-foreground">
-                    Calibrated No-Show Risk:
-                  </span>
-                  <span className="text-sm font-bold tabular-nums text-foreground">
-                    {Math.round(state.result.prediction.risk_score * 100)}%
-                  </span>
+                  <User className="size-4 text-primary" />
+                  <h2 className="text-base font-bold text-foreground">Patient Identity & Demographics</h2>
+                </div>
+                {selectedPatientId && (
+                  <Badge variant="outline" className="text-xs text-primary border-primary/40">
+                    Existing Patient Linked
+                  </Badge>
+                )}
+              </div>
+
+              {/* Patient Lookup Field */}
+              <div className="relative flex flex-col gap-1.5">
+                <Label className="text-xs font-semibold">Search Existing Patient (UHID, NIC, Phone, Name)</Label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                  <Input
+                    value={patientSearchQ}
+                    onChange={(e) => setPatientSearchQ(e.target.value)}
+                    placeholder="e.g. SHAI-26-000042 or 981234567V..."
+                    className="pl-9 h-9 text-xs"
+                  />
                 </div>
 
-                <div
-                  className={`rounded-xl border p-3.5 text-xs leading-relaxed ${
-                    state.result.prediction.risk_category === "High"
-                      ? "border-red-500/40 bg-red-500/10 text-red-800 dark:text-red-200 font-medium"
-                      : state.result.prediction.risk_category === "Medium"
-                      ? "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200 font-medium"
-                      : "border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
-                  }`}
-                >
-                  <div className="font-semibold mb-0.5 flex items-center gap-1.5">
-                    <ShieldAlert className="size-3.5" />
-                    <span>Staff Action Recommendation:</span>
+                {patientMatches.length > 0 && (
+                  <div className="absolute top-16 left-0 right-0 z-20 bg-popover border border-border rounded-lg shadow-lg max-h-48 overflow-y-auto p-1 divide-y divide-border/40">
+                    {patientMatches.map((p) => (
+                      <div
+                        key={p.id}
+                        onClick={() => selectExistingPatient(p)}
+                        className="p-2 text-xs hover:bg-muted/50 cursor-pointer flex items-center justify-between"
+                      >
+                        <div>
+                          <div className="font-semibold text-foreground">{p.full_name}</div>
+                          <div className="text-[10px] text-muted-foreground font-mono">
+                            {p.uhid} · {p.phone || "No phone"} · {p.city || "Colombo"}
+                          </div>
+                        </div>
+                        <Badge variant="outline" className="text-[10px]">
+                          Select
+                        </Badge>
+                      </div>
+                    ))}
                   </div>
-                  {state.result.prediction.recommendation}
-                </div>
+                )}
               </div>
-            </div>
 
-            {/* SHAP Feature Tornado Chart */}
-            <div className="flex flex-col gap-1">
-              <ShapTornadoChart contributions={state.result.prediction.explanation} />
-            </div>
-
-            {/* Payoff Actions */}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => window.location.reload()}
-                className="gap-1.5 text-xs"
-              >
-                <PlusCircle className="size-3.5" />
-                <span>Schedule Another Appointment</span>
-              </Button>
-
-              <Button
-                variant="default"
-                size="sm"
-                className="gap-1.5 text-xs shadow-xs"
-                nativeButton={false}
-                render={
-                  <Link href={`/appointments/${state.result.appointment.id}`}>
-                    <span>View Complete Appointment Details</span>
-                    <ArrowRight className="size-3.5" />
-                  </Link>
-                }
-              />
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Main Intake Form */}
-      {!state.result && (
-        <form action={formAction} className="flex flex-col gap-6">
-          {/* Section 1: Patient Details */}
-          <Card className="border-border/80 shadow-xs">
-            <CardHeader className="pb-3 border-b border-border/60">
-              <div className="flex items-center gap-2">
-                <User className="size-4 text-primary" />
-                <div>
-                  <CardTitle className="text-base">1. Patient Demographics & Conditions</CardTitle>
-                  <CardDescription className="text-xs">
-                    Basic identification, contact info, and medical risk factors.
-                  </CardDescription>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Full Name */}
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs font-semibold">Full Name *</Label>
+                  <Input
+                    required
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="e.g. Kasun Chamara Bandara"
+                    className="h-9 text-xs"
+                  />
                 </div>
-              </div>
-            </CardHeader>
 
-            <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2 pt-4">
-              <Field label="Full Name *" htmlFor="full_name">
-                <Input
-                  id="full_name"
-                  name="full_name"
-                  placeholder="e.g. Eleanor Vance"
-                  required
-                  disabled={pending}
-                  className="h-9 text-xs"
-                />
-              </Field>
+                {/* NIC */}
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs font-semibold">NIC Number (National Identity Card)</Label>
+                  <Input
+                    value={nic}
+                    onChange={(e) => handleNicChange(e.target.value)}
+                    placeholder="e.g. 199824501234 or 982451234V"
+                    className="h-9 text-xs font-mono"
+                  />
+                </div>
 
-              <Field label="UHID (Unique Health ID)" htmlFor="uhid">
-                <Input
-                  id="uhid"
-                  name="uhid"
-                  placeholder="e.g. UHID-ASIRI-9812"
-                  disabled={pending}
-                  className="h-9 text-xs"
-                />
-              </Field>
-
-              <Field
-                label={
-                  <span className="flex items-center justify-between">
-                    <span>Date of Birth *</span>
+                {/* Date of Birth & Live Age */}
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-semibold">Date of Birth *</Label>
                     {calculatedAge !== null && (
-                      <span className="text-[11px] font-normal text-muted-foreground">
-                        Age: <strong>{calculatedAge} yrs</strong>
+                      <span className="text-[11px] text-primary font-mono font-medium">
+                        Age: {calculatedAge} yrs
                       </span>
                     )}
-                  </span>
-                }
-                htmlFor="date_of_birth"
-              >
-                <Input
-                  id="date_of_birth"
-                  name="date_of_birth"
-                  type="date"
-                  value={dob}
-                  onChange={(e) => setDob(e.target.value)}
-                  required
-                  disabled={pending}
-                  className="h-9 text-xs"
-                />
-              </Field>
-
-              <Field label="Gender" htmlFor="gender">
-                <select
-                  id="gender"
-                  name="gender"
-                  disabled={pending}
-                  className="h-9 w-full rounded-lg border border-input bg-card px-2.5 text-xs outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20 text-foreground"
-                  defaultValue=""
-                >
-                  <option value="">Prefer not to say</option>
-                  <option value="F">Female</option>
-                  <option value="M">Male</option>
-                  <option value="O">Other</option>
-                </select>
-              </Field>
-
-              <Field label="Phone Number" htmlFor="phone">
-                <Input
-                  id="phone"
-                  name="phone"
-                  type="tel"
-                  placeholder="e.g. +1 (555) 234-5678"
-                  disabled={pending}
-                  className="h-9 text-xs"
-                />
-              </Field>
-
-              <Field label="Email Address" htmlFor="email">
-                <Input
-                  id="email"
-                  name="email"
-                  type="email"
-                  placeholder="e.g. patient@example.com"
-                  disabled={pending}
-                  className="h-9 text-xs"
-                />
-              </Field>
-
-              <Field label="City / Residential Area" htmlFor="city">
-                <Input
-                  id="city"
-                  name="city"
-                  placeholder="e.g. Nugegoda"
-                  disabled={pending}
-                  className="h-9 text-xs"
-                />
-              </Field>
-
-              <Field
-                label="Distance from Hospital (km)"
-                htmlFor="distance_km"
-              >
-                <Input
-                  id="distance_km"
-                  name="distance_km"
-                  type="number"
-                  min={0}
-                  step="0.1"
-                  placeholder="e.g. 12.5"
-                  disabled={pending}
-                  className="h-9 text-xs"
-                />
-              </Field>
-
-              <Field
-                label="Handicap Severity Level"
-                htmlFor="handicap"
-                className="sm:col-span-2"
-              >
-                <select
-                  id="handicap"
-                  name="handicap"
-                  disabled={pending}
-                  className="h-9 w-full rounded-lg border border-input bg-card px-2.5 text-xs outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20 text-foreground"
-                  defaultValue="0"
-                >
-                  <option value="0">0 — No disability / handicap</option>
-                  <option value="1">1 — Mild handicap</option>
-                  <option value="2">2 — Moderate handicap</option>
-                  <option value="3">3 — Severe handicap</option>
-                  <option value="4">4 — Very severe handicap</option>
-                </select>
-              </Field>
-
-              {/* Conditions Checklist */}
-              <div className="flex flex-col gap-2.5 sm:col-span-2 border-t border-border/60 pt-3">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  Recorded Chronic Conditions & Welfare
-                </span>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  <ConditionCheckbox
-                    name="hypertension"
-                    label="Hypertension History"
-                    hint="Diagnosed high blood pressure"
-                    disabled={pending}
-                  />
-                  <ConditionCheckbox
-                    name="diabetes"
-                    label="Diabetes History"
-                    hint="Type 1 or Type 2 diagnosis"
-                    disabled={pending}
-                  />
-                  <ConditionCheckbox
-                    name="alcoholism"
-                    label="Alcoholism History"
-                    hint="Alcohol dependence recorded"
-                    disabled={pending}
-                  />
-                  <ConditionCheckbox
-                    name="scholarship"
-                    label="Bolsa Família / Scholarship"
-                    hint="Enrolled in social welfare program"
-                    disabled={pending}
+                  </div>
+                  <Input
+                    required
+                    type="date"
+                    value={dob}
+                    onChange={(e) => setDob(e.target.value)}
+                    className="h-9 text-xs"
                   />
                 </div>
-              </div>
-            </CardContent>
-          </Card>
 
-          {/* Section 2: Appointment Details */}
-          <Card className="border-border/80 shadow-xs">
-            <CardHeader className="pb-3 border-b border-border/60">
-              <div className="flex items-center gap-2">
-                <Calendar className="size-4 text-primary" />
-                <div>
-                  <CardTitle className="text-base">2. Appointment Scheduling & Department</CardTitle>
-                  <CardDescription className="text-xs">
-                    Booking dates and clinical department assignment.
-                  </CardDescription>
+                {/* Phone */}
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs font-semibold">Mobile Phone * (+94 Sri Lanka)</Label>
+                  <PhoneInput
+                    value={phone}
+                    onChange={setPhone}
+                    placeholder="77 123 4567"
+                    className="h-9 text-xs"
+                  />
                 </div>
-              </div>
-            </CardHeader>
 
-            <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2 pt-4">
-              <Field label="Scheduled On (Booking Date) *" htmlFor="scheduled_day">
-                <Input
-                  id="scheduled_day"
-                  name="scheduled_day"
-                  type="date"
-                  value={scheduledDay}
-                  onChange={(e) => setScheduledDay(e.target.value)}
-                  required
-                  disabled={pending}
-                  className="h-9 text-xs"
-                />
-              </Field>
-
-              <Field label="Appointment Date (Visit Date) *" htmlFor="appointment_day">
-                <Input
-                  id="appointment_day"
-                  name="appointment_day"
-                  type="date"
-                  min={scheduledDay}
-                  value={appointmentDay}
-                  onChange={(e) => setAppointmentDay(e.target.value)}
-                  required
-                  disabled={pending}
-                  className="h-9 text-xs"
-                />
-              </Field>
-
-              <Field label="Clinical Department" htmlFor="department" className="sm:col-span-2">
-                <div className="flex flex-col gap-2">
+                {/* Gender */}
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs font-semibold">Gender</Label>
                   <select
-                    id="department"
-                    name="department"
-                    value={selectedDept}
-                    onChange={(e) => setSelectedDept(e.target.value)}
-                    disabled={pending}
-                    className="h-9 w-full rounded-lg border border-input bg-card px-2.5 text-xs outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20 text-foreground"
+                    value={gender}
+                    onChange={(e) => setGender(e.target.value)}
+                    className="h-9 px-3 rounded-md border border-input bg-background text-xs"
                   >
-                    {DEPARTMENTS.map((d) => (
-                      <option key={d} value={d}>
-                        {d}
-                      </option>
-                    ))}
+                    <option value="male">Male</option>
+                    <option value="female">Female</option>
+                    <option value="other">Other</option>
                   </select>
                 </div>
-              </Field>
 
-              <Field label="Consultant" htmlFor="doctor_name">
-                <Input
-                  id="doctor_name"
-                  name="doctor_name"
-                  list="known-consultants"
-                  placeholder="e.g. Dr. Rohan Perera"
-                  defaultValue={KNOWN_CONSULTANTS[0]}
-                  disabled={pending}
-                  className="h-9 text-xs"
-                />
-                <datalist id="known-consultants">
-                  {KNOWN_CONSULTANTS.map((d) => (
-                    <option key={d} value={d} />
-                  ))}
-                </datalist>
-              </Field>
-
-              <Field label="Scheduled Clinic Time" htmlFor="scheduled_time">
-                <Input
-                  id="scheduled_time"
-                  name="scheduled_time"
-                  type="time"
-                  defaultValue="17:30"
-                  disabled={pending}
-                  className="h-9 text-xs"
-                />
-              </Field>
-
-              <Field label="Booking Channel" htmlFor="booking_channel">
-                <select
-                  id="booking_channel"
-                  name="booking_channel"
-                  disabled={pending}
-                  className="h-9 w-full rounded-lg border border-input bg-card px-2.5 text-xs outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20 text-foreground"
-                  defaultValue={BOOKING_CHANNELS[0]}
-                >
-                  {BOOKING_CHANNELS.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
-              <Field label="Payment Mode" htmlFor="payment_mode">
-                <select
-                  id="payment_mode"
-                  name="payment_mode"
-                  disabled={pending}
-                  className="h-9 w-full rounded-lg border border-input bg-card px-2.5 text-xs outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20 text-foreground"
-                  defaultValue={PAYMENT_MODES[0]}
-                >
-                  {PAYMENT_MODES.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
-              <div className="sm:col-span-2 rounded-lg border border-border/80 bg-muted/20 p-3">
-                <label className="flex items-center gap-2.5 text-xs font-medium cursor-pointer">
-                  <input
-                    type="checkbox"
-                    name="sms_received"
-                    defaultChecked
-                    disabled={pending}
-                    className="size-4 rounded border-input accent-primary"
-                  />
-                  <div>
-                    <span className="text-foreground">Send SMS Reminder</span>
-                    <p className="text-[11px] font-normal text-muted-foreground">
-                      Automated text confirmation scheduled before appointment.
-                    </p>
-                  </div>
-                </label>
+                {/* Preferred Language */}
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs font-semibold">Preferred Language</Label>
+                  <select
+                    value={preferredLanguage}
+                    onChange={(e) => setPreferredLanguage(e.target.value)}
+                    className="h-9 px-3 rounded-md border border-input bg-background text-xs"
+                  >
+                    <option value="en">English</option>
+                    <option value="si">Sinhala (සිංහල)</option>
+                    <option value="ta">Tamil (தமிழ்)</option>
+                  </select>
+                </div>
               </div>
-            </CardContent>
-          </Card>
 
-          {/* Form Error */}
-          {state.error && (
-            <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive font-medium">
-              {state.error}
+              {/* Clinical Chronic Conditions */}
+              <div className="pt-2 border-t border-border/60">
+                <span className="text-xs font-semibold text-muted-foreground block mb-2">
+                  Chronic Conditions (Relevant to attendance models)
+                </span>
+                <div className="flex items-center gap-6">
+                  <label className="flex items-center gap-2 text-xs cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={hasHypertension}
+                      onChange={(e) => setHasHypertension(e.target.checked)}
+                      className="rounded border-input text-primary"
+                    />
+                    <span>Hypertension</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-xs cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={hasDiabetes}
+                      onChange={(e) => setHasDiabetes(e.target.checked)}
+                      className="rounded border-input text-primary"
+                    />
+                    <span>Diabetes</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-3">
+                <Button
+                  onClick={() => setCurrentStage(1)}
+                  disabled={!fullName || !dob}
+                  className="text-xs gap-1.5"
+                >
+                  <span>Continue to Location & Commute</span>
+                  <ArrowRight className="size-3.5" />
+                </Button>
+              </div>
             </div>
           )}
 
-          {/* Submit Button */}
-          <Button
-            type="submit"
-            size="lg"
-            disabled={pending}
-            className="w-full gap-2 text-sm shadow-md font-semibold h-10"
-          >
-            {pending ? (
-              <>
-                <Loader2 className="size-4 animate-spin" />
-                <span>Running XGBoost Model & Generating SHAP Explanations…</span>
-              </>
+          {/* Stage 1: Location & Commute */}
+          {currentStage === 1 && (
+            <div className="rounded-xl border border-border/80 bg-card p-6 flex flex-col gap-5 shadow-xs">
+              <div className="border-b border-border/60 pb-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <MapPin className="size-4 text-primary" />
+                  <h2 className="text-base font-bold text-foreground">Location & Commute Distance</h2>
+                </div>
+              </div>
+
+              {/* Searchable Town Combobox */}
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs font-semibold">City / Town (16,450 Sri Lankan Locations)</Label>
+                <Combobox
+                  options={locations.map((loc) => ({
+                    value: String(loc.id),
+                    label: `${loc.name} (${loc.district || "LK"})`,
+                    subLabel: loc.province || undefined,
+                  }))}
+                  value={selectedLocationId ? String(selectedLocationId) : ""}
+                  onChange={handleSelectLocation}
+                  placeholder="Select town (e.g. Kandy, Galle, Gampaha, Dehiwala)..."
+                  className="h-9 text-xs"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs font-semibold">Town Name</Label>
+                  <Input
+                    value={city}
+                    onChange={(e) => setCity(e.target.value)}
+                    className="h-9 text-xs"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs font-semibold">District</Label>
+                  <Input
+                    value={district}
+                    onChange={(e) => setDistrict(e.target.value)}
+                    className="h-9 text-xs"
+                  />
+                </div>
+              </div>
+
+              {/* Distance State Machine */}
+              <div className="rounded-lg border border-border/80 bg-muted/20 p-4 flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-foreground">Distance to Colombo General Hospital</span>
+                  <Badge variant="outline" className="text-[10px] font-mono capitalize">
+                    {distanceSource === "road_osrm" ? "Road Route (OSRM)" : "Estimated / Straight Line"}
+                  </Badge>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <Input
+                      type="number"
+                      step="0.1"
+                      value={distanceKm}
+                      onChange={(e) => {
+                        setDistanceKm(parseFloat(e.target.value) || 0);
+                        setDistanceSource("manual");
+                      }}
+                      className="w-24 h-9 text-xs font-mono font-bold"
+                    />
+                    <span className="text-xs text-muted-foreground font-mono">km</span>
+                  </div>
+                  <span className="text-xs text-muted-foreground">
+                    Estimated commute time: ~{Math.round(distanceKm * 2.2 + 10)} mins
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-3">
+                <Button
+                  variant="outline"
+                  onClick={() => setCurrentStage(0)}
+                  className="text-xs gap-1.5"
+                >
+                  <ArrowLeft className="size-3.5" />
+                  <span>Back to Identity</span>
+                </Button>
+                <Button
+                  onClick={() => setCurrentStage(2)}
+                  className="text-xs gap-1.5"
+                >
+                  <span>Continue to Clinical Scheduling</span>
+                  <ArrowRight className="size-3.5" />
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Stage 2: Clinical & Scheduling */}
+          {currentStage === 2 && (
+            <div className="rounded-xl border border-border/80 bg-card p-6 flex flex-col gap-5 shadow-xs">
+              <div className="border-b border-border/60 pb-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Stethoscope className="size-4 text-primary" />
+                  <h2 className="text-base font-bold text-foreground">Clinical Specialty & Scheduling</h2>
+                </div>
+              </div>
+
+              {/* Department Combobox */}
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs font-semibold">Clinical Department *</Label>
+                <select
+                  value={selectedDeptId || ""}
+                  onChange={(e) => {
+                    const id = Number(e.target.value);
+                    setSelectedDeptId(id);
+                    const found = departments.find((d) => d.id === id);
+                    if (found) setSelectedDeptName(found.name);
+                  }}
+                  className="h-9 px-3 rounded-md border border-input bg-background text-xs font-medium"
+                >
+                  {departments.map((dept) => (
+                    <option key={dept.id} value={dept.id}>
+                      {dept.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Doctor Cascaded Select */}
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs font-semibold">Attending Consultant / Doctor *</Label>
+                <select
+                  value={selectedDoctorId}
+                  onChange={(e) => setSelectedDoctorId(e.target.value)}
+                  className="h-9 px-3 rounded-md border border-input bg-background text-xs font-medium"
+                >
+                  {doctors.length === 0 ? (
+                    <option value="">No doctors available for this department</option>
+                  ) : (
+                    doctors.map((doc) => (
+                      <option key={doc.id} value={doc.id}>
+                        {doc.title} {doc.full_name} ({doc.default_room || "Consultation Room"})
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+
+              {/* Appointment Date Picker */}
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs font-semibold">Appointment Date *</Label>
+                <DatePicker
+                  value={appointmentDay}
+                  onChange={setAppointmentDay}
+                  minDate="2026-10-01"
+                  className="h-9 text-xs"
+                />
+              </div>
+
+              {/* Session Slot Segmented Cards */}
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs font-semibold">Clinic Session Time Slot</Label>
+                <SegmentedCards
+                  value={clinicSession}
+                  onChange={setClinicSession}
+                  options={[
+                    { value: "Morning", title: "Morning Session", description: "08:30 – 12:30 · Room 102" },
+                    { value: "Afternoon", title: "Afternoon Session", description: "13:30 – 16:30 · Room 102" },
+                    { value: "Evening", title: "Evening Clinic", description: "17:00 – 20:00 · Room 104" },
+                  ]}
+                />
+              </div>
+
+              <div className="flex items-center justify-between pt-3">
+                <Button
+                  variant="outline"
+                  onClick={() => setCurrentStage(1)}
+                  className="text-xs gap-1.5"
+                >
+                  <ArrowLeft className="size-3.5" />
+                  <span>Back to Commute</span>
+                </Button>
+                <Button
+                  onClick={() => setCurrentStage(3)}
+                  disabled={!selectedDoctorId}
+                  className="text-xs gap-1.5"
+                >
+                  <span>Continue to Booking Review</span>
+                  <ArrowRight className="size-3.5" />
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Stage 3: Booking & Review */}
+          {currentStage === 3 && (
+            <div className="rounded-xl border border-border/80 bg-card p-6 flex flex-col gap-5 shadow-xs">
+              <div className="border-b border-border/60 pb-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <FileText className="size-4 text-primary" />
+                  <h2 className="text-base font-bold text-foreground">Booking Details & Final Review</h2>
+                </div>
+              </div>
+
+              {/* Booking Channel */}
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs font-semibold">Booking Channel</Label>
+                <SegmentedCards
+                  value={bookingChannel}
+                  onChange={setBookingChannel}
+                  options={CHANNELS}
+                />
+              </div>
+
+              {/* Payment Mode */}
+              <div className="flex flex-col gap-1.5">
+                <Label className="text-xs font-semibold">Payment Mode</Label>
+                <SegmentedCards
+                  value={paymentMode}
+                  onChange={setPaymentMode}
+                  options={PAYMENTS}
+                />
+              </div>
+
+              {/* Environmental / Weather Flag */}
+              <div className="rounded-lg border border-border/80 bg-muted/20 p-3.5 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <CloudRain className={`size-4 ${heavyRain ? "text-blue-400" : "text-muted-foreground"}`} />
+                  <div>
+                    <span className="text-xs font-semibold text-foreground">Heavy Rain / Monsoon Warning</span>
+                    <p className="text-[10px] text-muted-foreground">
+                      Applies monsoon contextual attendance penalty for Colombo transit
+                    </p>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={heavyRain}
+                  onChange={(e) => setHeavyRain(e.target.checked)}
+                  className="rounded border-input text-primary"
+                />
+              </div>
+
+              {/* SMS Reminder Opt-in */}
+              <label className="flex items-center gap-2 text-xs cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={smsReminderOptIn}
+                  onChange={(e) => setSmsReminderOptIn(e.target.checked)}
+                  className="rounded border-input text-primary"
+                />
+                <span>Send proactive SMS reminder in {preferredLanguage.toUpperCase()}</span>
+              </label>
+
+              {/* Error banner if any */}
+              {submissionError && (
+                <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
+                  <AlertCircle className="size-4 shrink-0" />
+                  <span>{submissionError}</span>
+                </div>
+              )}
+
+              {/* DUAL ACTION BUTTONS (As requested by user) */}
+              <div className="pt-4 border-t border-border/60 flex flex-col sm:flex-row items-center gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => setCurrentStage(2)}
+                  className="w-full sm:w-auto text-xs gap-1.5"
+                >
+                  <ArrowLeft className="size-3.5" />
+                  <span>Back to Clinical</span>
+                </Button>
+
+                <div className="flex-1 w-full flex flex-col sm:flex-row items-center justify-end gap-3">
+                  {/* Button 1: Confirm Booking only */}
+                  <Button
+                    onClick={() => submitIntake(false)}
+                    disabled={isSubmitting}
+                    variant="secondary"
+                    className="w-full sm:w-auto text-xs font-semibold h-10 px-5"
+                  >
+                    <span>{isSubmitting ? "Confirming..." : "Confirm Booking"}</span>
+                  </Button>
+
+                  {/* Button 2: Confirm & Triage in Hub */}
+                  <Button
+                    onClick={() => submitIntake(true)}
+                    disabled={isSubmitting}
+                    className="w-full sm:w-auto text-xs font-semibold bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-5 gap-2 shadow-sm"
+                  >
+                    <Sparkles className="size-3.5" />
+                    <span>Confirm & Triage in Hub</span>
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Right Col: Live Ephemeral Prediction Preview Chip */}
+        <div className="flex flex-col gap-4">
+          <div className="rounded-xl border border-primary/30 bg-card p-5 shadow-xs flex flex-col gap-4 sticky top-6">
+            <div className="flex items-center justify-between border-b border-border/60 pb-3">
+              <div className="flex items-center gap-2">
+                <Sparkles className="size-4 text-primary" />
+                <h3 className="text-sm font-bold text-foreground">Attendance Intelligence</h3>
+              </div>
+              <Badge variant="outline" className="text-[10px] text-muted-foreground font-mono">
+                Live Preview
+              </Badge>
+            </div>
+
+            {preview ? (
+              <div className="flex flex-col gap-4 animate-in fade-in-0 duration-300">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Estimated Risk:</span>
+                  <RiskPill
+                    category={(preview.risk_category || "Low") as RiskCategory}
+                    score={preview.risk_score}
+                  />
+                </div>
+
+                <div className="rounded-lg bg-muted/30 p-3 border border-border/60 flex flex-col gap-2">
+                  <span className="text-[11px] font-semibold text-muted-foreground">
+                    Top Contributing Risk Drivers:
+                  </span>
+                  {preview.explanation && preview.explanation.length > 0 ? (
+                    <div className="flex flex-col gap-1.5">
+                      {preview.explanation.slice(0, 3).map((f, idx) => (
+                        <div key={idx} className="flex items-center justify-between text-xs">
+                          <span className="text-muted-foreground truncate max-w-[160px]">
+                            {f.feature_label || f.feature}
+                          </span>
+                          <span
+                            className={`font-mono text-[11px] font-semibold ${
+                              (f.contribution || 0) > 0 ? "text-rose-400" : "text-emerald-400"
+                            }`}
+                          >
+                            {(f.contribution || 0) > 0 ? "+" : ""}
+                            {((f.contribution || 0) * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-xs text-muted-foreground italic">None significant</span>
+                  )}
+                </div>
+
+                <div className="text-[11px] text-muted-foreground leading-relaxed">
+                  Calculated using calibrated XGBoost model and Sri Lankan contextual multipliers.
+                  No record is written to the database until booking confirmation.
+                </div>
+              </div>
             ) : (
-              <>
-                <Sparkles className="size-4" />
-                <span>Register Appointment & Predict No-Show Risk</span>
-              </>
+              <div className="py-8 text-center text-xs text-muted-foreground">
+                {isPreviewLoading ? (
+                  <div className="flex items-center justify-center gap-2">
+                    <Sparkles className="size-3.5 text-primary animate-spin" />
+                    <span>Evaluating clinical factors...</span>
+                  </div>
+                ) : (
+                  <span>Fill in patient name and clinical department to generate preview score.</span>
+                )}
+              </div>
             )}
-          </Button>
-        </form>
-      )}
-    </div>
-  );
-}
-
-function Field({
-  label,
-  htmlFor,
-  className,
-  children,
-}: {
-  label: ReactNode;
-  htmlFor: string;
-  className?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className={`flex flex-col gap-1.5 ${className ?? ""}`}>
-      <Label htmlFor={htmlFor} className="text-xs font-medium text-foreground">
-        {label}
-      </Label>
-      {children}
-    </div>
-  );
-}
-
-function ConditionCheckbox({
-  name,
-  label,
-  hint,
-  disabled,
-}: {
-  name: string;
-  label: string;
-  hint: string;
-  disabled?: boolean;
-}) {
-  return (
-    <label className="flex items-start gap-2.5 rounded-lg border border-border/60 bg-card p-2.5 text-xs transition-colors hover:bg-muted/30 cursor-pointer">
-      <input
-        type="checkbox"
-        name={name}
-        disabled={disabled}
-        className="size-4 rounded border-input accent-primary mt-0.5"
-      />
-      <div className="flex flex-col">
-        <span className="font-medium text-foreground">{label}</span>
-        <span className="text-[11px] text-muted-foreground">{hint}</span>
+          </div>
+        </div>
       </div>
-    </label>
+    </div>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -20,6 +20,8 @@ import { logoutAction } from "@/app/login/actions";
 import { hasRole, type SessionRole } from "@/lib/session-token";
 import { ShaiLogo } from "@/components/shai-logo";
 import { ThemePill } from "@/components/theme-pill";
+import { getCapacityNavCountsAction } from "@/app/capacity/actions";
+import type { CapacityNavCounts } from "@/lib/types";
 
 interface AppSidebarProps {
   onItemClick?: () => void;
@@ -93,6 +95,12 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
       exact: false,
     },
     {
+      href: "/predictions",
+      label: "Prediction Hub",
+      icon: Sparkles,
+      exact: false,
+    },
+    {
       href: "/new",
       label: "New Appointment",
       icon: PlusCircle,
@@ -103,6 +111,27 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
   // Pages only managers/admins may open. The backend enforces the same rule; this just hides the links.
   const MANAGER_ONLY = new Set(["/capacity", "/simulator"]);
   const isManager = hasRole(storedRole as SessionRole, "manager");
+  const [navCounts, setNavCounts] = useState<CapacityNavCounts | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    async function loadCounts() {
+      try {
+        const counts = await getCapacityNavCountsAction();
+        if (mounted && counts) {
+          setNavCounts(counts);
+        }
+      } catch {
+        // Silently swallow network / auth error on sidebar
+      }
+    }
+    loadCounts();
+    const interval = setInterval(loadCounts, 30000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, []);
 
   async function handleSignOut() {
     // The session cookie is httpOnly, so it can only be cleared on the server.
@@ -136,7 +165,7 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
           onClick={onItemClick}
           className="group flex items-center transition-opacity hover:opacity-95"
         >
-          <ShaiLogo variant="horizontal" size="default" />
+          <ShaiLogo size="lg" />
         </Link>
 
         {/* Navigation Items (Dropify-style active gradient pill with chevron) */}
@@ -172,6 +201,30 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
                 </div>
 
                 <div className="flex items-center gap-1.5">
+                  {item.href === "/capacity" && (navCounts?.waitlist_waiting ?? 0) > 0 && (
+                    <span
+                      className={cn(
+                        "rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums",
+                        isActive
+                          ? "bg-white/20 text-white"
+                          : "bg-[#8B7CF6]/15 text-[#8B7CF6] dark:bg-[#8B7CF6]/25 dark:text-[#C4B5FD]"
+                      )}
+                    >
+                      {navCounts?.waitlist_waiting} wait
+                    </span>
+                  )}
+                  {item.href === "/outreach" && (navCounts?.open_slot_offers ?? 0) > 0 && (
+                    <span
+                      className={cn(
+                        "rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums",
+                        isActive
+                          ? "bg-white/20 text-white"
+                          : "bg-amber-500/15 text-amber-600 dark:bg-amber-500/25 dark:text-amber-400"
+                      )}
+                    >
+                      {navCounts?.open_slot_offers}
+                    </span>
+                  )}
                   {isActive && (
                     <ChevronRight className="size-4 shrink-0 text-white/80" />
                   )}
@@ -184,10 +237,14 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
 
       {/* Bottom Area: Promo Card, Profile & Theme Toggle */}
       <div className="flex shrink-0 flex-col gap-4 pt-4 border-t border-[#F0F0F4] dark:border-[#272738]">
-        {/* Model Promo Card (§0 Thesis Honesty Rule) */}
-        <div className="relative overflow-hidden rounded-2xl border border-[#DDD6FE]/60 bg-gradient-to-br from-[#EDE9FE] to-[#F5F3FF] p-3.5 dark:border-[#383850] dark:from-[#252538] dark:to-[#1C1C2A]">
+        {/* Model Promo Card (§0 Thesis Honesty Rule) - Clickable to /model */}
+        <Link
+          href="/model"
+          onClick={onItemClick}
+          className="group relative block overflow-hidden rounded-2xl border border-[#DDD6FE]/60 bg-gradient-to-br from-[#EDE9FE] to-[#F5F3FF] p-3.5 transition-all hover:border-[#8B7CF6]/60 hover:shadow-md dark:border-[#383850] dark:from-[#252538] dark:to-[#1C1C2A] dark:hover:border-[#8B7CF6]/40 cursor-pointer"
+        >
           <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-[#8B7CF6] dark:text-[#C4B5FD]">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[#8B7CF6] dark:text-[#C4B5FD] group-hover:underline">
               Risk Model · v1.0
             </span>
             <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400">
@@ -196,11 +253,12 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
             </span>
           </div>
 
-          <div className="text-[13px] font-extrabold text-[#171725] dark:text-white">
-            ROC-AUC 0.672 · 1.8× Lift
+          <div className="text-[13px] font-extrabold text-[#171725] dark:text-white flex items-center justify-between">
+            <span>ROC-AUC 0.672 · 1.8× Lift</span>
+            <ChevronRight className="size-3.5 text-[#8B7CF6] transition-transform group-hover:translate-x-0.5" />
           </div>
           <p className="mt-0.5 text-[10px] text-[#78788C] dark:text-[#A0A0B8] leading-tight">
-            XGBoost calibrated risk telemetry
+            XGBoost calibrated risk telemetry &amp; SHAP
           </p>
 
           <div className="mt-2.5 flex items-center justify-between pt-1.5 border-t border-[#DDD6FE]/40 text-[9px] text-[#8C8CA1] dark:border-[#383850]">
@@ -210,24 +268,28 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
             </span>
             <span className="font-mono text-[9px]">15.9% base</span>
           </div>
-        </div>
+        </Link>
 
-        {/* User Profile Block */}
+        {/* User Profile Block - Clickable to /profile */}
         <div className="flex items-center justify-between px-1">
-          <div className="flex items-center gap-2.5">
-            <div className="relative flex size-9 shrink-0 items-center justify-center rounded-full bg-[#EDE9FE] font-bold text-xs text-[#8B7CF6] ring-2 ring-white dark:bg-[#252538] dark:text-[#C4B5FD] dark:ring-[#171722]">
+          <Link
+            href="/profile"
+            onClick={onItemClick}
+            className="flex items-center gap-2.5 group hover:opacity-90 transition-opacity"
+          >
+            <div className="relative flex size-9 shrink-0 items-center justify-center rounded-full bg-[#EDE9FE] font-bold text-xs text-[#8B7CF6] ring-2 ring-white dark:bg-[#252538] dark:text-[#C4B5FD] dark:ring-[#171722] group-hover:ring-[#8B7CF6]/40 transition-all">
               {initials}
               <span className="absolute bottom-0 right-0 size-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-[#171722]" />
             </div>
             <div className="flex flex-col">
-              <span className="text-xs font-bold leading-tight text-[#171725] dark:text-white">
+              <span className="text-xs font-bold leading-tight text-[#171725] dark:text-white group-hover:text-[#8B7CF6] transition-colors">
                 {userName}
               </span>
               <span className="text-[10px] font-medium leading-tight text-[#8C8CA1]">
                 {userRole}
               </span>
             </div>
-          </div>
+          </Link>
 
           <button
             type="button"

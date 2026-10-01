@@ -34,6 +34,20 @@ import type {
   SimulatorResult,
   StoredPrediction,
   WaitlistEntry,
+  ExpenseCategory,
+  HospitalExpense,
+  DepartmentItem,
+  DoctorItem,
+  AvailabilityResponse,
+  LocationItem,
+  PatientSearchResult,
+  IntakeRequest,
+  IntakeResponse,
+  PredictPreviewRequest,
+  PredictPreviewResponse,
+  PredictionRunResponse,
+  PredictionTodayResponse,
+  HISStatusResponse,
 } from "@/lib/types";
 import { redirect } from "next/navigation";
 
@@ -160,10 +174,15 @@ export function createAppointment(data: AppointmentInput) {
   });
 }
 
-export function updateAppointmentOutcome(appointmentId: string, noShow: boolean) {
+export function updateAppointmentOutcome(
+  appointmentId: string,
+  noShow: boolean | null,
+  reason?: string,
+  cancelled?: boolean
+) {
   return apiFetch<Appointment>(`/appointments/${appointmentId}/outcome`, {
     method: "PATCH",
-    body: JSON.stringify({ no_show: noShow }),
+    body: JSON.stringify({ no_show: noShow, reason, cancelled }),
   });
 }
 
@@ -375,6 +394,54 @@ export function evaluateSimulator(params: SimulatorParams) {
   });
 }
 
+export function listExpenseCategories() {
+  return apiFetch<ExpenseCategory[]>("/expenses/categories");
+}
+
+export function listHospitalExpenses() {
+  return apiFetch<HospitalExpense[]>("/expenses");
+}
+
+export function createHospitalExpense(payload: {
+  category_id: string;
+  hospital_name?: string;
+  title: string;
+  amount_lkr: number;
+  recurrence: string;
+  is_active?: boolean;
+  notes?: string | null;
+}) {
+  return apiFetch<HospitalExpense>("/expenses", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateHospitalExpense(
+  id: string,
+  payload: Partial<{
+    category_id: string;
+    hospital_name: string;
+    title: string;
+    amount_lkr: number;
+    recurrence: string;
+    is_active: boolean;
+    notes: string;
+  }>
+) {
+  return apiFetch<HospitalExpense>(`/expenses/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteHospitalExpense(id: string) {
+  return apiFetch<{ ok: boolean; id: string }>(`/expenses/${id}`, {
+    method: "DELETE",
+  });
+}
+
+
 // ===================================
 // Dashboard drill-down screens
 // ===================================
@@ -419,3 +486,106 @@ export function getGeoPatients(params: { risk?: string; department?: string; day
 export function getSessionDetail(id: string) {
   return apiFetch<SessionDetail>(`/doctors/sessions/${id}/detail`);
 }
+
+// ===================================
+// Reference Data & Discovery
+// ===================================
+
+export function getDepartments() {
+  return apiFetch<DepartmentItem[]>("/departments");
+}
+
+export function getDoctors(departmentId?: number, search?: string) {
+  return apiFetch<DoctorItem[]>(`/doctors${qs({ department_id: departmentId, search })}`);
+}
+
+export function getDoctorAvailability(doctorId: string, days = 14) {
+  return apiFetch<AvailabilityResponse>(`/doctors/${doctorId}/availability${qs({ days })}`);
+}
+
+export function searchLocations(q: string, limit = 8) {
+  return apiFetch<LocationItem[]>(`/locations${qs({ q, limit })}`);
+}
+
+export function geocodeLocation(q: string) {
+  return apiFetch<{ latitude: number; longitude: number; display_name: string; district?: string } | null>(
+    `/locations/geocode${qs({ q })}`
+  );
+}
+
+export function calculateDistance(latitude: number, longitude: number) {
+  return apiFetch<{ distance_km: number; source: "road_osrm" | "estimated" | "manual" }>(
+    "/distance",
+    { method: "POST", body: JSON.stringify({ latitude, longitude }) }
+  );
+}
+
+export function searchPatients(q: string, limit = 10) {
+  return apiFetch<PatientSearchResult[]>(`/patients/search${qs({ q, limit })}`);
+}
+
+// ===================================
+// Intake & Live Scoring
+// ===================================
+
+export function createAppointmentIntake(req: IntakeRequest) {
+  return apiFetch<IntakeResponse>("/appointments/intake", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+export function previewPrediction(req: PredictPreviewRequest) {
+  return apiFetch<PredictPreviewResponse>("/predict/preview", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+// ===================================
+// Prediction Hub & HIS Sync
+// ===================================
+
+export function getPredictionsToday(date?: string) {
+  return apiFetch<PredictionTodayResponse>(`/predictions/today${qs({ date })}`);
+}
+
+export function triggerBatchRun(
+  req: { run_date?: string; doctor_id?: string; with_sync?: boolean; heavy_rain?: boolean },
+  runSync = false
+) {
+  return apiFetch<PredictionRunResponse>(`/predictions/runs${qs({ run_sync: runSync ? "true" : undefined })}`, {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+export function getPredictionRun(runId: string) {
+  return apiFetch<PredictionRunResponse>(`/predictions/runs/${runId}`);
+}
+
+export function getHisStatus() {
+  return apiFetch<HISStatusResponse>("/his/status");
+}
+
+export function triggerHisSync(date?: string) {
+  return apiFetch<{
+    run_id: string;
+    target_date: string;
+    status: string;
+    fetched: number;
+    created: number;
+    updated: number;
+    unchanged: number;
+    failed: number;
+    error: string | null;
+  }>(`/his/sync${qs({ date })}`, { method: "POST" });
+}
+
+export function simulateHisArrivals(count = 5) {
+  return apiFetch<{ marked_arrived_count: number; external_refs: string[] }>(
+    `/his/simulate/arrivals${qs({ count })}`,
+    { method: "POST" }
+  );
+}
+
