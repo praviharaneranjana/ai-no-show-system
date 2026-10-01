@@ -87,6 +87,8 @@ def build_patients_and_appointments(n: int, seed: int) -> tuple[list[dict], list
             email=row["email"],
             city=row["city"],
             distance_km=float(row["distance_km"]),
+            latitude=float(row["latitude"]),
+            longitude=float(row["longitude"]),
             scholarship=bool(row["scholarship"]),
             hypertension=bool(row["hypertension"]),
             diabetes=bool(row["diabetes"]),

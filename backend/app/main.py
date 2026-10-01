@@ -15,7 +15,7 @@ import pandas as pd
 
 from contextlib import asynccontextmanager
 
-from app import auth, models, outreach_drafter, schemas, shai_model
+from app import auth, geo, insights, models, outreach_drafter, schemas, shai_model
 from app.database import get_db
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -157,6 +157,8 @@ def _patient_history(db: Session, appointment: models.Appointment) -> tuple[int,
 # API Endpoints
 # ======================
 app.include_router(auth.router)
+# Registered before the CRUD routes so /appointments/register isn't captured by /appointments/{id}
+app.include_router(insights.router)
 
 
 @app.get("/")
@@ -255,7 +257,17 @@ def predict_no_show(data: AppointmentRequest, db: Session = Depends(get_db)):
 # ======================
 @app.post("/patients", response_model=schemas.PatientOut, status_code=201)
 def create_patient(data: schemas.PatientCreate, db: Session = Depends(get_db)):
-    patient = models.Patient(**data.model_dump())
+    fields = data.model_dump()
+    patient = models.Patient(**fields)
+    patient.id = uuid.uuid4()
+    # Resolve the city to real coordinates and derive the distance from them, so the
+    # model input and the map always agree. An explicit lat/lng wins over the city lookup.
+    if patient.latitude is None or patient.longitude is None:
+        coords = geo.geocode_city(patient.city, seed=patient.id)
+        if coords:
+            patient.latitude, patient.longitude = coords
+    if patient.latitude is not None and patient.longitude is not None:
+        patient.distance_km = geo.distance_to_hospital_km(patient.latitude, patient.longitude)
     db.add(patient)
     db.commit()
     db.refresh(patient)

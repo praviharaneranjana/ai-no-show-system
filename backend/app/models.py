@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -21,6 +21,8 @@ class Patient(Base):
     email: Mapped[str | None] = mapped_column(String)
     city: Mapped[str | None] = mapped_column(String, nullable=True)
     distance_km: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     scholarship: Mapped[bool] = mapped_column(Boolean, default=False)
     hypertension: Mapped[bool] = mapped_column(Boolean, default=False)
     diabetes: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -120,6 +122,7 @@ class WaitlistEntry(Base):
     preferred_days: Mapped[str] = mapped_column(String, default="Any weekday evening")
     status: Mapped[str] = mapped_column(String, default="waiting")  # waiting, offered, accepted, expired
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
 
 
 class User(Base):

@@ -15,6 +15,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from app import geo
+
 SINHALA_MALE_FIRST = [
     "Nimal", "Sunil", "Kamal", "Ranjith", "Anura", "Chaminda", "Rohan",
     "Saman", "Wasantha", "Chandana", "Sampath", "Priyantha", "Lasantha",
@@ -203,7 +205,11 @@ def add_hospital_fields(df: pd.DataFrame, seed: int = 43) -> pd.DataFrame:
 
     df = df.copy()
     df["city"] = rng.choice(CITIES, size=n)
-    df["distance_km"] = np.round(np.clip(rng.lognormal(mean=2.3, sigma=0.7, size=n), 0.5, 90.0), 1)
+    # Real locations: town centre + small offset; distance is the straight-line km to the hospital.
+    coords = [geo.geocode_city(c, seed=f"{seed}-{i}") for i, c in enumerate(df["city"])]
+    df["latitude"] = [c[0] for c in coords]
+    df["longitude"] = [c[1] for c in coords]
+    df["distance_km"] = [geo.distance_to_hospital_km(*c) for c in coords]
     df["uhid"] = [
         f"UHID-{prefix}-{num}"
         for prefix, num in zip(rng.choice(UHID_PREFIXES, size=n), rng.integers(1000, 9999, size=n))

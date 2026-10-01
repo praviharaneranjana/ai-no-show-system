@@ -12,6 +12,8 @@ class PatientCreate(BaseModel):
     email: str | None = None
     city: str | None = None
     distance_km: float | None = None
+    latitude: float | None = None
+    longitude: float | None = None
     scholarship: bool = False
     hypertension: bool = False
     diabetes: bool = False
