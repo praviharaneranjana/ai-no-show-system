@@ -1,4 +1,5 @@
 import React, { isValidElement, type ReactNode } from "react";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { ChipDelta } from "@/components/chip-delta";
 import { Sparkline } from "@/components/sparkline";
@@ -15,6 +16,8 @@ export interface StatCardProps {
   chartType?: "sparkline" | "bars" | "none";
   sparklineData?: number[];
   barValues?: number[];
+  /** Makes the whole card a link to the screen that explains the number. */
+  href?: string;
   className?: string;
 }
 
@@ -30,6 +33,7 @@ export function StatCard({
   chartType,
   sparklineData,
   barValues,
+  href,
   className,
 }: StatCardProps) {
   const displayLabel = label ?? title ?? "";
@@ -69,13 +73,13 @@ export function StatCard({
     return null;
   };
 
-  return (
-    <div
-      className={cn(
-        "group flex items-center justify-between rounded-[22px] border border-border bg-card p-5 text-card-foreground bento-card-shadow transition-all duration-200 hover:-translate-y-0.5",
-        className
-      )}
-    >
+  const cardClass = cn(
+    "group flex items-center justify-between rounded-[22px] border border-border bg-card p-5 text-card-foreground bento-card-shadow transition-all duration-200 hover:-translate-y-0.5",
+    href && "cursor-pointer hover:border-[#8B7CF6]/50 focus-visible:outline-2 focus-visible:outline-[#8B7CF6]",
+    className
+  );
+  const content = (
+    <>
       <div className="flex items-center gap-4">
         {/* Dark round icon circle (Dropify reference) */}
         <div
@@ -132,6 +136,14 @@ export function StatCard({
           })}
         </div>
       )}
-    </div>
+    </>
+  );
+
+  return href ? (
+    <Link href={href} className={cardClass}>
+      {content}
+    </Link>
+  ) : (
+    <div className={cardClass}>{content}</div>
   );
 }

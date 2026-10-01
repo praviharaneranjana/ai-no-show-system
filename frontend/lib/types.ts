@@ -8,6 +8,8 @@ export type Patient = {
   email: string | null;
   city: string | null;
   distance_km: number | null;
+  latitude: number | null;
+  longitude: number | null;
   scholarship: boolean;
   hypertension: boolean;
   diabetes: boolean;
@@ -16,7 +18,7 @@ export type Patient = {
   created_at: string;
 };
 
-export type PatientInput = Omit<Patient, "id" | "created_at" | "uhid" | "city" | "distance_km"> & {
+export type PatientInput = Omit<Patient, "id" | "created_at" | "uhid" | "city" | "distance_km" | "latitude" | "longitude"> & {
   uhid?: string | null;
   city?: string | null;
   distance_km?: number | null;
@@ -224,4 +226,122 @@ export type SimulatorResult = {
   recovered_doctor_hours_annual: number;
   nurse_phone_hours_saved_monthly: number;
   net_roi_multiple: number;
+};
+
+// ===================================
+// Dashboard drill-down screens (backend app/insights.py)
+// ===================================
+
+export type TrendGranularity = "day" | "week" | "month" | "year";
+
+export type TrendPoint = { period: string; label: string; total: number; no_shows: number; rate: number; partial: boolean };
+export type TrendResponse = {
+  granularity: TrendGranularity;
+  points: TrendPoint[];
+  baseline_rate: number | null;
+  sample_size: number;
+  latest_rate: number | null;
+  previous_rate: number | null;
+  departments: string[];
+  doctors: string[];
+};
+
+export type RevenueBucket = { key: string; appointments: number; expected_no_shows: number; revenue_at_risk_lkr: number };
+export type RevenueAtRisk = {
+  days: number;
+  total_appointments: number;
+  expected_no_shows: number;
+  revenue_at_risk_lkr: number;
+  by_department: RevenueBucket[];
+  by_doctor: RevenueBucket[];
+  by_day: RevenueBucket[];
+  consultation_fee_lkr: number;
+  ancillary_multiplier: number;
+};
+
+export type RegisterView = "all" | "today" | "high_risk" | "pending_outcome" | "upcoming";
+export type RegisterSort = "risk" | "date_desc" | "date_asc" | "name";
+export type RegisterQuery = {
+  page?: number;
+  page_size?: number;
+  view?: RegisterView;
+  risk?: RiskCategory;
+  window_days?: number;
+  q?: string;
+  department?: string;
+  doctor?: string;
+  sort?: RegisterSort;
+};
+export type RegisterResponse = {
+  items: AppointmentOverviewRow[];
+  total: number;
+  page: number;
+  page_size: number;
+  counts: { all: number; high_risk: number; today: number; pending_outcome: number };
+  departments: string[];
+};
+
+export type ActivityItem = {
+  id: string;
+  appointment_id: string;
+  patient_name: string;
+  channel: string;
+  language: string;
+  status: string;
+  intent_detected: string | null;
+  patient_reply: string | null;
+  created_at: string;
+};
+export type ActivityResponse = { items: ActivityItem[]; total: number; resolution_rate: number | null };
+
+export type NotificationItem = {
+  id: string;
+  type: "high_risk" | "delay" | "reply" | "waitlist";
+  title: string;
+  detail: string;
+  href: string;
+  at: string;
+};
+
+export type SearchHit = { kind: "patient" | "appointment"; title: string; subtitle: string; href: string };
+
+export type GeoPoint = {
+  appointment_id: string;
+  patient_name: string;
+  city: string | null;
+  latitude: number;
+  longitude: number;
+  distance_km: number;
+  department: string | null;
+  appointment_day: string;
+  risk_category: RiskCategory | null;
+  risk_score: number | null;
+  no_show: boolean | null;
+};
+export type GeoResponse = {
+  hospital_name: string;
+  hospital_lat: number;
+  hospital_lng: number;
+  points: GeoPoint[];
+  bins: { label: string; patients: number; no_show_rate: number | null }[];
+  avg_km_no_show: number | null;
+  avg_km_attended: number | null;
+  truncated: boolean;
+  departments: string[];
+};
+
+export type SessionDetail = {
+  session: DoctorSession;
+  booked: number;
+  predicted_no_shows: number;
+  high_risk: number;
+  queue: {
+    appointment_id: string;
+    patient_name: string;
+    queue_number: number | null;
+    scheduled_time: string | null;
+    risk_category: RiskCategory | null;
+    risk_score: number | null;
+    status: string;
+  }[];
 };

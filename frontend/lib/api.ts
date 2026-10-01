@@ -1,4 +1,14 @@
 import type {
+  ActivityResponse,
+  GeoResponse,
+  NotificationItem,
+  RegisterQuery,
+  RegisterResponse,
+  RevenueAtRisk,
+  SearchHit,
+  SessionDetail,
+  TrendGranularity,
+  TrendResponse,
   AgentSimulateResult,
   AppointmentOverviewRow,
   OutreachDraft,
@@ -227,4 +237,49 @@ export function evaluateSimulator(params: SimulatorParams) {
     method: "POST",
     body: JSON.stringify(params),
   });
+}
+
+// ===================================
+// Dashboard drill-down screens
+// ===================================
+
+function qs(params: Record<string, string | number | undefined | null>): string {
+  const sp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== "") sp.set(k, String(v));
+  }
+  const s = sp.toString();
+  return s ? `?${s}` : "";
+}
+
+export function getNoShowTrend(granularity: TrendGranularity, department?: string, doctor?: string) {
+  return apiFetch<TrendResponse>(`/analytics/trend${qs({ granularity, department, doctor })}`);
+}
+
+export function getRevenueAtRisk(days = 7) {
+  return apiFetch<RevenueAtRisk>(`/analytics/revenue-at-risk${qs({ days })}`);
+}
+
+export function getAppointmentRegister(query: RegisterQuery) {
+  return apiFetch<RegisterResponse>(`/appointments/register${qs({ ...query })}`);
+}
+
+export function getOutreachActivity(limit = 10) {
+  return apiFetch<ActivityResponse>(`/outreach/activity${qs({ limit })}`);
+}
+
+export function getNotifications(limit = 50) {
+  return apiFetch<{ items: NotificationItem[] }>(`/notifications${qs({ limit })}`);
+}
+
+export function searchAll(q: string) {
+  return apiFetch<SearchHit[]>(`/search${qs({ q })}`);
+}
+
+export function getGeoPatients(params: { risk?: string; department?: string; days_back?: number; limit?: number } = {}) {
+  return apiFetch<GeoResponse>(`/geo/patients${qs(params)}`);
+}
+
+export function getSessionDetail(id: string) {
+  return apiFetch<SessionDetail>(`/doctors/sessions/${id}/detail`);
 }

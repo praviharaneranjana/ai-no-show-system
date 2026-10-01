@@ -7,7 +7,7 @@ import { usePathname } from "next/navigation";
 
 import { AppSidebar } from "@/components/app-sidebar";
 import { ShaiLogo } from "@/components/shai-logo";
-import { ThemePill } from "@/components/theme-pill";
+import { TopBar } from "@/components/top-bar";
 import { Button } from "@/components/ui/button";
 
 export function AppLayout({ children }: { children: ReactNode }) {
@@ -20,73 +20,70 @@ export function AppLayout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="min-h-screen w-full bg-background p-2 text-foreground sm:p-4 lg:p-6 transition-colors duration-300">
-      {/* Floating Bento Shell Container (Dropify & Peymen Reference) */}
-      <div className="mx-auto flex min-h-[calc(100vh-2rem)] max-w-[1600px] flex-col overflow-hidden rounded-[28px] border border-white/60 bg-shell shai-shell-shadow transition-colors duration-300 dark:border-[#2D2D40] dark:bg-[#181824] lg:flex-row">
-        
-        {/* Desktop Sidebar (lg+) */}
-        <div className="hidden lg:flex lg:w-64 lg:shrink-0">
-          <AppSidebar className="w-full" />
-        </div>
+    // Full-window desktop shell: the window never scrolls, only <main> does, so the
+    // sidebar (logo top, model card + profile bottom) always matches the viewport height.
+    <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground transition-colors duration-300">
+      {/* Desktop Sidebar (lg+) */}
+      <div className="hidden h-full lg:flex lg:w-64 lg:shrink-0">
+        <AppSidebar className="h-full w-full" />
+      </div>
 
-        {/* Mobile Drawer Backdrop */}
-        {mobileOpen && (
-          <div
-            className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs transition-opacity lg:hidden"
-            onClick={() => setMobileOpen(false)}
-          />
-        )}
-
-        {/* Mobile Drawer (Sliding) */}
+      {/* Mobile Drawer Backdrop */}
+      {mobileOpen && (
         <div
-          className={`fixed inset-y-0 left-0 z-50 w-72 transform bg-white shadow-2xl transition-transform duration-300 ease-in-out dark:bg-[#171722] lg:hidden ${
-            mobileOpen ? "translate-x-0" : "-translate-x-full"
-          }`}
-        >
-          <div className="absolute right-3 top-4 z-10">
+          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs transition-opacity lg:hidden"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+
+      {/* Mobile Drawer (Sliding) */}
+      <div
+        className={`fixed inset-y-0 left-0 z-50 w-72 transform bg-white shadow-2xl transition-transform duration-300 ease-in-out dark:bg-[#171722] lg:hidden ${
+          mobileOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        <div className="absolute right-3 top-4 z-10">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setMobileOpen(false)}
+            className="text-[#8C8CA1] hover:text-[#171725] dark:hover:text-white"
+          >
+            <X className="size-5" />
+            <span className="sr-only">Close sidebar</span>
+          </Button>
+        </div>
+        <AppSidebar onItemClick={() => setMobileOpen(false)} className="h-full w-full" />
+      </div>
+
+      {/* Main column */}
+      <div className="flex min-w-0 flex-1 flex-col bg-surface transition-colors duration-300">
+        {/* Mobile header */}
+        <header className="z-30 flex h-14 shrink-0 items-center justify-between gap-2 border-b border-[#F0F0F5] bg-white/90 px-4 backdrop-blur-md dark:border-[#272738] dark:bg-[#181824]/90 lg:hidden">
+          <div className="flex items-center gap-2.5">
             <Button
               variant="ghost"
               size="icon-sm"
-              onClick={() => setMobileOpen(false)}
-              className="text-[#8C8CA1] hover:text-[#171725] dark:hover:text-white"
+              onClick={() => setMobileOpen(true)}
+              className="text-[#171725] dark:text-white"
             >
-              <X className="size-5" />
-              <span className="sr-only">Close sidebar</span>
+              <Menu className="size-5" />
+              <span className="sr-only">Open navigation</span>
             </Button>
+
+            <Link href="/">
+              <ShaiLogo variant="horizontal" size="xs" />
+            </Link>
           </div>
-          <AppSidebar onItemClick={() => setMobileOpen(false)} className="h-full w-full" />
-        </div>
 
-        {/* Main Content Area on slightly tinted surface */}
-        <div className="flex flex-1 flex-col bg-surface overflow-hidden transition-colors duration-300">
-          {/* Mobile Header Bar */}
-          <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-[#F0F0F5] bg-white/90 px-4 backdrop-blur-md dark:border-[#272738] dark:bg-[#181824]/90 lg:hidden">
-            <div className="flex items-center gap-2.5">
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={() => setMobileOpen(true)}
-                className="text-[#171725] dark:text-white"
-              >
-                <Menu className="size-5" />
-                <span className="sr-only">Open navigation</span>
-              </Button>
+          <TopBar compact />
+        </header>
 
-              <Link href="/">
-                <ShaiLogo variant="horizontal" size="xs" />
-              </Link>
-            </div>
+        {/* Desktop action bar */}
+        <TopBar className="hidden shrink-0 border-b border-border/60 px-6 py-3 lg:flex lg:px-8" />
 
-            <div className="flex items-center gap-1.5">
-              <ThemePill size="sm" className="w-28" />
-            </div>
-          </header>
-
-          {/* Page Content Surface */}
-          <main className="flex-1 w-full overflow-y-auto">
-            {children}
-          </main>
-        </div>
+        {/* The only scrolling region */}
+        <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
       </div>
     </div>
   );

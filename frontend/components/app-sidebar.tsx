@@ -73,16 +73,12 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
       label: "Capacity",
       icon: Gauge,
       exact: false,
-      badge: "2 wait",
-      badgeVariant: "violet",
     },
     {
       href: "/outreach",
       label: "Outreach Hub",
       icon: MessagesSquare,
       exact: false,
-      badge: "4",
-      badgeVariant: "rose",
     },
     {
       href: "/simulator",
@@ -129,11 +125,11 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
   return (
     <aside
       className={cn(
-        "flex h-full w-full flex-col justify-between border-r border-[#F0F0F4] bg-white p-5 text-[#171725] transition-colors dark:border-[#272738] dark:bg-[#171722] dark:text-[#F5F5FA]",
+        "flex h-full w-full flex-col border-r border-[#F0F0F4] bg-white p-5 text-[#171725] transition-colors dark:border-[#272738] dark:bg-[#171722] dark:text-[#F5F5FA]",
         className
       )}
     >
-      <div className="flex flex-col gap-6">
+      <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto">
         {/* Logo Brand Header */}
         <Link
           href="/"
@@ -176,18 +172,6 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
                 </div>
 
                 <div className="flex items-center gap-1.5">
-                  {item.badge && !isActive && (
-                    <span
-                      className={cn(
-                        "rounded-full px-2 py-0.5 text-[10px] font-bold leading-none",
-                        item.badgeVariant === "rose"
-                          ? "bg-[#FFE4E6] text-[#E11D48] dark:bg-rose-950/60 dark:text-rose-300"
-                          : "bg-[#EDE9FE] text-[#8B7CF6] dark:bg-[#8B7CF6]/20 dark:text-[#C4B5FD]"
-                      )}
-                    >
-                      {item.badge}
-                    </span>
-                  )}
                   {isActive && (
                     <ChevronRight className="size-4 shrink-0 text-white/80" />
                   )}
@@ -199,7 +183,7 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
       </div>
 
       {/* Bottom Area: Promo Card, Profile & Theme Toggle */}
-      <div className="flex flex-col gap-4 pt-4 border-t border-[#F0F0F4] dark:border-[#272738]">
+      <div className="flex shrink-0 flex-col gap-4 pt-4 border-t border-[#F0F0F4] dark:border-[#272738]">
         {/* Model Promo Card (§0 Thesis Honesty Rule) */}
         <div className="relative overflow-hidden rounded-2xl border border-[#DDD6FE]/60 bg-gradient-to-br from-[#EDE9FE] to-[#F5F3FF] p-3.5 dark:border-[#383850] dark:from-[#252538] dark:to-[#1C1C2A]">
           <div className="flex items-center justify-between mb-1">

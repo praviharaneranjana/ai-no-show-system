@@ -270,10 +270,11 @@ export default async function AppointmentDetailPage({
           </div>
 
           <JourneyMap
-            patientId={patient.id}
             patientName={patient.full_name}
             city={patient.city}
             distanceKm={patient.distance_km}
+            latitude={patient.latitude}
+            longitude={patient.longitude}
             contributions={prediction?.explanation || []}
           />
         </div>

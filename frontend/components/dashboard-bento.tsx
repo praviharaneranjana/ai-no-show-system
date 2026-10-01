@@ -3,18 +3,15 @@
 import { useState } from "react";
 import Link from "next/link";
 import {
+  ArrowUpRight,
   CalendarDays,
   AlertTriangle,
   Clock,
-  Search,
-  Bell,
-  MessageSquare,
-  Plus,
   CheckCircle2,
 } from "lucide-react";
 
 import type { AppointmentRecord } from "@/lib/appointments-with-predictions";
-import type { DoctorSession } from "@/lib/types";
+import type { ActivityResponse, DoctorSession, RegisterResponse, TrendResponse } from "@/lib/types";
 import { StatCard } from "@/components/stat-card";
 import { AvatarRow } from "@/components/avatar-row";
 import { DotRingGauge } from "@/components/dot-ring-gauge";
@@ -24,11 +21,29 @@ import { JourneyMap } from "@/components/journey-map";
 import { useStaffName } from "@/components/use-staff-name";
 import { ROI_SIMULATOR_DEFAULTS } from "@/lib/roi";
 import { NoShowTrendChart } from "@/components/charts/no-show-trend-chart";
-import { AppointmentsTable } from "@/components/appointments-table";
+import { AppointmentRows } from "@/components/appointment-rows";
+import { INTERVENTION_STATUS_LABEL, LANGUAGE_LABEL, timeAgo } from "@/lib/format";
 
 interface DashboardBentoProps {
   records: AppointmentRecord[];
   doctorSessions: DoctorSession[];
+  trend: TrendResponse | null;
+  activity: ActivityResponse | null;
+  /** Top of the appointment register (10 rows, highest risk first) + tab counts. */
+  register: RegisterResponse | null;
+}
+
+// Small "open this screen" affordance used in every card header.
+function CardLink({ href, label }: { href: string; label: string }) {
+  return (
+    <Link
+      href={href}
+      className="inline-flex items-center gap-1 text-xs font-semibold text-[#8B7CF6] hover:underline"
+    >
+      {label}
+      <ArrowUpRight className="size-3" />
+    </Link>
+  );
 }
 
 // Revenue per predicted no-show: standard consultation fee + ancillary revenue (same
@@ -41,7 +56,7 @@ function localDay(offsetDays = 0): string {
   return new Date(Date.now() + offsetDays * DAY_MS).toLocaleDateString("en-CA");
 }
 
-export function DashboardBento({ records, doctorSessions }: DashboardBentoProps) {
+export function DashboardBento({ records, doctorSessions, trend, activity, register }: DashboardBentoProps) {
   const staffName = useStaffName();
   const todayStr = localDay(0);
 
@@ -57,11 +72,6 @@ export function DashboardBento({ records, doctorSessions }: DashboardBentoProps)
   const todayAppointments = records.filter(
     (r) => r.appointment.appointment_day === todayStr
   );
-
-  const recordedOutcomes = records.filter((r) => r.appointment.no_show !== null);
-  const noShows = recordedOutcomes.filter((r) => r.appointment.no_show === true).length;
-  const noShowRate =
-    recordedOutcomes.length > 0 ? (noShows / recordedOutcomes.length) * 100 : null;
 
   // Worklist (High then Medium risk upcoming)
   const worklist = totalUpcoming
@@ -107,6 +117,11 @@ export function DashboardBento({ records, doctorSessions }: DashboardBentoProps)
   const revenuePerDay = expectedPerDay.map((e) => e * feeLkr * ANCILLARY_MULTIPLIER);
   const maxRevenueDay = Math.max(...revenuePerDay, 1);
 
+  // Capacity load: today's booked appointments vs the combined capacity of today's doctor sessions.
+  const todaysSessions = doctorSessions.filter((x) => x.session_date === todayStr);
+  const todayCapacity = todaysSessions.reduce((sum, x) => sum + x.max_capacity, 0);
+  const capacityPct = todayCapacity > 0 ? Math.min(Math.round((todayAppointments.length / todayCapacity) * 100), 100) : null;
+
   const highRiskToday = todayAppointments.filter((r) => r.prediction?.risk_category === "High").length;
   const highRiskNextSeven = highRiskUpcoming.filter((r) =>
     nextSevenDays.includes(r.appointment.appointment_day)
@@ -132,44 +147,6 @@ export function DashboardBento({ records, doctorSessions }: DashboardBentoProps)
           </p>
         </div>
 
-        {/* Header Right Actions */}
-        <div className="flex items-center gap-2.5">
-          <button
-            type="button"
-            aria-label="Search records"
-            className="flex size-10 items-center justify-center rounded-full border border-border bg-card text-foreground shadow-xs transition-colors hover:bg-muted"
-          >
-            <Search className="size-4" />
-          </button>
-
-          <button
-            type="button"
-            aria-label="Notifications"
-            className="relative flex size-10 items-center justify-center rounded-full border border-border bg-card text-foreground shadow-xs transition-colors hover:bg-muted"
-          >
-            <Bell className="size-4" />
-            {highRiskUpcoming.length > 0 && (
-              <span className="absolute top-2 right-2 size-2 rounded-full bg-[#E11D48] ring-2 ring-white dark:ring-[#1E1E2D]" />
-            )}
-          </button>
-
-          <Link
-            href="/outreach"
-            aria-label="Outreach Messages"
-            className="flex size-10 items-center justify-center rounded-full border border-border bg-card text-foreground shadow-xs transition-colors hover:bg-muted"
-          >
-            <MessageSquare className="size-4" />
-          </Link>
-
-          {/* Primary Pill Gradient CTA */}
-          <Link
-            href="/new"
-            className="ml-1 inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-[#8B7CF6] to-[#5B7CFA] px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-[#8B7CF6]/25 transition-all hover:opacity-95 active:scale-98"
-          >
-            <Plus className="size-4 stroke-[2.5]" />
-            <span>New appointment</span>
-          </Link>
-        </div>
       </header>
 
       {/* Consultant Punctuality Status Strip */}
@@ -182,9 +159,11 @@ export function DashboardBento({ records, doctorSessions }: DashboardBentoProps)
 
           <div className="flex items-center gap-2">
             {doctorSessions.map((s) => (
-              <div
+              <Link
                 key={s.id}
-                className="flex items-center gap-2 rounded-xl bg-muted/60 px-3 py-1.5 text-xs shrink-0"
+                href={`/sessions/${s.id}`}
+                title="Open session detail"
+                className="flex items-center gap-2 rounded-xl bg-muted/60 px-3 py-1.5 text-xs shrink-0 transition-colors hover:bg-[#8B7CF6]/10"
               >
                 <div className="flex flex-col">
                   <span className="font-bold text-foreground leading-tight">
@@ -203,7 +182,7 @@ export function DashboardBento({ records, doctorSessions }: DashboardBentoProps)
                     On time
                   </span>
                 )}
-              </div>
+              </Link>
             ))}
           </div>
         </div>
@@ -224,6 +203,7 @@ export function DashboardBento({ records, doctorSessions }: DashboardBentoProps)
           }
           deltaDirection={todayCount >= yesterdayCount ? "up" : "down"}
           icon={<CalendarDays className="size-5" />}
+          href="/appointments?view=today"
           chartType="bars"
           barValues={pastSix.map((c) => (c / maxPast) * 100)}
         />
@@ -233,6 +213,7 @@ export function DashboardBento({ records, doctorSessions }: DashboardBentoProps)
           value={Math.round(expectedNoShows)}
           subvalue={`(${bookedNextSeven > 0 ? Math.round((expectedNoShows / bookedNextSeven) * 100) : 0}% of ${bookedNextSeven})`}
           icon={<AlertTriangle className="size-5 text-rose-400" />}
+          href="/appointments?view=upcoming&window_days=7&risk=High"
           chartType="sparkline"
           sparklineData={expectedPerDay}
         />
@@ -241,6 +222,7 @@ export function DashboardBento({ records, doctorSessions }: DashboardBentoProps)
           label="Revenue at Risk · 7 days"
           value={`Rs. ${(revenueAtRiskLkr / 1000).toFixed(0)}k`}
           icon={<span className="font-bold text-xs tracking-tight text-[#8B7CF6]">LKR</span>}
+          href="/revenue-at-risk"
           chartType="bars"
           barValues={revenuePerDay.slice(0, 6).map((v) => (v / maxRevenueDay) * 100)}
         />
@@ -261,12 +243,7 @@ export function DashboardBento({ records, doctorSessions }: DashboardBentoProps)
                   Urgent high-risk front-desk outreach
                 </p>
               </div>
-              <Link
-                href="/appointments"
-                className="text-xs font-semibold text-[#8B7CF6] hover:underline"
-              >
-                View all ›
-              </Link>
+              <CardLink href="/worklist" label="View all" />
             </div>
 
             <div className="flex flex-col gap-2 mt-3.5 max-h-[340px] overflow-y-auto pr-0.5">
@@ -316,9 +293,9 @@ export function DashboardBento({ records, doctorSessions }: DashboardBentoProps)
                   {selectedRecord?.patient?.full_name || "Selected Patient"}
                 </p>
               </div>
-              <span className="font-mono text-[10px] font-bold rounded-md bg-[#EDE9FE] px-2 py-0.5 text-[#8B7CF6] dark:bg-[#8B7CF6]/20 dark:text-[#C4B5FD]">
-                #{selectedRecord?.appointment.id.slice(0, 8).toUpperCase() || "APPT"}
-              </span>
+              {selectedRecord ? (
+                <CardLink href={`/appointments/${selectedRecord.appointment.id}`} label="Open record" />
+              ) : null}
             </div>
 
             {/* Quick Chips (Age, Prior No-Shows, Lead Time) */}
@@ -385,18 +362,17 @@ export function DashboardBento({ records, doctorSessions }: DashboardBentoProps)
                   Distance → risk impact telemetry
                 </p>
               </div>
-              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400">
-                Carto Positron
-              </span>
+              <CardLink href="/map" label="Patient map" />
             </div>
 
             {/* Journey Map Component */}
             <div className="mt-3.5">
               <JourneyMap
-                patientId={selectedRecord?.patient?.id || "sample-patient"}
                 patientName={selectedRecord?.patient?.full_name || "Patient"}
-                city={selectedRecord?.patient?.city || "Western Province"}
+                city={selectedRecord?.patient?.city}
                 distanceKm={selectedRecord?.patient?.distance_km}
+                latitude={selectedRecord?.patient?.latitude}
+                longitude={selectedRecord?.patient?.longitude}
                 contributions={selectedRecord?.prediction?.explanation || []}
               />
             </div>
@@ -404,7 +380,7 @@ export function DashboardBento({ records, doctorSessions }: DashboardBentoProps)
 
           <div className="pt-3 border-t border-border/60 flex items-center justify-between text-[11px] text-muted-foreground">
             <span>Base: Colombo General Hospital</span>
-            <span className="font-semibold text-[#8B7CF6]">Auto-Geocoded</span>
+            <span className="font-semibold text-[#8B7CF6]">Town-level location</span>
           </div>
         </div>
 
@@ -415,7 +391,7 @@ export function DashboardBento({ records, doctorSessions }: DashboardBentoProps)
         
         {/* Trend Area Chart (6 cols) */}
         <div className="lg:col-span-6 rounded-[24px] border border-border bg-card p-5 bento-card-shadow flex flex-col justify-between">
-          <NoShowTrendChart observedRate={noShowRate} />
+          <NoShowTrendChart initial={trend} compact />
         </div>
 
         {/* Capacity Utilization Ring (3 cols) */}
@@ -426,25 +402,25 @@ export function DashboardBento({ records, doctorSessions }: DashboardBentoProps)
                 Capacity Load
               </h3>
               <p className="text-[11px] text-muted-foreground text-left">
-                Outpatient clinic slots
+                Today vs doctor-session capacity
               </p>
             </div>
-            <span className="text-xs font-semibold text-muted-foreground">Today</span>
+            <CardLink href="/capacity" label="Details" />
           </div>
 
-          <div className="my-4">
-            <RingProgress
-              value={84}
-              label="Booked"
-              size={120}
-              strokeWidth={9}
-              color="#8B7CF6"
-            />
-          </div>
+          <Link href="/capacity" className="my-4 block" aria-label="Open capacity planning">
+            {capacityPct === null ? (
+              <p className="max-w-[160px] py-8 text-xs text-muted-foreground">No doctor sessions scheduled today.</p>
+            ) : (
+              <RingProgress value={capacityPct} label="Booked" size={120} strokeWidth={9} color="#8B7CF6" />
+            )}
+          </Link>
 
           <div className="w-full pt-3 border-t border-border/60 flex items-center justify-between text-xs font-medium">
-            <span className="text-muted-foreground">Allocated Slots</span>
-            <span className="font-bold text-foreground">42 / 50</span>
+            <span className="text-muted-foreground">Booked today / capacity</span>
+            <span className="font-bold text-foreground">
+              {todayAppointments.length} / {todayCapacity}
+            </span>
           </div>
         </div>
 
@@ -457,70 +433,121 @@ export function DashboardBento({ records, doctorSessions }: DashboardBentoProps)
                   Outreach Activity
                 </h3>
                 <p className="text-[11px] text-muted-foreground">
-                  Trilingual engagement hub
+                  Latest patient conversations
                 </p>
               </div>
-              <span className="relative flex size-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
-              </span>
+              <CardLink href="/outreach" label="Open hub" />
             </div>
 
             <div className="mt-3.5 space-y-3">
-              <div className="flex items-start gap-2.5 text-xs">
-                <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400">
-                  <CheckCircle2 className="size-3.5" />
-                </div>
-                <div>
-                  <div className="font-bold text-foreground">WhatsApp Confirmed</div>
-                  <div className="text-[10px] text-muted-foreground">R. Jayasinghe (Sinhala) · 4m ago</div>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-2.5 text-xs">
-                <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[#EDE9FE] text-[#8B7CF6] dark:bg-[#8B7CF6]/20 dark:text-[#C4B5FD]">
-                  <MessageSquare className="size-3.5" />
-                </div>
-                <div>
-                  <div className="font-bold text-foreground">SMS Reminder Dispatched</div>
-                  <div className="text-[10px] text-muted-foreground">M. Farook (Tamil) · 12m ago</div>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-2.5 text-xs">
-                <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400">
-                  <Clock className="size-3.5" />
-                </div>
-                <div>
-                  <div className="font-bold text-foreground">Requires Voice Triage</div>
-                  <div className="text-[10px] text-muted-foreground">K. Fernando (No answer)</div>
-                </div>
-              </div>
+              {!activity || activity.items.length === 0 ? (
+                <p className="py-6 text-center text-xs text-muted-foreground">
+                  {activity ? "No outreach conversations yet." : "Couldn’t load outreach activity."}
+                </p>
+              ) : (
+                activity.items.slice(0, 4).map((a) => {
+                  const resolved = a.status !== "sent";
+                  return (
+                    <Link
+                      key={a.id}
+                      href={`/appointments/${a.appointment_id}`}
+                      className="flex items-start gap-2.5 rounded-lg text-xs transition-colors hover:bg-muted/50"
+                    >
+                      <div
+                        className={
+                          resolved
+                            ? "flex size-7 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400"
+                            : "flex size-7 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400"
+                        }
+                      >
+                        {resolved ? <CheckCircle2 className="size-3.5" /> : <Clock className="size-3.5" />}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="truncate font-bold text-foreground">
+                          {INTERVENTION_STATUS_LABEL[a.status] ?? a.status}
+                        </div>
+                        <div className="truncate text-[10px] text-muted-foreground">
+                          {a.patient_name} ({LANGUAGE_LABEL[a.language] ?? a.language}) · {timeAgo(a.created_at)}
+                        </div>
+                      </div>
+                    </Link>
+                  );
+                })
+              )}
             </div>
           </div>
 
           <div className="pt-3 border-t border-border/60 flex items-center justify-between text-[11px]">
             <span className="text-muted-foreground">Agent Resolution Rate:</span>
-            <span className="font-bold text-[#8B7CF6]">91.2%</span>
+            <span className="font-bold text-[#8B7CF6]">
+              {activity?.resolution_rate != null ? `${activity.resolution_rate.toFixed(1)}%` : "—"}
+            </span>
           </div>
         </div>
 
       </section>
 
-      {/* FULL APPOINTMENTS TABLE CARD BELOW BENTO */}
+      {/* APPOINTMENT REGISTER PREVIEW — top 10 by risk; the full register lives on /appointments */}
       <section className="rounded-[24px] border border-border bg-card p-5 bento-card-shadow">
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="font-heading text-lg font-bold text-foreground">
               Master Appointment Register
             </h2>
             <p className="text-xs text-muted-foreground">
-              Clinical intake, risk triage, and outcome confirmation
+              Highest-risk upcoming appointments first
             </p>
           </div>
+          {register && (
+            <div className="flex flex-wrap items-center gap-1.5 text-xs font-medium">
+              {[
+                { label: "All", n: register.counts.all, href: "/appointments" },
+                { label: "High risk", n: register.counts.high_risk, href: "/appointments?view=high_risk" },
+                { label: "Today", n: register.counts.today, href: "/appointments?view=today" },
+                { label: "Pending outcome", n: register.counts.pending_outcome, href: "/appointments?view=pending_outcome" },
+              ].map((t) => (
+                <Link
+                  key={t.label}
+                  href={t.href}
+                  className="flex items-center gap-1.5 rounded-full bg-muted/60 px-3 py-1.5 text-muted-foreground transition-colors hover:bg-[#8B7CF6]/10 hover:text-foreground"
+                >
+                  {t.label}
+                  <span className="rounded-full bg-background px-1.5 text-[10px] font-bold tabular-nums">{t.n}</span>
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
 
-        <AppointmentsTable records={records} />
+        {!register || register.items.length === 0 ? (
+          <p className="py-10 text-center text-xs text-muted-foreground">
+            {register ? "No upcoming appointments." : "Couldn’t load the appointment register."}
+          </p>
+        ) : (
+          <>
+            <div className="overflow-hidden rounded-xl border border-border/80 bg-card shadow-xs">
+              <AppointmentRows
+                records={register.items.map((r) => ({
+                  appointment: r.appointment,
+                  patient: r.patient ?? undefined,
+                  prediction: r.prediction ?? undefined,
+                }))}
+              />
+            </div>
+            <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
+              <span>
+                Showing {register.items.length} of {register.total.toLocaleString()} matching appointments
+              </span>
+              <Link
+                href="/appointments"
+                className="inline-flex items-center gap-1 rounded-full bg-gradient-to-r from-[#8B7CF6] to-[#5B7CFA] px-4 py-2 text-xs font-bold text-white shadow-md shadow-[#8B7CF6]/25 hover:opacity-95"
+              >
+                View all {register.counts.all.toLocaleString()} appointments
+                <ArrowUpRight className="size-3.5" />
+              </Link>
+            </div>
+          </>
+        )}
       </section>
     </div>
   );
