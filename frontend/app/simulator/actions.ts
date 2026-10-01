@@ -6,6 +6,7 @@ import {
   createHospitalExpense,
   deleteHospitalExpense,
   evaluateSimulator,
+  isRedirectError,
   listExpenseCategories,
   listHospitalExpenses,
   updateHospitalExpense,
@@ -23,6 +24,7 @@ export async function fetchExpenseDataAction(): Promise<{
     ]);
     return { categories, expenses };
   } catch (err) {
+    if (isRedirectError(err)) throw err;
     console.error("fetchExpenseDataAction error:", err);
     return { categories: [], expenses: [] };
   }

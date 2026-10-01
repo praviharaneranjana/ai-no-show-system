@@ -27,7 +27,7 @@ import {
 } from "recharts";
 
 import { getCapacityForecastAction } from "@/app/capacity/actions";
-import { StatCard } from "@/components/stat-card";
+import { SharedKpiCard } from "@/components/shared-kpi-card";
 import { formatLkr, cn } from "@/lib/utils";
 import type { ForecastResponse } from "@/lib/types";
 
@@ -110,7 +110,7 @@ export function ForecastView({ initialForecast, departments }: ForecastViewProps
           <div>
             <h2 className="text-sm font-bold text-foreground">Multi-Horizon Capacity Forecast</h2>
             <p className="text-xs text-muted-foreground">
-              Poisson-binomial confidence bounds for booked slots &amp; baseline weekday priors for future dates
+              Poisson-binomial confidence bounds for booked slots &amp; weekday-adjusted estimates for upcoming days
             </p>
           </div>
         </div>
@@ -153,13 +153,13 @@ export function ForecastView({ initialForecast, departments }: ForecastViewProps
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
-        <StatCard
+        <SharedKpiCard
           title="Forecasted Appts"
           value={total_forecasted_appointments}
           icon={CalendarDays}
           subvalue={`Next ${days} days`}
         />
-        <StatCard
+        <SharedKpiCard
           title="Expected No-Shows"
           value={total_expected_no_shows}
           icon={AlertTriangle}
@@ -167,16 +167,16 @@ export function ForecastView({ initialForecast, departments }: ForecastViewProps
             value: `80% CI: [${expected_no_shows_range[0]} - ${expected_no_shows_range[1]}]`,
             isPositive: false,
           }}
-          subvalue="Poisson-binomial sum"
+          subvalue="AI probability estimate"
         />
-        <StatCard
+        <SharedKpiCard
           title="Rec. Overbooks"
           value={`+${total_recommended_overbooks}`}
           icon={TrendingUp}
           delta={{ value: "Safe recovery slots", isPositive: true }}
           subvalue="Within delay tolerance"
         />
-        <StatCard
+        <SharedKpiCard
           title="Revenue at Risk"
           value={formatLkr(total_revenue_at_risk_lkr)}
           icon={Wallet}
@@ -190,10 +190,10 @@ export function ForecastView({ initialForecast, departments }: ForecastViewProps
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-base font-bold text-foreground">
-              Expected No-Shows &amp; Poisson-Binomial 80% Confidence Band
+              Expected No-Shows with 80% Confidence Range
             </h3>
             <p className="text-xs text-muted-foreground">
-              Shaded band represents the 80% confidence interval \([q_{0.10}, q_{0.90}]\) derived from per-patient probabilities
+              Shaded area shows the range within which actual no-shows are expected to fall 8 times out of 10
             </p>
           </div>
         </div>

@@ -62,8 +62,10 @@ def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return 2 * r * math.asin(math.sqrt(a))
 
 
-def distance_to_hospital_km(lat: float, lng: float) -> float:
-    return round(haversine_km(lat, lng, HOSPITAL_LAT, HOSPITAL_LNG), 1)
+def distance_to_hospital_km(
+    lat: float, lng: float, hospital_lat: float = HOSPITAL_LAT, hospital_lng: float = HOSPITAL_LNG
+) -> float:
+    return round(haversine_km(lat, lng, hospital_lat, hospital_lng), 1)
 
 
 def geocode_city(city: str | None, seed: uuid.UUID | str | None = None) -> tuple[float, float] | None:

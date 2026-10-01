@@ -18,7 +18,7 @@ export default async function SetupPage() {
       </div>
 
       <div className="w-full max-w-md relative z-10 flex flex-col items-center gap-6">
-        <ShaiLogo size="lg" variant="horizontal" />
+        <ShaiLogo size="xl" />
 
         <SetupForm
           envLocked={envLocked}

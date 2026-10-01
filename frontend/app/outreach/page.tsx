@@ -27,7 +27,14 @@ const LANGUAGE_BADGES: Record<InterventionLanguage, { label: string; className: 
   },
 };
 
-export default async function OutreachPage() {
+export default async function OutreachPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ appointmentId?: string }>;
+}) {
+  const resolvedSearchParams = searchParams ? await searchParams : undefined;
+  const targetAppointmentId = resolvedSearchParams?.appointmentId;
+
   let conversations, records;
   try {
     [conversations, records] = await Promise.all([
@@ -121,7 +128,10 @@ export default async function OutreachPage() {
           </div>
         </div>
 
-        <AgentSimulator appointments={appointmentOptions} />
+        <AgentSimulator
+          appointments={appointmentOptions}
+          initialAppointmentId={targetAppointmentId}
+        />
       </div>
 
       {/* Recent Conversation Log Bento Card */}

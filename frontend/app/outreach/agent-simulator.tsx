@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { Loader2, Send, Bot, User, Sparkles, Copy, Check, WandSparkles } from "lucide-react";
 
 import { draftOutreachAction, simulateAgentAction } from "@/app/outreach/actions";
@@ -42,9 +42,19 @@ const QUICK_MESSAGES: Record<InterventionLanguage, { label: string; text: string
   ],
 };
 
-export function AgentSimulator({ appointments }: { appointments: AppointmentOption[] }) {
+export function AgentSimulator({
+  appointments,
+  initialAppointmentId,
+}: {
+  appointments: AppointmentOption[];
+  initialAppointmentId?: string;
+}) {
   const [isPending, startTransition] = useTransition();
-  const [appointmentId, setAppointmentId] = useState(appointments[0]?.id ?? "");
+  const [appointmentId, setAppointmentId] = useState(
+    initialAppointmentId && appointments.some((a) => a.id === initialAppointmentId)
+      ? initialAppointmentId
+      : appointments[0]?.id ?? ""
+  );
   const [language, setLanguage] = useState<InterventionLanguage>("en");
   const [message, setMessage] = useState("");
   const [lastPatientMessage, setLastPatientMessage] = useState<string | null>(null);
@@ -53,6 +63,17 @@ export function AgentSimulator({ appointments }: { appointments: AppointmentOpti
   const [draft, setDraft] = useState<OutreachDraft | null>(null);
   const [draftText, setDraftText] = useState("");
   const [copied, setCopied] = useState(false);
+
+  // Arriving from "Dispatch Outreach": bring the draft card into view and draft straight away.
+  const cardRef = useRef<HTMLDivElement>(null);
+  const autoDrafted = useRef(false);
+  useEffect(() => {
+    if (!initialAppointmentId || autoDrafted.current || appointmentId !== initialAppointmentId) return;
+    autoDrafted.current = true;
+    cardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    generateDraft();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function generateDraft() {
     if (!appointmentId) return;
@@ -145,7 +166,7 @@ export function AgentSimulator({ appointments }: { appointments: AppointmentOpti
       </div>
 
       {/* AI-drafted reminder (staff review; nothing is sent) */}
-      <div className="flex flex-col gap-2.5 rounded-2xl border border-border/60 bg-muted/20 p-3.5">
+      <div ref={cardRef} className="flex flex-col gap-2.5 rounded-2xl border border-border/60 bg-muted/20 p-3.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-col">
             <span className="text-xs font-semibold text-foreground">AI reminder draft</span>

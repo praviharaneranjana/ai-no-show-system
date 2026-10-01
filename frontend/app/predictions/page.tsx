@@ -1,24 +1,26 @@
 import { Suspense } from "react";
 import { PredictionHubClient } from "@/app/predictions/prediction-hub-client";
-import { getPredictionsToday, getHisStatus } from "@/lib/api";
+import { getPredictionsToday, getHisStatus, isRedirectError } from "@/lib/api";
+import { getColomboToday } from "@/lib/date-colombo";
 
 export const dynamic = "force-dynamic";
 
 export default async function PredictionHubPage() {
-  const todayStr = "2026-10-01"; // Default date or today in Asia/Colombo
+  const todayStr = getColomboToday();
   let initialData = null;
   let hisStatus = null;
 
   try {
     initialData = await getPredictionsToday(todayStr);
   } catch (e) {
-    // If backend isn't ready or empty, fall back gracefully
+    if (isRedirectError(e)) throw e;
     console.error("Failed to load initial prediction hub data", e);
   }
 
   try {
     hisStatus = await getHisStatus();
   } catch (e) {
+    if (isRedirectError(e)) throw e;
     console.error("Failed to load HIS status", e);
   }
 

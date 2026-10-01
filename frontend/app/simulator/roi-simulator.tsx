@@ -1,6 +1,17 @@
 "use client";
 
-import { useId, useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+  ReferenceLine,
+  CartesianGrid,
+} from "recharts";
 import {
   ChevronDown,
   Wallet,
@@ -25,15 +36,18 @@ import {
   Receipt,
   AlertCircle,
   HelpCircle,
+  Settings,
+  Save,
+  X,
 } from "lucide-react";
 
 import { Slider } from "@/components/ui/slider";
 import { formatLkr } from "@/lib/utils";
 import {
-  HOSPITAL_PRESETS,
+  DEFAULT_HOSPITAL_PROFILE,
   ROI_SIMULATOR_DEFAULTS,
   evaluateRoi,
-  type HospitalPreset,
+  type HospitalProfile,
 } from "@/lib/roi";
 import type {
   ExpenseCategory,
@@ -113,12 +127,41 @@ export function RoiSimulator({
   initialCategories?: ExpenseCategory[];
   initialExpenses?: HospitalExpense[];
 }) {
-  const [selectedPreset, setSelectedPreset] = useState<string>("custom");
+  const [hospitalProfile, setHospitalProfile] = useState<HospitalProfile>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("shai_hospital_profile");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          return {
+            ...DEFAULT_HOSPITAL_PROFILE,
+            ...parsed,
+            defaults: { ...DEFAULT_HOSPITAL_PROFILE.defaults, ...parsed.defaults },
+          };
+        }
+      } catch {}
+    }
+    return DEFAULT_HOSPITAL_PROFILE;
+  });
+
+  const [showProfileModal, setShowProfileModal] = useState(false);
+
+  // Edit form state for hospital baseline
+  const [editHospitalName, setEditHospitalName] = useState(hospitalProfile.hospital_name);
+  const [editFacilityTier, setEditFacilityTier] = useState(hospitalProfile.facility_tier || "Tertiary Private Care");
+  const [editClinics, setEditClinics] = useState(hospitalProfile.defaults.daily_clinics_count);
+  const [editFee, setEditFee] = useState(hospitalProfile.defaults.avg_consultation_fee_lkr);
+  const [editNoShowRate, setEditNoShowRate] = useState(hospitalProfile.defaults.baseline_no_show_rate * 100);
+  const [editHospitalShare, setEditHospitalShare] = useState((hospitalProfile.defaults.hospital_retained_fee_pct ?? 0.3) * 100);
+  const [editAncillary, setEditAncillary] = useState(hospitalProfile.defaults.ancillary_revenue_per_attended_lkr ?? 3500);
+  const [editStaffWage, setEditStaffWage] = useState(hospitalProfile.defaults.staff_hourly_rate_lkr ?? 850);
+  const [editDays, setEditDays] = useState(hospitalProfile.defaults.operational_days_year ?? 310);
+
   const [expenses, setExpenses] = useState<HospitalExpense[]>(initialExpenses);
   const [categories] = useState<ExpenseCategory[]>(initialCategories);
 
   const [params, setParams] = useState<SimulatorParams>({
-    ...ROI_SIMULATOR_DEFAULTS,
+    ...hospitalProfile.defaults,
     custom_expenses: initialExpenses,
   });
 
@@ -141,16 +184,55 @@ export function RoiSimulator({
   }, [params, expenses]);
 
   function set<K extends keyof SimulatorParams>(key: K, value: number) {
-    setSelectedPreset("custom");
     setParams((p) => ({ ...p, [key]: value }));
   }
 
-  function handleApplyPreset(preset: HospitalPreset) {
-    setSelectedPreset(preset.id);
-    setParams((p) => ({
-      ...p,
-      ...preset.params,
-    }));
+  function handleOpenProfileModal() {
+    setEditHospitalName(hospitalProfile.hospital_name);
+    setEditFacilityTier(hospitalProfile.facility_tier || "Tertiary Private Care");
+    setEditClinics(hospitalProfile.defaults.daily_clinics_count);
+    setEditFee(hospitalProfile.defaults.avg_consultation_fee_lkr);
+    setEditNoShowRate(Math.round(hospitalProfile.defaults.baseline_no_show_rate * 100));
+    setEditHospitalShare(Math.round((hospitalProfile.defaults.hospital_retained_fee_pct ?? 0.3) * 100));
+    setEditAncillary(hospitalProfile.defaults.ancillary_revenue_per_attended_lkr ?? 3500);
+    setEditStaffWage(hospitalProfile.defaults.staff_hourly_rate_lkr ?? 850);
+    setEditDays(hospitalProfile.defaults.operational_days_year ?? 310);
+    setShowProfileModal(true);
+  }
+
+  function handleSaveHospitalProfile(e: React.FormEvent) {
+    e.preventDefault();
+    const updated: HospitalProfile = {
+      hospital_name: editHospitalName.trim() || "Hospital Main Center",
+      facility_tier: editFacilityTier.trim() || "Tertiary Private Care",
+      defaults: {
+        ...params,
+        daily_clinics_count: Number(editClinics),
+        avg_consultation_fee_lkr: Number(editFee),
+        baseline_no_show_rate: Number(editNoShowRate) / 100,
+        hospital_retained_fee_pct: Number(editHospitalShare) / 100,
+        ancillary_revenue_per_attended_lkr: Number(editAncillary),
+        staff_hourly_rate_lkr: Number(editStaffWage),
+        operational_days_year: Number(editDays),
+      },
+    };
+
+    setHospitalProfile(updated);
+    setParams({
+      ...updated.defaults,
+      custom_expenses: expenses,
+    });
+    try {
+      localStorage.setItem("shai_hospital_profile", JSON.stringify(updated));
+    } catch {}
+    setShowProfileModal(false);
+  }
+
+  function handleResetToHospitalBaseline() {
+    setParams({
+      ...hospitalProfile.defaults,
+      custom_expenses: expenses,
+    });
   }
 
   function handleToggleExpense(expenseId: string, currentActive: boolean) {
@@ -216,54 +298,224 @@ export function RoiSimulator({
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Hospital Preset Profiles Selector */}
+      {/* Confidential Hospital Baseline & Operating Identity Banner */}
       <div className="rounded-[24px] bg-card p-4 sm:p-5 shadow-xs border border-border/60 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="size-9 rounded-xl bg-primary/10 flex items-center justify-center text-primary shrink-0">
+        <div className="flex items-center gap-3.5">
+          <div className="size-10 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0">
             <Building2 className="size-5" />
           </div>
-          <div>
-            <h3 className="text-sm font-bold text-foreground">Select Hospital Operating Profile</h3>
-            <p className="text-xs text-muted-foreground">
-              Calibrate operational expenses and scale to match specific hospital footprints
+          <div className="flex flex-col">
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-bold text-foreground">{hospitalProfile.hospital_name}</h3>
+              <span className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                {hospitalProfile.facility_tier || "Active Hospital Baseline"}
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Calibrated Baseline: {hospitalProfile.defaults.daily_clinics_count} daily clinics · LKR {hospitalProfile.defaults.avg_consultation_fee_lkr.toLocaleString()} fee · {Math.round(hospitalProfile.defaults.baseline_no_show_rate * 100)}% no-show · {hospitalProfile.defaults.operational_days_year ?? 310} operating days
             </p>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {HOSPITAL_PRESETS.map((preset) => {
-            const isSelected = selectedPreset === preset.id;
-            return (
-              <button
-                key={preset.id}
-                type="button"
-                onClick={() => handleApplyPreset(preset)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
-                  isSelected
-                    ? "bg-primary text-primary-foreground shadow-xs ring-2 ring-primary/30"
-                    : "bg-muted/40 hover:bg-muted text-foreground border border-border/50"
-                }`}
-              >
-                <span>{preset.name}</span>
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${isSelected ? "bg-white/20 text-white" : "bg-muted-foreground/15 text-muted-foreground"}`}>
-                  {preset.tag}
-                </span>
-              </button>
-            );
-          })}
+        <div className="flex items-center gap-2 self-start md:self-auto">
           <button
             type="button"
-            onClick={() => setSelectedPreset("custom")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
-              selectedPreset === "custom"
-                ? "bg-primary text-primary-foreground shadow-xs ring-2 ring-primary/30"
-                : "bg-muted/40 hover:bg-muted text-muted-foreground border border-border/50"
-            }`}
+            onClick={handleResetToHospitalBaseline}
+            title="Reset sliders back to your saved hospital baseline"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border/70 hover:bg-muted text-xs font-semibold text-foreground transition-all cursor-pointer"
           >
-            <span>Custom Calibrated</span>
+            <RotateCcw className="size-3.5 text-muted-foreground" />
+            <span>Reset to Baseline</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleOpenProfileModal}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-semibold shadow-xs hover:bg-primary/90 transition-all cursor-pointer"
+          >
+            <Settings className="size-3.5" />
+            <span>Edit Hospital Baseline</span>
           </button>
         </div>
       </div>
+
+      {/* Hospital Baseline Configuration Modal / Slide-over */}
+      {showProfileModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="relative w-full max-w-2xl rounded-[28px] bg-card p-6 sm:p-7 shadow-2xl border border-border/80 flex flex-col gap-5 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-border/40">
+              <div className="flex items-center gap-2.5">
+                <div className="size-8 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+                  <Building2 className="size-4.5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-foreground">Configure Our Hospital Baseline</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Customize default metrics for your hospital. Saved values become your permanent baseline.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowProfileModal(false)}
+                className="size-8 rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground flex items-center justify-center transition-all cursor-pointer"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveHospitalProfile} className="flex flex-col gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-foreground">Hospital / Facility Name</label>
+                  <input
+                    type="text"
+                    value={editHospitalName}
+                    onChange={(e) => setEditHospitalName(e.target.value)}
+                    required
+                    placeholder="e.g. Royal Central Hospital"
+                    className="h-9 px-3 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-foreground">Facility Tier / Branch Label</label>
+                  <input
+                    type="text"
+                    value={editFacilityTier}
+                    onChange={(e) => setEditFacilityTier(e.target.value)}
+                    placeholder="e.g. Main Hospital & Outpatient Wing"
+                    className="h-9 px-3 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-2 border-t border-border/40">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-foreground">Default Daily Consultant Clinics</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    value={editClinics}
+                    onChange={(e) => setEditClinics(Number(e.target.value))}
+                    required
+                    className="h-9 px-3 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                  <span className="text-[10px] text-muted-foreground">Standard active specialist clinics per day</span>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-foreground">Default Consultation Fee (LKR)</label>
+                  <input
+                    type="number"
+                    min={500}
+                    max={50000}
+                    step={250}
+                    value={editFee}
+                    onChange={(e) => setEditFee(Number(e.target.value))}
+                    required
+                    className="h-9 px-3 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                  <span className="text-[10px] text-muted-foreground">Average channeling fee charged to patients</span>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-foreground">Baseline No-Show Rate (%)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={60}
+                    step={1}
+                    value={editNoShowRate}
+                    onChange={(e) => setEditNoShowRate(Number(e.target.value))}
+                    required
+                    className="h-9 px-3 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                  <span className="text-[10px] text-muted-foreground">Historical observed no-show percentage</span>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-foreground">Hospital Facility Share (%)</label>
+                  <input
+                    type="number"
+                    min={5}
+                    max={100}
+                    step={1}
+                    value={editHospitalShare}
+                    onChange={(e) => setEditHospitalShare(Number(e.target.value))}
+                    required
+                    className="h-9 px-3 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                  <span className="text-[10px] text-muted-foreground">Hospital retained share of the channeling fee</span>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-foreground">Avg Ancillary Lab & Pharmacy (LKR)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={50000}
+                    step={250}
+                    value={editAncillary}
+                    onChange={(e) => setEditAncillary(Number(e.target.value))}
+                    required
+                    className="h-9 px-3 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                  <span className="text-[10px] text-muted-foreground">Diagnostic lab & pharmacy revenue per attended slot</span>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-foreground">Staff Loaded Hourly Rate (LKR/hr)</label>
+                  <input
+                    type="number"
+                    min={300}
+                    max={5000}
+                    step={50}
+                    value={editStaffWage}
+                    onChange={(e) => setEditStaffWage(Number(e.target.value))}
+                    required
+                    className="h-9 px-3 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                  <span className="text-[10px] text-muted-foreground">Hourly wage rate to monetize staff calling time</span>
+                </div>
+
+                <div className="flex flex-col gap-1 sm:col-span-2">
+                  <label className="text-xs font-semibold text-foreground">Annual Active Operating Days</label>
+                  <input
+                    type="number"
+                    min={200}
+                    max={365}
+                    step={5}
+                    value={editDays}
+                    onChange={(e) => setEditDays(Number(e.target.value))}
+                    required
+                    className="h-9 px-3 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                  <span className="text-[10px] text-muted-foreground">Total operating days per calendar year (e.g. 310 - 365)</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-border/40">
+                <button
+                  type="button"
+                  onClick={() => setShowProfileModal(false)}
+                  className="px-4 py-2 rounded-xl border border-border text-xs font-semibold hover:bg-muted text-muted-foreground transition-all cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold shadow-xs hover:bg-primary/90 transition-all cursor-pointer"
+                >
+                  <Save className="size-3.5" />
+                  <span>Save as Our Hospital Defaults</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Column: Sliders, Operating Model & Custom Expenses (6 Cols) */}
@@ -310,7 +562,7 @@ export function RoiSimulator({
               />
               <SliderField
                 label="AI Intervention Coverage"
-                sublabel="Targeted top-risk deciles queued for outreach"
+                sublabel="Which patients receive SMS/WhatsApp outreach reminders"
                 value={params.ai_intervention_coverage}
                 displayValue={`Top ${Math.round(params.ai_intervention_coverage * 100)}%`}
                 min={0.05}
@@ -713,68 +965,162 @@ export function RoiSimulator({
             </div>
           </div>
 
-          {/* Financial Waterfall Breakdown Card */}
-          <div className="rounded-[24px] bg-card p-5 sm:p-6 shadow-xs border border-border/60 flex flex-col gap-4">
-            <div className="flex items-center justify-between pb-2 border-b border-border/40">
-              <div className="flex items-center gap-2">
-                <Wallet className="size-4 text-primary" />
-                <h3 className="text-sm font-bold text-foreground">Executive Financial Waterfall</h3>
-              </div>
-              <span className="text-[11px] text-muted-foreground">Annualized Reconciliation (LKR)</span>
-            </div>
-
-            <div className="flex flex-col gap-3">
-              {/* Gross Clinical Revenue */}
-              <div className="flex items-center justify-between text-xs p-2.5 rounded-xl bg-muted/20">
-                <div className="flex flex-col">
-                  <span className="font-semibold text-foreground">Reclaimed Clinical Appointments</span>
-                  <span className="text-[10px] text-muted-foreground">Doctor channeling + hospital facility fees</span>
+          {/* Financial Waterfall Breakdown Card — Visual Bar Chart */}
+          {(() => {
+            const grossRev = result.gross_revenue_recovered_lkr;
+            const laborSav = result.direct_labor_savings_lkr;
+            const expenses = result.total_annual_expenses_lkr;
+            const netGain = result.true_net_profit_lkr;
+            const total = grossRev + laborSav;
+            // Waterfall data: running base + span for each bar
+            const waterfallData = [
+              {
+                name: "Reclaimed\nAppointments",
+                base: 0,
+                value: grossRev,
+                color: "#10B981",
+                label: `+${formatLkr(grossRev)}`,
+              },
+              {
+                name: "Staff Hours\nSaved",
+                base: grossRev,
+                value: laborSav,
+                color: "#8B7CF6",
+                label: `+${formatLkr(laborSav)}`,
+              },
+              {
+                name: "CapEx &\nExpenses",
+                base: total - expenses,
+                value: expenses,
+                color: "#EF4444",
+                label: `-${formatLkr(expenses)}`,
+              },
+              {
+                name: "Net Hospital\nGain",
+                base: 0,
+                value: netGain,
+                color: netGain >= 0 ? "#10B981" : "#EF4444",
+                label: formatLkr(netGain),
+              },
+            ];
+            return (
+              <div className="rounded-[24px] bg-card p-5 sm:p-6 shadow-xs border border-border/60 flex flex-col gap-4">
+                <div className="flex items-center justify-between pb-2 border-b border-border/40">
+                  <div className="flex items-center gap-2">
+                    <Wallet className="size-4 text-primary" />
+                    <h3 className="text-sm font-bold text-foreground">Financial Waterfall</h3>
+                  </div>
+                  <span className="text-[11px] text-muted-foreground">Annualised · LKR</span>
                 </div>
-                <span className="font-bold font-mono text-emerald-600 dark:text-emerald-400 tabular-nums">
-                  + {formatLkr(result.gross_revenue_recovered_lkr)}
-                </span>
-              </div>
 
-              {/* Direct Labor Cost Saved */}
-              <div className="flex items-center justify-between text-xs p-2.5 rounded-xl bg-muted/20">
-                <div className="flex flex-col">
-                  <span className="font-semibold text-foreground">Nursing Call-Center Hours Monetized</span>
-                  <span className="text-[10px] text-muted-foreground">Eliminated manual calling at LKR {params.staff_hourly_rate_lkr ?? 850}/hr</span>
+                {/* Visual Recharts Waterfall */}
+                <div className="h-52 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={waterfallData}
+                      margin={{ top: 14, right: 8, left: -10, bottom: 16 }}
+                      barCategoryGap="30%"
+                    >
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.12} />
+                      <XAxis
+                        dataKey="name"
+                        tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
+                        tickLine={false}
+                      />
+                      <YAxis
+                        tickFormatter={(v: number) =>
+                          v === 0 ? "0" : `${(v / 1_000_000).toFixed(1)}M`
+                        }
+                        tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <Tooltip
+                        formatter={(val, _name, item) => {
+                          const lbl = (item as { payload?: { label?: string } })?.payload?.label;
+                          return [lbl ?? (typeof val === "number" ? formatLkr(val) : String(val)), "Amount"];
+                        }}
+                        contentStyle={{
+                          backgroundColor: "var(--card)",
+                          borderColor: "var(--border)",
+                          borderRadius: "12px",
+                          fontSize: "12px",
+                        }}
+                      />
+                      {/* Invisible base bar to stack on */}
+                      <Bar dataKey="base" stackId="wf" fill="transparent" radius={[0, 0, 0, 0]} />
+                      {/* Visible bar on top */}
+                      <Bar
+                        dataKey="value"
+                        stackId="wf"
+                        radius={[6, 6, 0, 0]}
+                        label={{
+                          position: "top",
+                          fontSize: 9,
+                          fill: "var(--muted-foreground)",
+                          formatter: (v: unknown) => (typeof v === "number" && v > 0 ? formatLkr(v) : ""),
+                        }}
+                      >
+                        {waterfallData.map((entry, idx) => (
+                          <Cell key={idx} fill={entry.color} fillOpacity={0.85} />
+                        ))}
+                      </Bar>
+                      <ReferenceLine y={0} stroke="var(--border)" />
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
-                <span className="font-bold font-mono text-emerald-600 dark:text-emerald-400 tabular-nums">
-                  + {formatLkr(result.direct_labor_savings_lkr)}
-                </span>
-              </div>
 
-              {/* Total Expenses Deducted */}
-              <div className="flex items-center justify-between text-xs p-2.5 rounded-xl bg-rose-500/[0.04] border border-rose-500/20">
-                <div className="flex flex-col">
-                  <span className="font-semibold text-rose-700 dark:text-rose-300">
-                    Hospital CapEx, Giveaways & Overheads
-                  </span>
-                  <span className="text-[10px] text-muted-foreground">
-                    All {activeExpensesCount} active expenses, telco & IT licenses
-                  </span>
-                </div>
-                <span className="font-bold font-mono text-rose-600 dark:text-rose-400 tabular-nums">
-                  - {formatLkr(result.total_annual_expenses_lkr)}
-                </span>
-              </div>
+                {/* Summary rows (detail beneath chart) */}
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between text-xs p-2.5 rounded-xl bg-muted/20">
+                    <div className="flex flex-col">
+                      <span className="font-semibold text-foreground">Reclaimed Clinical Appointments</span>
+                      <span className="text-[10px] text-muted-foreground">Doctor channeling + hospital facility fees</span>
+                    </div>
+                    <span className="font-bold font-mono text-emerald-600 dark:text-emerald-400 tabular-nums">
+                      + {formatLkr(result.gross_revenue_recovered_lkr)}
+                    </span>
+                  </div>
 
-              {/* Net Hospital Boardroom Gain */}
-              <div className="flex items-center justify-between text-xs p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
-                <div className="flex flex-col">
-                  <span className="font-bold text-foreground">True Net Hospital EBITDA</span>
-                  <span className="text-[10px] text-emerald-700 dark:text-emerald-300 font-semibold">
-                    Net cash impact for the Board of Directors
-                  </span>
+                  <div className="flex items-center justify-between text-xs p-2.5 rounded-xl bg-muted/20">
+                    <div className="flex flex-col">
+                      <span className="font-semibold text-foreground">Nursing Call-Center Hours Saved</span>
+                      <span className="text-[10px] text-muted-foreground">Eliminated manual calling at LKR {params.staff_hourly_rate_lkr ?? 850}/hr</span>
+                    </div>
+                    <span className="font-bold font-mono text-emerald-600 dark:text-emerald-400 tabular-nums">
+                      + {formatLkr(result.direct_labor_savings_lkr)}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs p-2.5 rounded-xl bg-rose-500/[0.04] border border-rose-500/20">
+                    <div className="flex flex-col">
+                      <span className="font-semibold text-rose-700 dark:text-rose-300">
+                        CapEx, Giveaways & Running Costs
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">
+                        All {activeExpensesCount} active expenses, telco & IT licenses
+                      </span>
+                    </div>
+                    <span className="font-bold font-mono text-rose-600 dark:text-rose-400 tabular-nums">
+                      - {formatLkr(result.total_annual_expenses_lkr)}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
+                    <div className="flex flex-col">
+                      <span className="font-bold text-foreground">True Net Hospital Gain</span>
+                      <span className="text-[10px] text-emerald-700 dark:text-emerald-300 font-semibold">
+                        Net cash impact after all costs
+                      </span>
+                    </div>
+                    <span className="text-base font-extrabold font-mono text-emerald-600 dark:text-emerald-400 tabular-nums">
+                      {formatLkr(result.true_net_profit_lkr)}
+                    </span>
+                  </div>
                 </div>
-                <span className="text-base font-extrabold font-mono text-emerald-600 dark:text-emerald-400 tabular-nums">
-                  {formatLkr(result.true_net_profit_lkr)}
-                </span>
               </div>
-            </div>
-          </div>
+            );
+          })()}
 
           {/* Operational Dividends Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

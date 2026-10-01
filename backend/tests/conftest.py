@@ -6,6 +6,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("API_KEY", "test-api-key")
+os.environ.setdefault("ROUTING", "estimated")
+
 
 from app import models, security
 from app.database import Base, get_db
@@ -52,10 +54,12 @@ def db_session():
         connection.close()
 
 
+import uuid
+
 TEST_PASSWORD = "Test-Password-123"
 
 
-def make_user(db_session, role="admin", email=None, password=TEST_PASSWORD, **overrides):
+def make_user(db_session, role="admin", email=None, password=TEST_PASSWORD, hospital_id=None, **overrides):
     user = models.User(
         email=email or f"{role}-{os.urandom(3).hex()}@test.local",
         full_name=f"Test {role.title()}",
@@ -65,11 +69,45 @@ def make_user(db_session, role="admin", email=None, password=TEST_PASSWORD, **ov
     )
     db_session.add(user)
     db_session.flush()
+
+    target_hid = hospital_id
+    if not target_hid:
+        hosp = db_session.query(models.Hospital).first()
+        if not hosp:
+            hosp = models.Hospital(
+                id=uuid.UUID("a0000000-0000-0000-0000-000000000001"),
+                slug="test-hospital",
+                name="Test General Hospital",
+                short_name="Test General",
+                is_active=True,
+            )
+            db_session.add(hosp)
+            db_session.flush()
+        target_hid = hosp.id
+
+    mem = models.HospitalMembership(
+        hospital_id=target_hid,
+        user_id=user.id,
+        role=role,
+        status="active",
+        is_active=True,
+    )
+    db_session.add(mem)
+    db_session.flush()
+
     return user
 
 
 def token_for(user) -> str:
-    return security.create_token(user_id=str(user.id), email=user.email, name=user.full_name, role=user.role)
+    # Check if user has membership
+    from app.database import SessionLocal
+    return security.create_token(
+        user_id=str(user.id),
+        email=user.email,
+        name=user.full_name,
+        role=user.role,
+        hospital_id="a0000000-0000-0000-0000-000000000001",
+    )
 
 
 @pytest.fixture

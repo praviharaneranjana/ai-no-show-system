@@ -1,0 +1,58 @@
+{
+ "test_metrics_tuned": {
+  "ROC_AUC": 0.6788187315986314,
+  "PR_AUC": 0.27096286649415996,
+  "Brier": 0.12112845480442047,
+  "Recall_top20": 0.3732394366197183,
+  "Precision_top20": 0.2823654768247203,
+  "Lift_top20": 1.8661971830985915
+ },
+ "test_metrics": {
+  "ROC_AUC": 0.6788187315986314,
+  "PR_AUC": 0.27096286649415996,
+  "Brier": 0.12112845480442047,
+  "Recall_top20": 0.3732394366197183,
+  "Precision_top20": 0.2823654768247203,
+  "Lift_top20": 1.8661971830985915
+ },
+ "thresholds": {
+  "high": 0.25555557012557983,
+  "medium": 0.1738683134317398,
+  "rule": "High = top 10% / Medium = next 20% of validation-set calibrated risk"
+ },
+ "n_rows": 64444,
+ "base_rate": 0.16672522427564238,
+ "data_source": "appointments_synthetic.csv",
+ "created_at": "2026-10-01T04:42:48.375134",
+ "random_seed": 42,
+ "date_range": {
+  "start": "2024-10-01",
+  "end": "2026-09-30"
+ },
+ "split": {
+  "train": 42693,
+  "val": 12366,
+  "test": 9385
+ },
+ "top_features": {
+  "booking_channel_Counter": 0.0941,
+  "lead_days": 0.0711,
+  "prior_no_shows": 0.0703,
+  "payment_mode_Prepaid_Online": 0.0598,
+  "chronic_count": 0.0525,
+  "heavy_rain": 0.0437,
+  "prior_no_show_rate": 0.041,
+  "payment_mode_Cash": 0.0318,
+  "department_Cardiology": 0.0311,
+  "is_weekend": 0.0309
+ },
+ "optuna_best": {
+  "lr": 0.1001154974349885,
+  "depth": 2,
+  "mcw": 28,
+  "sub": 0.549297059562424,
+  "col": 0.5113949721857537,
+  "l2": 0.6207478546107209,
+  "n_estimators": 224
+ }
+}

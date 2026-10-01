@@ -24,7 +24,7 @@ import {
   CartesianGrid,
 } from "recharts";
 
-import { StatCard } from "@/components/stat-card";
+import { SharedKpiCard } from "@/components/shared-kpi-card";
 import { DoctorSessionPanel } from "@/app/capacity/doctor-session-panel";
 import { RingProgress } from "@/components/ring-progress";
 import { formatLkr } from "@/lib/utils";
@@ -66,46 +66,46 @@ export function CapacityOverviewView({ optimization, sessions }: CapacityOvervie
 
   return (
     <div className="flex flex-col gap-6 animate-in fade-in duration-300">
-      {/* 5 KPI StatCards */}
+      {/* 5 KPI SharedKpiCards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3.5">
-        <StatCard
+        <SharedKpiCard
           title="Total Capacity"
           value={optimization.total_capacity}
           icon={Layers}
           subvalue={`${optimization.sessions.length} sessions active`}
         />
-        <StatCard
+        <SharedKpiCard
           title="Total Booked"
           value={optimization.total_booked}
           icon={CalendarDays}
-          subvalue={`${optimization.overall_utilization_pct}% booked capacity`}
+          subvalue={`${optimization.overall_utilization_pct != null ? optimization.overall_utilization_pct : (optimization.total_capacity > 0 ? Math.round((optimization.total_booked / optimization.total_capacity) * 100) : 0)}% booked capacity`}
         />
-        <StatCard
+        <SharedKpiCard
           title="Expected No-Shows"
           value={optimization.total_predicted_no_shows}
           icon={AlertTriangle}
           delta={{
-            value: `80% CI: [${range[0]} - ${range[1]}]`,
+            value: `80% likely range: ${range[0]} – ${range[1]}`,
             isPositive: false,
           }}
-          subvalue="Poisson-binomial sum"
+          subvalue="AI probability estimate"
         />
-        <StatCard
-          title="Safe Overbooks"
+        <SharedKpiCard
+          title="Safe Extra Bookings"
           value={`+${optimization.total_recommended_overbooks}`}
           icon={TrendingUp}
           delta={{
-            value: `${optimization.expected_attendance_pct}% exp. attendance`,
+            value: `${optimization.expected_attendance_pct ?? 0}% expected to attend`,
             isPositive: true,
           }}
-          subvalue="Bounded by wait tolerance"
+          subvalue="Within patient wait limits"
         />
-        <StatCard
-          title="Exp. Revenue Upside"
+        <SharedKpiCard
+          title="Est. Extra Revenue"
           value={formatLkr(optimization.estimated_revenue_recovery_lkr)}
           icon={Wallet}
-          delta={{ value: "Expected filled gaps", isPositive: true }}
-          subvalue="Non-linear attendance model"
+          delta={{ value: "From recovered no-show slots", isPositive: true }}
+          subvalue="Annual gain at current clinic volume"
         />
       </div>
 
@@ -119,7 +119,7 @@ export function CapacityOverviewView({ optimization, sessions }: CapacityOvervie
             <div>
               <h2 className="text-base font-semibold text-foreground">Consultant Session Status</h2>
               <p className="text-xs text-muted-foreground">
-                Live punctuality telemetry — scales delay tolerance: Effective Tolerance = max(0, Base − Delay).
+                Live punctuality tracking — doctor delays reduce usable patient waiting time.
               </p>
             </div>
           </div>
@@ -314,7 +314,7 @@ export function CapacityOverviewView({ optimization, sessions }: CapacityOvervie
                   </div>
 
                   <div className="flex items-center justify-between pt-3 border-t border-border/40">
-                    <span className="text-xs text-muted-foreground font-medium">Expected Revenue Upside</span>
+                    <span className="text-xs text-muted-foreground font-medium">Est. Extra Revenue from This Session</span>
                     <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">
                       +{formatLkr(s.expected_revenue_gain_lkr)}
                     </span>

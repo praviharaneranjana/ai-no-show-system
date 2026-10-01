@@ -904,6 +904,7 @@ export type PredictionRunResponse = {
   id: string;
   run_date: string;
   doctor_id: string | null;
+  department_id?: number | null;
   status: "queued" | "running" | "done" | "failed";
   stage: string;
   with_sync: boolean;
@@ -919,6 +920,7 @@ export type PredictionRunResponse = {
   triggered_by: string | null;
   started_at: string;
   finished_at: string | null;
+  department_breakdown?: Record<string, number> | null;
 };
 
 export type HubKPIs = {
@@ -945,6 +947,8 @@ export type HubAppointmentItem = {
   actions_available: string[];
   status: string;
   source: string;
+  booking_channel?: string | null;
+  booked_by?: string | null;
 };
 
 export type HubDoctorGroup = {
@@ -994,4 +998,159 @@ export type HISStatusResponse = {
   total_his_records: number;
   synced_appointments_today: number;
 };
+
+// ===================================
+// Hospital & Multi-Tenancy Types
+// ===================================
+
+export type HospitalBasic = {
+  id: string;
+  name: string;
+  code: string;
+  city: string;
+  district?: string;
+  is_active: boolean;
+};
+
+export type HospitalFinancialSummary = {
+  total_appointments: number;
+  no_shows_recorded: number;
+  observed_no_show_rate_pct: number | null;
+  revenue_recovered_lkr: number;
+  revenue_at_risk_lkr: number;
+  avoided_loss_lkr: number;
+  active_doctors_count: number;
+  departments_count: number;
+  registered_staff_count: number;
+};
+
+export type HospitalContact = {
+  id: string;
+  kind: string;
+  name: string;
+  title: string | null;
+  email: string | null;
+  phone: string | null;
+  is_primary: boolean;
+};
+
+export type HospitalPartner = {
+  id: string;
+  name: string;
+  kind: string;
+  website: string | null;
+  since_date: string | null;
+  description: string | null;
+  is_official: boolean;
+};
+
+export type HospitalManagementMember = {
+  id: string;
+  full_name: string;
+  position: string;
+  bio: string | null;
+  email: string | null;
+  phone: string | null;
+  display_order: number;
+  is_public: boolean;
+};
+
+export type HospitalAuditLogItem = {
+  id: string;
+  actor_email: string | null;
+  action: string;
+  details: Record<string, unknown>;
+  created_at: string;
+};
+
+export type HospitalDetail = {
+  id: string;
+  slug: string;
+  name: string;
+  short_name: string;
+  legal_name: string | null;
+  logo_url: string | null;
+  brand_color: string;
+  established_date: string | null;
+  hospital_type: string;
+  registration_number: string | null;
+  bed_count: number;
+  address_line1: string | null;
+  address_line2: string | null;
+  city: string;
+  district: string;
+  province: string;
+  postal_code: string;
+  country: string;
+  latitude: number;
+  longitude: number;
+  timezone: string;
+  currency: string;
+  website: string | null;
+  main_phone: string | null;
+  main_email: string | null;
+  emergency_phone: string | null;
+  about: string | null;
+  accreditations: string[];
+  go_live_date: string | null;
+  is_active: boolean;
+  financial_summary: HospitalFinancialSummary;
+  contacts: HospitalContact[];
+  partners: HospitalPartner[];
+  management_members: HospitalManagementMember[];
+};
+
+export type HospitalUpdateInput = {
+  name?: string;
+  short_name?: string;
+  legal_name?: string | null;
+  brand_color?: string;
+  established_date?: string | null;
+  hospital_type?: string;
+  registration_number?: string | null;
+  bed_count?: number;
+  address_line1?: string | null;
+  address_line2?: string | null;
+  city?: string;
+  district?: string;
+  province?: string;
+  postal_code?: string;
+  website?: string | null;
+  main_phone?: string | null;
+  main_email?: string | null;
+  emergency_phone?: string | null;
+  about?: string | null;
+  accreditations?: string[];
+};
+
+export type StaffMember = {
+  membership_id: string;
+  user_id: string;
+  email: string;
+  full_name: string;
+  phone: string | null;
+  role: string;
+  status: "active" | "pending" | "suspended" | "rejected";
+  created_at: string;
+  approved_at: string | null;
+  approved_by: string | null;
+};
+
+export type DomainResolveResponse = {
+  domain: string;
+  registered: boolean;
+  hospital_id: string | null;
+  hospital_name: string | null;
+  hospital_code: string | null;
+};
+
+export type RegisterStaffPayload = {
+  email: string;
+  password: string;
+  full_name: string;
+  phone?: string;
+  requested_role?: string;
+  hospital_id?: string;
+};
+
 

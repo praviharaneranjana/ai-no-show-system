@@ -33,4 +33,53 @@ describe("evaluateRoi", () => {
     const result = evaluateRoi({ ...ROI_SIMULATOR_DEFAULTS, ai_intervention_coverage: 1.0 });
     expect(result.annual_revenue_recovered_lkr).toBeLessThanOrEqual(result.annual_revenue_leakage_lkr);
   });
+
+  it("calculates custom hospital expenses, true net profit, and drag accurately", () => {
+    const customExpenses = [
+      {
+        id: "1",
+        hospital_name: "Colombo Main Hospital",
+        category_id: "c1",
+        category_key: "patient_incentives",
+        title: "PickMe Vouchers",
+        amount_lkr: 500_000,
+        recurrence: "annual" as const,
+        is_active: true,
+      },
+      {
+        id: "2",
+        hospital_name: "Colombo Main Hospital",
+        category_id: "c2",
+        category_key: "tech_infrastructure",
+        title: "SHAI License",
+        amount_lkr: 100_000,
+        recurrence: "monthly" as const, // 100k * 12 = 1.2M
+        is_active: true,
+      },
+      {
+        id: "3",
+        hospital_name: "Colombo Main Hospital",
+        category_id: "c3",
+        category_key: "telco_outreach",
+        title: "Inactive SMS Package",
+        amount_lkr: 400_000,
+        recurrence: "annual" as const,
+        is_active: false, // Inactive: should be excluded
+      },
+    ];
+
+    const result = evaluateRoi({
+      ...ROI_SIMULATOR_DEFAULTS,
+      custom_expenses: customExpenses,
+    });
+
+    // Active expenses: 500k + 1.2M = 1.7M
+    expect(result.total_annual_expenses_lkr).toBe(1_700_000);
+    expect(result.true_net_profit_lkr).toBe(result.total_gross_value_created_lkr - 1_700_000);
+    expect(result.expense_drag_pct).toBeGreaterThan(0);
+    expect(result.payback_period_days).toBeGreaterThan(0);
+    expect(result.expense_category_breakdown.patient_incentives).toBe(500_000);
+    expect(result.expense_category_breakdown.tech_infrastructure).toBe(1_200_000);
+  });
+
 });

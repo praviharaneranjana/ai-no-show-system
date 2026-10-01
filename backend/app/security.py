@@ -18,9 +18,132 @@ import time
 
 logger = logging.getLogger("noshow_api")
 
-# ---- roles ----------------------------------------------------------------
-ROLE_RANK = {"front_desk": 1, "manager": 2, "admin": 3}
-ROLES = tuple(ROLE_RANK)
+# ---- roles and permissions ------------------------------------------------
+ROLE_RANK = {
+    "front_desk": 1,
+    "analyst": 2,
+    "manager": 2,
+    "admin": 3,
+    "platform_owner": 4,
+}
+ROLES = ("front_desk", "analyst", "manager", "admin", "platform_owner")
+
+ROLE_PERMISSIONS: dict[str, set[str]] = {
+    "front_desk": {
+        "patients.read",
+        "patients.write",
+        "appointments.read",
+        "appointments.write",
+        "sessions.read",
+        "waitlist.read",
+        "waitlist.write",
+        "outreach.read",
+        "outreach.send",
+        "hospital.profile.read",
+    },
+    "analyst": {
+        "patients.read",
+        "appointments.read",
+        "predictions.read",
+        "predictions.batch",
+        "analytics.read",
+        "capacity.read",
+        "capacity.simulate",
+        "model.read",
+        "hospital.profile.read",
+    },
+    "manager": {
+        "patients.read",
+        "patients.write",
+        "appointments.read",
+        "appointments.write",
+        "sessions.read",
+        "waitlist.read",
+        "waitlist.write",
+        "outreach.read",
+        "outreach.send",
+        "predictions.read",
+        "predictions.batch",
+        "analytics.read",
+        "capacity.read",
+        "capacity.simulate",
+        "capacity.settings.write",
+        "model.read",
+        "simulator.read",
+        "simulator.write",
+        "expenses.read",
+        "expenses.write",
+        "hospital.finance.read",
+        "hospital.profile.read",
+        "staff.read",
+    },
+    "admin": {
+        "patients.read",
+        "patients.write",
+        "appointments.read",
+        "appointments.write",
+        "sessions.read",
+        "waitlist.read",
+        "waitlist.write",
+        "outreach.read",
+        "outreach.send",
+        "predictions.read",
+        "predictions.batch",
+        "analytics.read",
+        "capacity.read",
+        "capacity.simulate",
+        "capacity.settings.write",
+        "model.read",
+        "simulator.read",
+        "simulator.write",
+        "expenses.read",
+        "expenses.write",
+        "hospital.finance.read",
+        "hospital.profile.read",
+        "hospital.profile.write",
+        "hospital.domains.manage",
+        "staff.read",
+        "staff.manage",
+        "audit.read",
+        "his.sync",
+    },
+    "platform_owner": {
+        "platform.all",
+        "platform.hospitals.manage",
+        "patients.read",
+        "patients.write",
+        "appointments.read",
+        "appointments.write",
+        "sessions.read",
+        "waitlist.read",
+        "waitlist.write",
+        "outreach.read",
+        "outreach.send",
+        "predictions.read",
+        "predictions.batch",
+        "analytics.read",
+        "capacity.read",
+        "capacity.simulate",
+        "capacity.settings.write",
+        "model.read",
+        "simulator.read",
+        "simulator.write",
+        "expenses.read",
+        "expenses.write",
+        "hospital.finance.read",
+        "hospital.profile.read",
+        "hospital.profile.write",
+        "hospital.domains.manage",
+        "staff.read",
+        "staff.manage",
+        "audit.read",
+        "his.sync",
+    },
+}
+
+
+def get_role_permissions(role: str) -> list[str]:
+    return sorted(list(ROLE_PERMISSIONS.get(role, set())))
 
 MIN_PASSWORD_LENGTH = 10
 TOKEN_TTL_SECONDS = int(float(os.getenv("TOKEN_TTL_HOURS", "8")) * 3600)
@@ -88,11 +211,24 @@ def _sign(payload_b64: str) -> str:
     return _b64(hmac.new(SECRET_KEY, payload_b64.encode(), hashlib.sha256).digest())
 
 
-def create_token(*, user_id: str, email: str, name: str, role: str, ttl_seconds: int | None = None) -> str:
+def create_token(
+    *,
+    user_id: str,
+    email: str,
+    name: str,
+    role: str,
+    hospital_id: str | None = None,
+    ttl_seconds: int | None = None,
+) -> str:
     now = int(time.time())
     payload = {
-        "sub": user_id, "email": email, "name": name, "role": role,
-        "iat": now, "exp": now + (TOKEN_TTL_SECONDS if ttl_seconds is None else ttl_seconds),
+        "sub": user_id,
+        "email": email,
+        "name": name,
+        "role": role,
+        "hospital_id": hospital_id,
+        "iat": now,
+        "exp": now + (TOKEN_TTL_SECONDS if ttl_seconds is None else ttl_seconds),
     }
     payload_b64 = _b64(json.dumps(payload, separators=(",", ":")).encode())
     return f"{payload_b64}.{_sign(payload_b64)}"

@@ -10,6 +10,186 @@ from app.database import Base
 
 
 # ===================================
+# Multi-Hospital Tenancy & Storage Models
+# ===================================
+
+class Hospital(Base):
+    __tablename__ = "hospitals"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    slug: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    short_name: Mapped[str] = mapped_column(String, nullable=False)
+    legal_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    logo_file_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    logo_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    brand_color: Mapped[str] = mapped_column(String, nullable=False, default="#8B7CF6")
+    established_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    hospital_type: Mapped[str] = mapped_column(String, nullable=False, default="private")
+    registration_number: Mapped[str | None] = mapped_column(String, nullable=True)
+    bed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    address_line1: Mapped[str | None] = mapped_column(String, nullable=True)
+    address_line2: Mapped[str | None] = mapped_column(String, nullable=True)
+    city: Mapped[str] = mapped_column(String, nullable=False, default="Colombo")
+    district: Mapped[str] = mapped_column(String, nullable=False, default="Colombo")
+    province: Mapped[str] = mapped_column(String, nullable=False, default="Western")
+    postal_code: Mapped[str] = mapped_column(String, nullable=False, default="01000")
+    country: Mapped[str] = mapped_column(String, nullable=False, default="Sri Lanka")
+    latitude: Mapped[float] = mapped_column(Float, nullable=False, default=6.9271)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False, default=79.8612)
+    timezone: Mapped[str] = mapped_column(String, nullable=False, default="Asia/Colombo")
+    currency: Mapped[str] = mapped_column(String, nullable=False, default="LKR")
+    website: Mapped[str | None] = mapped_column(String, nullable=True)
+    main_phone: Mapped[str | None] = mapped_column(String, nullable=True)
+    main_email: Mapped[str | None] = mapped_column(String, nullable=True)
+    emergency_phone: Mapped[str | None] = mapped_column(String, nullable=True)
+    about: Mapped[str | None] = mapped_column(Text, nullable=True)
+    accreditations: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    go_live_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    domains: Mapped[list["HospitalEmailDomain"]] = relationship(back_populates="hospital", cascade="all, delete-orphan")
+    memberships: Mapped[list["HospitalMembership"]] = relationship(back_populates="hospital", cascade="all, delete-orphan")
+    management_members: Mapped[list["HospitalManagementMember"]] = relationship(back_populates="hospital", cascade="all, delete-orphan")
+    contacts: Mapped[list["HospitalContact"]] = relationship(back_populates="hospital", cascade="all, delete-orphan")
+    partners: Mapped[list["HospitalPartner"]] = relationship(back_populates="hospital", cascade="all, delete-orphan")
+
+
+class StoredFile(Base):
+    __tablename__ = "stored_files"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hospital_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=True)
+    kind: Mapped[str] = mapped_column(String, nullable=False, default="image")
+    content_type: Mapped[str] = mapped_column(String, nullable=False)
+    size: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String, nullable=False)
+    storage_path: Mapped[str] = mapped_column(String, nullable=False)
+    uploaded_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class HospitalEmailDomain(Base):
+    __tablename__ = "hospital_email_domains"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hospital_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=False, index=True)
+    domain: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    hospital: Mapped["Hospital"] = relationship(back_populates="domains")
+
+
+class HospitalMembership(Base):
+    __tablename__ = "hospital_memberships"
+    __table_args__ = (
+        UniqueConstraint("user_id", "hospital_id", name="uq_user_hospital_membership"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    hospital_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String, nullable=False, default="front_desk")
+    status: Mapped[str] = mapped_column(String, nullable=False, default="active", index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    job_title: Mapped[str | None] = mapped_column(String, nullable=True)
+    department_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    employee_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    invited_or_requested_role: Mapped[str | None] = mapped_column(String, nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    hospital: Mapped["Hospital"] = relationship(back_populates="memberships")
+    user: Mapped["User"] = relationship(back_populates="memberships", foreign_keys=[user_id])
+
+
+class StaffInvitation(Base):
+    __tablename__ = "staff_invitations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email: Mapped[str] = mapped_column(String, index=True, nullable=False)
+    hospital_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String, nullable=False)
+    invited_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    token_hash: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    hospital: Mapped["Hospital"] = relationship()
+
+
+class HospitalManagementMember(Base):
+    __tablename__ = "hospital_management_members"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hospital_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    full_name: Mapped[str] = mapped_column(String, nullable=False)
+    position: Mapped[str] = mapped_column(String, nullable=False)
+    photo_file_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    bio: Mapped[str | None] = mapped_column(Text, nullable=True)
+    email: Mapped[str | None] = mapped_column(String, nullable=True)
+    phone: Mapped[str | None] = mapped_column(String, nullable=True)
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    hospital: Mapped["Hospital"] = relationship(back_populates="management_members")
+
+
+class HospitalContact(Base):
+    __tablename__ = "hospital_contacts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hospital_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    title: Mapped[str | None] = mapped_column(String, nullable=True)
+    email: Mapped[str | None] = mapped_column(String, nullable=True)
+    phone: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    hospital: Mapped["Hospital"] = relationship(back_populates="contacts")
+
+
+class HospitalPartner(Base):
+    __tablename__ = "hospital_partners"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hospital_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    logo_file_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    website: Mapped[str | None] = mapped_column(String, nullable=True)
+    since_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_official: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    hospital: Mapped["Hospital"] = relationship(back_populates="partners")
+
+
+class HospitalAuditLog(Base):
+    __tablename__ = "hospital_audit_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hospital_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    entity_type: Mapped[str] = mapped_column(String, nullable=False)
+    entity_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    details: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    ip_address: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+
+# ===================================
 # Reference Data Models
 # ===================================
 
@@ -17,6 +197,7 @@ class Department(Base):
     __tablename__ = "departments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    hospital_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     model_category: Mapped[str | None] = mapped_column(Text, nullable=True)
     icon: Mapped[str] = mapped_column(Text, nullable=False, default="stethoscope")
@@ -31,6 +212,7 @@ class Doctor(Base):
     __tablename__ = "doctors"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hospital_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=True, index=True)
     title: Mapped[str] = mapped_column(Text, nullable=False, default="Dr.")
     full_name: Mapped[str] = mapped_column(Text, nullable=False)
     department_id: Mapped[int] = mapped_column(ForeignKey("departments.id"), nullable=False)
@@ -53,6 +235,7 @@ class DoctorClinicSession(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hospital_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=True, index=True)
     doctor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("doctors.id", ondelete="CASCADE"), nullable=False)
     weekday: Mapped[int] = mapped_column(SmallInteger, nullable=False)  # 0 = Monday
     label: Mapped[str] = mapped_column(Text, nullable=False)  # Morning, Afternoon, Evening
@@ -98,6 +281,7 @@ class Patient(Base):
     __tablename__ = "patients"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hospital_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=True, index=True)
     uhid: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     full_name: Mapped[str] = mapped_column(String, nullable=False)
     date_of_birth: Mapped[date] = mapped_column(Date, nullable=False)
@@ -130,6 +314,7 @@ class Appointment(Base):
     __tablename__ = "appointments"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hospital_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=True, index=True)
     patient_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("patients.id"), nullable=False)
     scheduled_day: Mapped[date] = mapped_column(Date, nullable=False)
     appointment_day: Mapped[date] = mapped_column(Date, nullable=False)
@@ -177,6 +362,7 @@ class Prediction(Base):
     __tablename__ = "predictions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hospital_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=True, index=True)
     appointment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("appointments.id"), unique=True, nullable=False)
     risk_score: Mapped[float] = mapped_column(Numeric(5, 4), nullable=False)
     risk_category: Mapped[str] = mapped_column(String, nullable=False)
@@ -192,6 +378,7 @@ class DoctorSession(Base):
     __tablename__ = "doctor_sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hospital_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=True, index=True)
     doctor_name: Mapped[str] = mapped_column(String, nullable=False)
     specialty: Mapped[str] = mapped_column(String, nullable=False)
     room_number: Mapped[str] = mapped_column(String, default="Room 204")
@@ -208,6 +395,7 @@ class Intervention(Base):
     __tablename__ = "interventions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hospital_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=True, index=True)
     appointment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("appointments.id"), nullable=False)
     channel: Mapped[str] = mapped_column(String, default="WhatsApp")  # WhatsApp, SMS, IVR_Voice
     language: Mapped[str] = mapped_column(String, default="en")  # en, si, ta
@@ -224,6 +412,7 @@ class WaitlistEntry(Base):
     __tablename__ = "waitlist"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hospital_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=True, index=True)
     patient_name: Mapped[str] = mapped_column(String, nullable=False)
     patient_phone: Mapped[str] = mapped_column(String, nullable=False)
     specialty: Mapped[str] = mapped_column(String, nullable=False)
@@ -249,6 +438,14 @@ class User(Base):
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    phone: Mapped[str | None] = mapped_column(String, nullable=True)
+    avatar_file_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+
+    memberships: Mapped[list["HospitalMembership"]] = relationship(
+        back_populates="user",
+        foreign_keys="HospitalMembership.user_id",
+        cascade="all, delete-orphan",
+    )
 
 
 # ===================================
@@ -344,6 +541,7 @@ class PredictionRun(Base):
     __tablename__ = "prediction_runs"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hospital_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=True, index=True)
     run_date: Mapped[date] = mapped_column(Date, nullable=False)
     doctor_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("doctors.id"), nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False)  # queued, running, done, failed
@@ -371,6 +569,7 @@ class CapacitySetting(Base):
     __tablename__ = "capacity_settings"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hospital_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=True, index=True)
     scope: Mapped[str] = mapped_column(Text, nullable=False, default="global")  # global, department, doctor
     department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id", ondelete="CASCADE"), nullable=True)
     doctor_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("doctors.id", ondelete="CASCADE"), nullable=True)
@@ -394,6 +593,7 @@ class CapacityRecommendation(Base):
     __tablename__ = "capacity_recommendations"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hospital_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=True, index=True)
     run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, default=uuid.uuid4)
     doctor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("doctors.id", ondelete="CASCADE"), nullable=False)
     clinic_session_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("doctor_clinic_sessions.id", ondelete="SET NULL"), nullable=True)
@@ -420,6 +620,7 @@ class CapacityScenario(Base):
     __tablename__ = "capacity_scenarios"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hospital_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     params: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     results: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
@@ -431,6 +632,7 @@ class SlotOffer(Base):
     __tablename__ = "slot_offers"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hospital_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=True, index=True)
     doctor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("doctors.id", ondelete="CASCADE"), nullable=False)
     clinic_session_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("doctor_clinic_sessions.id", ondelete="SET NULL"), nullable=True)
     slot_time: Mapped[time] = mapped_column(Time, nullable=False)
@@ -448,4 +650,40 @@ class SlotOffer(Base):
     doctor: Mapped["Doctor"] = relationship()
     clinic_session: Mapped["DoctorClinicSession | None"] = relationship()
     waitlist_entry: Mapped["WaitlistEntry"] = relationship()
+
+
+# ===================================
+# Hospital Expenses & CapEx/OpEx Models
+# ===================================
+
+class ExpenseCategory(Base):
+    __tablename__ = "expense_categories"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    icon: Mapped[str] = mapped_column(String, default="receipt")
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    display_order: Mapped[int] = mapped_column(Integer, default=0)
+
+    expenses: Mapped[list["HospitalExpense"]] = relationship(back_populates="category", cascade="all, delete-orphan")
+
+
+class HospitalExpense(Base):
+    __tablename__ = "hospital_expenses"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hospital_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=True, index=True)
+    hospital_name: Mapped[str] = mapped_column(String, default="Default Hospital", nullable=False)
+    category_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("expense_categories.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    amount_lkr: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    recurrence: Mapped[str] = mapped_column(String, nullable=False, default="annual")  # annual, monthly, one_off, per_patient
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    category: Mapped["ExpenseCategory"] = relationship(back_populates="expenses")
+
 

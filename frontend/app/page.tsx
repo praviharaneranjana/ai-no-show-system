@@ -1,5 +1,5 @@
 import { getAppointmentsWithPredictions } from "@/lib/appointments-with-predictions";
-import { getAppointmentRegister, getNoShowTrend, getOutreachActivity, listDoctorSessions } from "@/lib/api";
+import { getAppointmentRegister, getNoShowTrend, getOutreachActivity, isRedirectError, listDoctorSessions } from "@/lib/api";
 import { BackendUnreachable } from "@/components/backend-unreachable";
 import { DashboardBento } from "@/components/dashboard-bento";
 
@@ -11,6 +11,7 @@ export default async function DashboardPage() {
       listDoctorSessions(),
     ]);
   } catch (err) {
+    if (isRedirectError(err)) throw err;
     return <BackendUnreachable error={err} />;
   }
 

@@ -29,15 +29,29 @@ def run_predictions(
     db: Session,
     user: Optional[models.User] = None,
     run_id: Optional[uuid.UUID] = None,
+    department_id: Optional[int] = None,
+    slot_label: Optional[str] = None,
+    user_filter: Optional[str] = None,
+    re_score: bool = True,
+    department_wise: bool = False,
+    hospital_id: Optional[uuid.UUID] = None,
 ) -> models.PredictionRun:
     """Run batch prediction engine. Can be called synchronously or in background task."""
     actor = user.email if user else "system"
+    user_hid = None
+    if user:
+        user_hid = getattr(user, "hospital_id", None)
+        if user_hid is None and getattr(user, "memberships", None):
+            user_hid = user.memberships[0].hospital_id
+    eff_hospital_id = hospital_id or user_hid
+
 
     if run_id:
         run = db.get(models.PredictionRun, run_id)
         if not run:
             run = models.PredictionRun(
                 id=run_id,
+                hospital_id=eff_hospital_id,
                 run_date=run_date,
                 doctor_id=doctor_id,
                 status="running",
@@ -51,6 +65,7 @@ def run_predictions(
     else:
         run = models.PredictionRun(
             id=uuid.uuid4(),
+            hospital_id=eff_hospital_id,
             run_date=run_date,
             doctor_id=doctor_id,
             status="running",
@@ -82,6 +97,8 @@ def run_predictions(
         run.stage = "scoring"
         db.commit()
 
+        from sqlalchemy import or_, and_
+
         q = (
             db.query(models.Appointment)
             .filter(
@@ -89,10 +106,68 @@ def run_predictions(
                 models.Appointment.status.in_(["scheduled", "booked"]),
             )
         )
+
+        if eff_hospital_id:
+            q = q.filter(
+                or_(
+                    models.Appointment.hospital_id == eff_hospital_id,
+                    models.Appointment.hospital_id.is_(None),
+                )
+            )
+
         if doctor_id:
             q = q.filter(models.Appointment.doctor_id == doctor_id)
 
-        appointments = q.order_by(models.Appointment.scheduled_time.asc()).all()
+        if department_id:
+            q = q.join(models.Doctor, models.Appointment.doctor_id == models.Doctor.id).filter(
+                models.Doctor.department_id == department_id
+            )
+
+        if slot_label and slot_label.lower() != "all":
+            sl = slot_label.lower().strip()
+            if sl == "morning":
+                q = q.filter(
+                    or_(
+                        models.Appointment.scheduled_time < "12:30",
+                        models.Appointment.clinic_session.has(models.DoctorClinicSession.label == "Morning"),
+                    )
+                )
+            elif sl == "afternoon":
+                q = q.filter(
+                    or_(
+                        and_(models.Appointment.scheduled_time >= "12:30", models.Appointment.scheduled_time < "16:30"),
+                        models.Appointment.clinic_session.has(models.DoctorClinicSession.label == "Afternoon"),
+                    )
+                )
+            elif sl == "evening":
+                q = q.filter(
+                    or_(
+                        models.Appointment.scheduled_time >= "16:30",
+                        models.Appointment.clinic_session.has(models.DoctorClinicSession.label == "Evening"),
+                    )
+                )
+
+        if user_filter and user_filter.lower() != "all":
+            uf = user_filter.strip()
+            q = q.filter(
+                or_(
+                    models.Appointment.booking_channel.ilike(f"%{uf}%"),
+                    models.Appointment.booked_by.ilike(f"%{uf}%"),
+                )
+            )
+
+        if not re_score:
+            scored_subquery = db.query(models.Prediction.appointment_id).subquery()
+            q = q.filter(models.Appointment.id.not_in(scored_subquery))
+
+        if department_wise:
+            q = q.outerjoin(models.Doctor, models.Appointment.doctor_id == models.Doctor.id).outerjoin(
+                models.Department, models.Doctor.department_id == models.Department.id
+            )
+            appointments = q.order_by(models.Department.name.asc().nulls_last(), models.Appointment.scheduled_time.asc()).all()
+        else:
+            appointments = q.order_by(models.Appointment.scheduled_time.asc()).all()
+
         total_count = len(appointments)
         run.total = total_count
         db.commit()
@@ -103,6 +178,7 @@ def run_predictions(
         medium = 0
         low = 0
         expected_sum = 0.0
+        dept_breakdown: dict[str, int] = {}
 
         for appt in appointments:
             try:
@@ -124,6 +200,14 @@ def run_predictions(
                     medium += 1
                 else:
                     low += 1
+
+                # Track department-wise counts
+                dept_name = "General"
+                if appt.doctor and appt.doctor.department:
+                    dept_name = appt.doctor.department.name
+                elif appt.department:
+                    dept_name = appt.department
+                dept_breakdown[dept_name] = dept_breakdown.get(dept_name, 0) + 1
 
                 scored += 1
             except Exception as e:
@@ -148,6 +232,7 @@ def run_predictions(
         run.low = low
         run.expected_no_shows = round(expected_sum, 2)
         run.finished_at = datetime.now(timezone.utc)
+        setattr(run, "_dept_breakdown", dept_breakdown)
         db.commit()
         db.refresh(run)
         return run

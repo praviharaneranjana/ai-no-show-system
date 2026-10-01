@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { FilterX } from "lucide-react";
 
-import { getAppointmentRegister } from "@/lib/api";
+import { getAppointmentRegister, isRedirectError } from "@/lib/api";
 import { parseRegisterParams, registerHref, type RawSearchParams } from "@/lib/search-params";
 import { BackendUnreachable } from "@/components/backend-unreachable";
 import { AppointmentRows } from "@/components/appointment-rows";
@@ -21,6 +21,7 @@ export default async function AppointmentsPage({
   try {
     data = await getAppointmentRegister(query);
   } catch (err) {
+    if (isRedirectError(err)) throw err;
     return <BackendUnreachable error={err} />;
   }
 

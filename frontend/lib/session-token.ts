@@ -5,17 +5,24 @@
 // key. Decoding is only used for UX (skip the login screen, hide menu items, detect expiry).
 // The backend verifies every token on every request and is the only authority.
 
-export type SessionRole = "front_desk" | "manager" | "admin";
+export type SessionRole = "front_desk" | "analyst" | "manager" | "admin" | "platform_owner";
 
 export const SESSION_COOKIE = "shai_session";
 
-const ROLE_RANK: Record<SessionRole, number> = { front_desk: 1, manager: 2, admin: 3 };
+const ROLE_RANK: Record<SessionRole, number> = {
+  front_desk: 1,
+  analyst: 2,
+  manager: 2,
+  admin: 3,
+  platform_owner: 4,
+};
 
 export type TokenPayload = {
   sub: string;
   email: string;
   name: string;
   role: SessionRole;
+  hospital_id?: string | null;
   iat: number;
   exp: number; // seconds since epoch
 };

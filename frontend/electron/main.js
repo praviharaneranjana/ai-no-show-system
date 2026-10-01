@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, nativeImage } = require("electron");
 const path = require("node:path");
 const net = require("node:net");
 const http = require("node:http");
@@ -60,10 +60,27 @@ async function startBundledServer() {
   return `http://127.0.0.1:${port}`;
 }
 
+function setAppIcon() {
+  const iconPngPath = path.join(__dirname, "assets", "icon.png");
+  if (process.platform === "darwin" && app.dock) {
+    try {
+      const dockIcon = nativeImage.createFromPath(iconPngPath);
+      if (!dockIcon.isEmpty()) {
+        app.dock.setIcon(dockIcon);
+      }
+    } catch (err) {
+      console.error("Failed to set macOS dock icon:", err);
+    }
+  }
+}
+
 async function createWindow() {
+  const iconPngPath = path.join(__dirname, "assets", "icon.png");
+
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
+    icon: iconPngPath,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -80,13 +97,17 @@ async function createWindow() {
   });
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  setAppIcon();
+  return createWindow();
+});
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
 app.on("activate", () => {
+  setAppIcon();
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 

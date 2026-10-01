@@ -33,6 +33,8 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { SegmentedCards, type SegmentedCardOption } from "@/components/ui/segmented-cards";
 import { RiskPill } from "@/components/risk-pill";
+import { JourneyMap } from "@/components/journey-map";
+import { cn } from "@/lib/utils";
 import type {
   DepartmentItem,
   DoctorItem,
@@ -66,6 +68,9 @@ const PAYMENTS: SegmentedCardOption[] = [
   { value: "Insurance", title: "Insurance Guarantee", description: "Prior cashless approval" },
 ];
 
+// Sri Lanka calendar date (en-CA formats as YYYY-MM-DD)
+const TODAY_LK = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" });
+
 export function NewAppointmentForm() {
   const router = useRouter();
 
@@ -95,6 +100,8 @@ export function NewAppointmentForm() {
   const [selectedLocationId, setSelectedLocationId] = useState<number | null>(null);
   const [city, setCity] = useState("Colombo 07");
   const [district, setDistrict] = useState("Colombo");
+  const [latitude, setLatitude] = useState<number | null>(6.9044);
+  const [longitude, setLongitude] = useState<number | null>(79.8697);
   const [addressLine, setAddressLine] = useState("");
   const [distanceKm, setDistanceKm] = useState<number>(3.5);
   const [distanceSource, setDistanceSource] = useState<"road_osrm" | "estimated" | "manual">("estimated");
@@ -103,7 +110,11 @@ export function NewAppointmentForm() {
   const [selectedDeptId, setSelectedDeptId] = useState<number | null>(null);
   const [selectedDeptName, setSelectedDeptName] = useState("General Medicine");
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>("");
-  const [appointmentDay, setAppointmentDay] = useState("2026-10-01");
+  const [appointmentDay, setAppointmentDay] = useState(TODAY_LK);
+  const [selectedSessionId, setSelectedSessionId] = useState<string>("");
+  const [doctorSessions, setDoctorSessions] = useState<
+    Array<{ id: string; name: string; start: string; end: string; room: string; remaining: number }>
+  >([]);
   const [clinicSession, setClinicSession] = useState("Morning");
 
   // Stage 4: Booking & Review
@@ -163,6 +174,37 @@ export function NewAppointmentForm() {
     }
     loadDoctors();
   }, [selectedDeptId]);
+
+  // 2b. Fetch real clinic sessions for doctor and appointment day (P2-3)
+  useEffect(() => {
+    async function loadDoctorSessions() {
+      if (!selectedDoctorId) {
+        setDoctorSessions([]);
+        setSelectedSessionId("");
+        return;
+      }
+      try {
+        const res = await fetch(`/api/doctors/${selectedDoctorId}/availability?days=30`);
+        if (res.ok) {
+          const avail = await res.json();
+          const matchingDay = avail.days?.find((d: any) => d.date === appointmentDay);
+          const mapped = (matchingDay?.sessions ?? []).map((s: any) => ({
+            id: s.session_id,
+            name: s.label,
+            start: s.start_time,
+            end: s.end_time,
+            room: s.room,
+            remaining: s.remaining,
+          }));
+          setDoctorSessions(mapped);
+          setSelectedSessionId(mapped[0]?.id ?? "");
+        }
+      } catch (e) {
+        console.error("Failed to load doctor sessions", e);
+      }
+    }
+    loadDoctorSessions();
+  }, [selectedDoctorId, appointmentDay]);
 
   // 3. Search patients for lookup
   useEffect(() => {
@@ -232,7 +274,7 @@ export function NewAppointmentForm() {
   useEffect(() => {
     async function loadInitialLocations() {
       try {
-        const res = await fetch("/api/locations?q=&limit=8");
+        const res = await fetch("/api/locations?q=&limit=25");
         if (res.ok) {
           const list = await res.json();
           setLocations(list);
@@ -244,7 +286,20 @@ export function NewAppointmentForm() {
     loadInitialLocations();
   }, []);
 
-  // Select location item
+  // Dynamic remote search for Town Combobox (P2-1)
+  const handleLocationSearch = (query: string) => {
+    if (!query.trim()) return;
+    fetch(`/api/locations?q=${encodeURIComponent(query.trim())}&limit=25`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data: LocationItem[]) => {
+        if (data.length > 0) {
+          setLocations(data);
+        }
+      })
+      .catch((e) => console.error("Location search error", e));
+  };
+
+  // Select location item with auto-coordinates and route calculation (P2-1)
   async function handleSelectLocation(locIdStr: string) {
     const locId = Number(locIdStr);
     const loc = locations.find((l) => l.id === locId);
@@ -253,6 +308,8 @@ export function NewAppointmentForm() {
     setSelectedLocationId(loc.id);
     setCity(loc.name);
     setDistrict(loc.district || "Colombo");
+    setLatitude(loc.latitude);
+    setLongitude(loc.longitude);
     try {
       const dRes = await fetch("/api/distance", {
         method: "POST",
@@ -325,6 +382,7 @@ export function NewAppointmentForm() {
     gender,
     selectedDoctorId,
     appointmentDay,
+    selectedSessionId,
     bookingChannel,
     paymentMode,
     distanceKm,
@@ -361,6 +419,7 @@ export function NewAppointmentForm() {
           }
         : undefined,
       doctor_id: selectedDoctorId,
+      clinic_session_id: selectedSessionId || undefined,
       appointment_day: appointmentDay,
       booking_channel: bookingChannel,
       payment_mode: paymentMode,
@@ -717,6 +776,7 @@ export function NewAppointmentForm() {
                   }))}
                   value={selectedLocationId ? String(selectedLocationId) : ""}
                   onChange={handleSelectLocation}
+                  onSearchChange={handleLocationSearch}
                   placeholder="Select town (e.g. Kandy, Galle, Gampaha, Dehiwala)..."
                   className="h-9 text-xs"
                 />
@@ -768,6 +828,29 @@ export function NewAppointmentForm() {
                   <span className="text-xs text-muted-foreground">
                     Estimated commute time: ~{Math.round(distanceKm * 2.2 + 10)} mins
                   </span>
+                </div>
+              </div>
+
+              {/* Transit Map & Route Visualization (P2-1) */}
+              <div className="rounded-xl border border-border/80 bg-muted/10 p-3 overflow-hidden">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                    <MapPin className="size-3.5 text-[#8B7CF6]" />
+                    <span>Patient Commute &amp; Access Route</span>
+                  </span>
+                  <span className="text-[11px] text-muted-foreground font-mono">
+                    {city} &rarr; Colombo
+                  </span>
+                </div>
+                <div className="rounded-lg overflow-hidden border border-border/60">
+                  <JourneyMap
+                    patientName={fullName || "New Patient"}
+                    city={city}
+                    distanceKm={distanceKm}
+                    latitude={latitude}
+                    longitude={longitude}
+                    mapHeightClass="h-[200px]"
+                  />
                 </div>
               </div>
 
@@ -848,23 +931,51 @@ export function NewAppointmentForm() {
                 <DatePicker
                   value={appointmentDay}
                   onChange={setAppointmentDay}
-                  minDate="2026-10-01"
+                  minDate={TODAY_LK}
                   className="h-9 text-xs"
                 />
               </div>
 
-              {/* Session Slot Segmented Cards */}
+              {/* Session Slot Selection (P2-3) */}
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs font-semibold">Clinic Session Time Slot</Label>
-                <SegmentedCards
-                  value={clinicSession}
-                  onChange={setClinicSession}
-                  options={[
-                    { value: "Morning", title: "Morning Session", description: "08:30 – 12:30 · Room 102" },
-                    { value: "Afternoon", title: "Afternoon Session", description: "13:30 – 16:30 · Room 102" },
-                    { value: "Evening", title: "Evening Clinic", description: "17:00 – 20:00 · Room 104" },
-                  ]}
-                />
+                <Label className="text-xs font-semibold">Clinic Session Time Slot *</Label>
+                {doctorSessions.length === 0 ? (
+                  <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 text-xs text-amber-700 dark:text-amber-300">
+                    No active clinic sessions scheduled for this doctor on this day. Please pick another date or doctor.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    {doctorSessions.map((sess) => {
+                      const isSelected = selectedSessionId === sess.id;
+                      return (
+                        <button
+                          key={sess.id}
+                          type="button"
+                          onClick={() => setSelectedSessionId(sess.id)}
+                          className={cn(
+                            "flex flex-col text-left p-3 rounded-xl border transition-all cursor-pointer",
+                            isSelected
+                              ? "border-[#8B7CF6] bg-[#8B7CF6]/10 text-foreground ring-2 ring-[#8B7CF6]/30 font-semibold"
+                              : "border-border/80 bg-card hover:border-[#8B7CF6]/50 text-foreground/80"
+                          )}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold">{sess.name} Session</span>
+                            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">
+                              {sess.remaining} slots
+                            </span>
+                          </div>
+                          <span className="text-[11px] text-muted-foreground mt-1">
+                            {sess.start} – {sess.end}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground/80 mt-0.5">
+                            {sess.room}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center justify-between pt-3">
@@ -878,7 +989,7 @@ export function NewAppointmentForm() {
                 </Button>
                 <Button
                   onClick={() => setCurrentStage(3)}
-                  disabled={!selectedDoctorId}
+                  disabled={!selectedDoctorId || !selectedSessionId}
                   className="text-xs gap-1.5"
                 >
                   <span>Continue to Booking Review</span>

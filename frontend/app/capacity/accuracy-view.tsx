@@ -24,7 +24,7 @@ import {
 } from "recharts";
 
 import { getCapacityAccuracyAction } from "@/app/capacity/actions";
-import { StatCard } from "@/components/stat-card";
+import { SharedKpiCard } from "@/components/shared-kpi-card";
 import { cn } from "@/lib/utils";
 import type { AccuracyResponse } from "@/lib/types";
 
@@ -102,7 +102,7 @@ export function AccuracyView({ initialAccuracy, departments }: AccuracyViewProps
           <div>
             <h2 className="text-sm font-bold text-foreground">Actual vs. Predicted Model Calibration</h2>
             <p className="text-xs text-muted-foreground">
-              Empirical verification on {sample_size.toLocaleString()} recorded outcomes with overbook regret telemetry
+              How accurately the AI predicted no-shows, measured across {sample_size.toLocaleString()} real historical appointments
             </p>
           </div>
         </div>
@@ -143,36 +143,36 @@ export function AccuracyView({ initialAccuracy, departments }: AccuracyViewProps
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
-        <StatCard
-          title="Calibration Slope"
+        <SharedKpiCard
+          title="Prediction Accuracy"
           value={calibration_slope.toFixed(2)}
           icon={Target}
-          delta={{ value: "Target: 1.00 (Perfect)", isPositive: calibration_slope >= 0.95 && calibration_slope <= 1.05 }}
-          subvalue="Reliability curve slope"
+          delta={{ value: "Target: 1.00 (perfect)", isPositive: calibration_slope >= 0.95 && calibration_slope <= 1.05 }}
+          subvalue="Reliability score (higher = better)"
         />
-        <StatCard
-          title="Brier Score"
+        <SharedKpiCard
+          title="Prediction Error"
           value={brier_score.toFixed(3)}
           icon={BarChart2}
-          delta={{ value: "Mean squared error", isPositive: brier_score < 0.15 }}
-          subvalue="Lower is better"
+          delta={{ value: "Average prediction error", isPositive: brier_score < 0.15 }}
+          subvalue="Lower score = more accurate"
         />
-        <StatCard
-          title="Precision @ High Risk"
+        <SharedKpiCard
+          title="Caught High-Risk Patients"
           value={`${(precision_high_risk * 100).toFixed(1)}%`}
           icon={CheckCircle2}
-          delta={{ value: `Recall: ${(recall_high_risk * 100).toFixed(1)}%`, isPositive: true }}
-          subvalue="Calibrated decision threshold"
+          delta={{ value: `Missed: ${(recall_high_risk * 100).toFixed(1)}%`, isPositive: true }}
+          subvalue="Of those flagged, this % were right"
         />
-        <StatCard
-          title="Overbook Regret Rate"
-          value={`${overbook_regret_rate_pct.toFixed(1)}%`}
+        <SharedKpiCard
+          title="Overbooking Worked"
+          value={`${overbook_regret_rate_pct.toFixed(1)}% regret`}
           icon={AlertTriangle}
           delta={{
-            value: `${absorbed_by_no_shows_pct.toFixed(0)}% absorbed by no-shows`,
+            value: `${absorbed_by_no_shows_pct.toFixed(0)}% filled freed slots`,
             isPositive: overbook_regret_rate_pct < 5,
           }}
-          subvalue="Patients waiting > tolerance"
+          subvalue="Patients who waited too long"
         />
       </div>
 
@@ -181,9 +181,9 @@ export function AccuracyView({ initialAccuracy, departments }: AccuracyViewProps
         {/* Chart 1: 10-Decile Calibration Plot */}
         <div className="rounded-[24px] bg-card p-5 shadow-xs border border-border/60 flex flex-col gap-3">
           <div>
-            <h3 className="text-sm font-bold text-foreground">10-Decile Calibration Curve</h3>
+            <h3 className="text-sm font-bold text-foreground">AI Prediction Accuracy by Risk Group</h3>
             <p className="text-xs text-muted-foreground">
-              Predicted Risk Probability vs Actual Observed No-Show Rate
+              How often the AI&apos;s predicted risk matched the actual no-show rate — closer to the diagonal = more accurate
             </p>
           </div>
           <div className="h-64 w-full">
@@ -205,7 +205,7 @@ export function AccuracyView({ initialAccuracy, departments }: AccuracyViewProps
                 <Line
                   type="monotone"
                   dataKey="Ideal 45°"
-                  name="Perfect Calibration (45°)"
+                  name="Perfect (target line)"
                   stroke="#8C8CA1"
                   strokeDasharray="4 4"
                   dot={false}
@@ -213,7 +213,7 @@ export function AccuracyView({ initialAccuracy, departments }: AccuracyViewProps
                 <Line
                   type="monotone"
                   dataKey="Actual %"
-                  name="Observed Empirical Rate"
+                  name="Actual No-Show Rate"
                   stroke="#8B7CF6"
                   strokeWidth={2.5}
                   dot={{ r: 4 }}
@@ -226,9 +226,9 @@ export function AccuracyView({ initialAccuracy, departments }: AccuracyViewProps
         {/* Chart 2: Predicted vs Actual Trend */}
         <div className="rounded-[24px] bg-card p-5 shadow-xs border border-border/60 flex flex-col gap-3">
           <div>
-            <h3 className="text-sm font-bold text-foreground">Predicted vs. Actual Daily Outcomes</h3>
+            <h3 className="text-sm font-bold text-foreground">Predicted vs. Actual Daily No-Shows</h3>
             <p className="text-xs text-muted-foreground">
-              Model accuracy and overbook absorption outcomes over time
+              Day-by-day comparison of AI predictions vs. what actually happened
             </p>
           </div>
           <div className="h-64 w-full">
@@ -334,9 +334,9 @@ export function AccuracyView({ initialAccuracy, departments }: AccuracyViewProps
         {/* Brier Score Breakdown by Department */}
         <div className="rounded-[24px] bg-card p-5 sm:p-6 shadow-xs border border-border/60 flex flex-col gap-4">
           <div>
-            <h3 className="text-sm font-bold text-foreground">Brier Score by Clinical Specialty</h3>
+            <h3 className="text-sm font-bold text-foreground">Prediction Accuracy by Department</h3>
             <p className="text-xs text-muted-foreground">
-              Departmental calibration consistency (Brier &lt; 0.15 indicates strong reliability)
+              Lower bars = the AI predicted no-shows more accurately for that department
             </p>
           </div>
 

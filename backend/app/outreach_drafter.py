@@ -70,6 +70,27 @@ _TEMPLATES = {
 }
 _TELEHEALTH_REASONS = {"distance", "weather"}
 
+TELEHEALTH_ELIGIBLE_SPECIALTIES = {
+    "psychiatry", "psychology", "mental health", "counseling",
+    "endocrinology", "diabetes", "nutrition", "dietetics",
+    "dermatology", "general medicine",
+}
+
+TELEHEALTH_INELIGIBLE_SPECIALTIES = {
+    "orthopedics", "orthopedic", "surgery", "general surgery",
+    "cardiology", "ent", "ophthalmology", "dentistry", "dental", "physiotherapy"
+}
+
+
+def is_telehealth_eligible(department: str | None) -> bool:
+    """Clinical guardrail: returns True only if specialty is suitable for video teleconsultation."""
+    if not department:
+        return False
+    dept = department.strip().lower()
+    if any(inelig in dept for inelig in TELEHEALTH_INELIGIBLE_SPECIALTIES):
+        return False
+    return any(elig in dept for elig in TELEHEALTH_ELIGIBLE_SPECIALTIES)
+
 
 @dataclass
 class Draft:
@@ -99,13 +120,20 @@ def reasons_from_contributions(contributions: list[dict], limit: int = 3) -> lis
 def template_draft(language: str, first_name: str, department: str, when: str, reasons: list[str]) -> str:
     t = _TEMPLATES.get(language, _TEMPLATES["en"])
     msg = t["base"].format(name=first_name, dept=department, when=when)
-    if _TELEHEALTH_REASONS & set(reasons):
+    if is_telehealth_eligible(department) and (_TELEHEALTH_REASONS & set(reasons)):
         msg += t["telehealth"]
     return msg + t["tail"]
 
 
 def _prompt(language: str, first_name: str, department: str, when: str, tier: str, reasons: list[str]) -> str:
-    guidance = "; ".join(_GUIDANCE[r] for r in reasons) or "simply ask them to confirm"
+    can_telehealth = is_telehealth_eligible(department) and bool(_TELEHEALTH_REASONS & set(reasons))
+    adapted_guidance = []
+    for r in reasons:
+        if r in _TELEHEALTH_REASONS and not is_telehealth_eligible(department):
+            adapted_guidance.append("travelling or weather may be difficult, so offer an easy way to reschedule to another in-person day")
+        else:
+            adapted_guidance.append(_GUIDANCE.get(r, ""))
+    guidance = "; ".join(filter(None, adapted_guidance)) or "simply ask them to confirm"
     return (
         f"Write ONE short appointment-reminder message for a Sri Lankan private hospital to send by WhatsApp/SMS.\n"
         f"Language: {LANGUAGES[language]}.\n"
@@ -114,7 +142,7 @@ def _prompt(language: str, first_name: str, department: str, when: str, tier: st
         "Rules: at most 45 words; polite and warm; never scolding; do NOT mention risk scores, AI, "
         "predictions, the date being far away, or medical advice; do NOT invent phone numbers, links, prices or doctor names; "
         "end by telling the patient to reply 1 to CONFIRM, 2 to RESCHEDULE"
-        + (", or 3 for a video consultation" if _TELEHEALTH_REASONS & set(reasons) else "")
+        + (", or 3 for a video consultation" if can_telehealth else "")
         + ". Output only the message text."
     )
 

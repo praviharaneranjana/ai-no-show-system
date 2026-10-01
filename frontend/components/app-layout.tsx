@@ -72,7 +72,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
             </Button>
 
             <Link href="/">
-              <ShaiLogo variant="horizontal" size="xs" />
+              <ShaiLogo variant="glyph" size="md" />
             </Link>
           </div>
 

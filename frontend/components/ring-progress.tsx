@@ -64,12 +64,28 @@ export function RingProgress({
         </svg>
 
         {/* Center label */}
-        <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-          <span className="font-rounded text-2xl font-extrabold tracking-tight text-foreground tabular-nums">
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-1">
+          <span
+            className={cn(
+              "font-rounded font-extrabold tracking-tight text-foreground tabular-nums leading-none",
+              size < 70
+                ? "text-xs"
+                : size < 95
+                ? "text-sm"
+                : size < 125
+                ? "text-xl"
+                : "text-2xl"
+            )}
+          >
             {Math.round(percentage)}%
           </span>
           {label && (
-            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mt-0.5">
+            <span
+              className={cn(
+                "font-bold uppercase tracking-wider text-muted-foreground mt-0.5 leading-none",
+                size < 70 ? "text-[8px]" : size < 95 ? "text-[9px]" : "text-[10px]"
+              )}
+            >
               {label}
             </span>
           )}

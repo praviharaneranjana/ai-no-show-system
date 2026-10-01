@@ -1034,6 +1034,11 @@ class HISSimulateArrivalsResponse(BaseModel):
 class PredictionRunCreateRequest(BaseModel):
     run_date: date | None = None
     doctor_id: uuid.UUID | None = None
+    department_id: int | None = None
+    slot_label: str | None = None
+    user_filter: str | None = None
+    re_score: bool = True
+    department_wise: bool = False
     with_sync: bool = True
     heavy_rain: bool = False
 
@@ -1042,6 +1047,7 @@ class PredictionRunResponse(BaseModel):
     id: uuid.UUID
     run_date: date
     doctor_id: uuid.UUID | None = None
+    department_id: int | None = None
     status: str
     stage: str
     with_sync: bool
@@ -1057,8 +1063,10 @@ class PredictionRunResponse(BaseModel):
     triggered_by: str | None = None
     started_at: datetime
     finished_at: datetime | None = None
+    department_breakdown: dict[str, int] | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
 
 
 class HubKPIs(BaseModel):
@@ -1085,6 +1093,8 @@ class HubAppointmentItem(BaseModel):
     actions_available: list[str] = Field(default_factory=list)
     status: str
     source: str = "manual"
+    booking_channel: str | None = None
+    booked_by: str | None = None
 
 
 class HubDoctorGroup(BaseModel):

@@ -16,6 +16,9 @@ import {
   Search,
   ExternalLink,
   Calendar,
+  SlidersHorizontal,
+  Filter,
+  CheckCircle2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,6 +69,40 @@ export function PredictionHubClient({
     percent: number;
     status: string;
   } | null>(null);
+
+  // Customize Batch Prediction Runner state (Phase 3 & User Requirements)
+  const [showCustomizeModal, setShowCustomizeModal] = useState(false);
+  const [filterDept, setFilterDept] = useState("all");
+  const [departmentWise, setDepartmentWise] = useState(false);
+  const [filterDoc, setFilterDoc] = useState("all");
+  const [filterSlot, setFilterSlot] = useState("all");
+  const [filterUser, setFilterUser] = useState("all");
+  const [filterScope, setFilterScope] = useState<"unscored" | "all">("unscored");
+  const [deptBreakdownResult, setDeptBreakdownResult] = useState<Record<string, number> | null>(null);
+
+  // Departments and Doctors metadata loaded dynamically
+  const [departmentsList, setDepartmentsList] = useState<Array<{ id: number; name: string }>>([]);
+  const [doctorsList, setDoctorsList] = useState<Array<{ id: string; full_name: string; title: string; department_id?: number }>>([]);
+
+  useEffect(() => {
+    async function loadMeta() {
+      try {
+        const dRes = await fetch("/api/departments");
+        if (dRes.ok) {
+          const dData = await dRes.json();
+          setDepartmentsList(Array.isArray(dData) ? dData : []);
+        }
+        const docRes = await fetch("/api/doctors");
+        if (docRes.ok) {
+          const docData = await docRes.json();
+          setDoctorsList(Array.isArray(docData) ? docData : []);
+        }
+      } catch (e) {
+        console.error("Failed to load departments/doctors", e);
+      }
+    }
+    loadMeta();
+  }, []);
 
   // Sync state
   const [isSyncing, setIsSyncing] = useState(false);
@@ -200,6 +237,120 @@ export function PredictionHubClient({
     }
   }
 
+  // Available Doctors filtered by selected department
+  const availableDoctors = useMemo(() => {
+    if (filterDept === "all") return doctorsList;
+    return doctorsList.filter((doc) => String(doc.department_id) === filterDept);
+  }, [doctorsList, filterDept]);
+
+  // Real-time matched appointments preview count for custom batch runner
+  const matchedAppointmentsCount = useMemo(() => {
+    return allAppointments.filter((a) => {
+      if (filterDept !== "all") {
+        const dObj = departmentsList.find((d) => String(d.id) === filterDept);
+        const deptName = dObj ? dObj.name.toLowerCase() : filterDept.toLowerCase();
+        if ((a.department || "").toLowerCase() !== deptName) return false;
+      }
+      if (filterDoc !== "all") {
+        const docObj = doctorsList.find((doc) => doc.id === filterDoc);
+        const docName = docObj ? docObj.full_name.toLowerCase() : "";
+        if (docName && !(a.doctor_name || "").toLowerCase().includes(docName)) return false;
+      }
+      if (filterSlot !== "all") {
+        const timeStr = a.scheduled_time || "";
+        if (filterSlot === "morning" && timeStr >= "12:30") return false;
+        if (filterSlot === "afternoon" && (timeStr < "12:30" || timeStr >= "16:30")) return false;
+        if (filterSlot === "evening" && timeStr < "16:30") return false;
+      }
+      if (filterUser !== "all") {
+        const chan = (a.booking_channel || "").toLowerCase();
+        if (filterUser === "front_desk" && !chan.includes("front") && !chan.includes("counter")) return false;
+        if (filterUser === "counter" && !chan.includes("counter")) return false;
+        if (filterUser === "doc990" && !chan.includes("990")) return false;
+        if (filterUser === "echannelling" && !chan.includes("echannel")) return false;
+        if (filterUser === "myhealth" && !chan.includes("myhealth")) return false;
+      }
+      if (filterScope === "unscored" && a.risk_category) {
+        return false;
+      }
+      return true;
+    }).length;
+  }, [allAppointments, filterDept, filterDoc, filterSlot, filterUser, filterScope, departmentsList, doctorsList]);
+
+  // Trigger Customized Batch Predictions Run with extended filters and department-wise scoring
+  async function handleExecuteBatchPrediction() {
+    setIsRunningPredictions(true);
+    setShowCustomizeModal(false);
+    setDeptBreakdownResult(null);
+    setRunProgress({ completed: 0, total: Math.max(matchedAppointmentsCount, 1), percent: 0, status: "queued" });
+
+    try {
+      const payload: Record<string, unknown> = {
+        run_date: targetDate,
+        heavy_rain: heavyRain,
+        department_wise: departmentWise,
+        re_score: filterScope === "all",
+      };
+      if (filterDept !== "all") {
+        payload.department_id = Number(filterDept);
+      }
+      if (filterDoc !== "all") {
+        payload.doctor_id = filterDoc;
+      }
+      if (filterSlot !== "all") {
+        payload.slot_label = filterSlot;
+      }
+      if (filterUser !== "all") {
+        payload.user_filter = filterUser;
+      }
+
+      const res = await fetch("/api/predictions/runs?run_sync=false", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Failed to start batch prediction");
+      }
+
+      const run = (await res.json()) as PredictionRunResponse;
+      const runId = run.id;
+
+      // Poll until completed
+      const interval = setInterval(async () => {
+        try {
+          const pollRes = await fetch(`/api/predictions/runs/${runId}`, { cache: "no-store" });
+          if (pollRes.ok) {
+            const statusJson = (await pollRes.json()) as PredictionRunResponse;
+            setRunProgress({
+              completed: statusJson.scored,
+              total: statusJson.total,
+              percent: statusJson.percent_complete,
+              status: statusJson.status,
+            });
+            if (statusJson.department_breakdown) {
+              setDeptBreakdownResult(statusJson.department_breakdown);
+            }
+
+            if (statusJson.status === "done" || statusJson.status === "failed") {
+              clearInterval(interval);
+              setIsRunningPredictions(false);
+              await refreshData(targetDate);
+            }
+          }
+        } catch {
+          clearInterval(interval);
+          setIsRunningPredictions(false);
+        }
+      }, 1000);
+    } catch (e) {
+      console.error(e);
+      setIsRunningPredictions(false);
+    }
+  }
+
   // Filtered Appointments
   const filteredAppointments = useMemo(() => {
     return allAppointments.filter((appt) => {
@@ -271,7 +422,7 @@ export function PredictionHubClient({
         </div>
 
         {/* Action Controls */}
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-3 lg:ml-auto lg:max-w-[60%]">
           {/* Target Date Picker */}
           <div className="flex items-center gap-2 bg-card border border-border/80 rounded-lg px-3 py-1.5 shadow-sm">
             <Calendar className="size-4 text-muted-foreground" />
@@ -322,10 +473,21 @@ export function PredictionHubClient({
             </Button>
           </div>
 
+          {/* Customize Batch Runner Button (Phase 3) */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setShowCustomizeModal(true)}
+            className="border-primary/40 text-primary hover:bg-primary/10 gap-1.5 text-xs font-semibold shadow-xs h-9 px-3"
+          >
+            <SlidersHorizontal className="size-3.5" />
+            <span>Customize Batch</span>
+          </Button>
+
           {/* Run Predictions For Today Button */}
           <Button
             size="sm"
-            onClick={handleRunPredictions}
+            onClick={() => setShowCustomizeModal(true)}
             disabled={isRunningPredictions}
             className="bg-primary text-primary-foreground hover:bg-primary/90 gap-2 text-xs font-semibold shadow-sm h-9 px-4"
           >
@@ -366,6 +528,20 @@ export function PredictionHubClient({
               style={{ width: `${Math.max(runProgress.percent, 5)}%` }}
             />
           </div>
+
+          {deptBreakdownResult && Object.keys(deptBreakdownResult).length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[11px] font-mono text-muted-foreground border-t border-primary/20">
+              <span className="font-semibold text-foreground">Department Breakdown:</span>
+              {Object.entries(deptBreakdownResult).map(([dept, count]) => (
+                <span
+                  key={dept}
+                  className="px-2 py-0.5 rounded-md bg-primary/15 text-primary border border-primary/25 font-medium"
+                >
+                  {dept}: {count}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -879,6 +1055,191 @@ export function PredictionHubClient({
                 Close Drawer
               </Button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. Customize Batch Prediction Runner Modal (Phase 3 & User Requirements) */}
+      {showCustomizeModal && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="max-w-2xl w-full bg-card border border-border/80 rounded-3xl p-6 shadow-2xl flex flex-col gap-4 text-xs animate-in zoom-in-95 max-h-[90vh] overflow-y-auto">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-border/60 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-foreground">Customize Batch Prediction Runner</h3>
+                <p className="text-muted-foreground text-[11px] mt-0.5">
+                  Filter by department, doctor, slot, and user/source, or execute department-wise batch scoring.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCustomizeModal(false)}
+                className="size-8 rounded-full bg-muted text-muted-foreground hover:text-foreground flex items-center justify-center transition-colors"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            {/* Filter Controls Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              {/* Target Date */}
+              <div>
+                <label className="font-semibold text-foreground block mb-1">Appointment Date / Horizon</label>
+                <input
+                  type="date"
+                  value={targetDate}
+                  onChange={(e) => handleDateChange(e.target.value)}
+                  className="w-full h-9 px-3 rounded-lg bg-background border border-border/80 text-foreground font-mono text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+
+              {/* Filter Department & Department-Wise Mode Toggle */}
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="font-semibold text-foreground">Filter Department</label>
+                  <label className="flex items-center gap-1.5 text-[11px] text-primary cursor-pointer font-medium">
+                    <input
+                      type="checkbox"
+                      checked={departmentWise}
+                      onChange={(e) => setDepartmentWise(e.target.checked)}
+                      className="rounded border-border text-primary focus:ring-primary"
+                    />
+                    <span>Department-Wise Batch</span>
+                  </label>
+                </div>
+                <select
+                  value={filterDept}
+                  onChange={(e) => {
+                    setFilterDept(e.target.value);
+                    setFilterDoc("all");
+                  }}
+                  className="w-full h-9 px-3 rounded-lg bg-background border border-border/80 text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="all">All Clinical Departments ({departmentsList.length || "All"})</option>
+                  {departmentsList.map((d) => (
+                    <option key={d.id} value={String(d.id)}>
+                      {d.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Filter Doctor Specialist */}
+              <div>
+                <label className="font-semibold text-foreground block mb-1">Filter Doctor Consultant</label>
+                <select
+                  value={filterDoc}
+                  onChange={(e) => setFilterDoc(e.target.value)}
+                  className="w-full h-9 px-3 rounded-lg bg-background border border-border/80 text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="all">All Attending Doctors ({availableDoctors.length})</option>
+                  {availableDoctors.map((doc) => (
+                    <option key={doc.id} value={doc.id}>
+                      {doc.title} {doc.full_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Filter Session Slot */}
+              <div>
+                <label className="font-semibold text-foreground block mb-1">Filter Session Slot</label>
+                <select
+                  value={filterSlot}
+                  onChange={(e) => setFilterSlot(e.target.value)}
+                  className="w-full h-9 px-3 rounded-lg bg-background border border-border/80 text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="all">All Slots (Morning, Afternoon, Evening)</option>
+                  <option value="morning">Morning (08:30 AM - 12:30 PM)</option>
+                  <option value="afternoon">Afternoon (01:00 PM - 04:30 PM)</option>
+                  <option value="evening">Evening (04:30 PM - 08:30 PM)</option>
+                </select>
+              </div>
+
+              {/* Filter Booking User / Channel Source */}
+              <div>
+                <label className="font-semibold text-foreground block mb-1">Filter Booking User / Channel Source</label>
+                <select
+                  value={filterUser}
+                  onChange={(e) => setFilterUser(e.target.value)}
+                  className="w-full h-9 px-3 rounded-lg bg-background border border-border/80 text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="all">All Intake Staff &amp; Channels</option>
+                  <option value="counter">Hospital Registration Counter</option>
+                  <option value="front_desk">Front Desk Staff</option>
+                  <option value="doc990">Doc990 Telecommunications</option>
+                  <option value="echannelling">eChannelling National Gateway</option>
+                  <option value="myhealth">MyHealth Patient Portal</option>
+                </select>
+              </div>
+
+              {/* Scope: Unscored vs Re-Score All */}
+              <div>
+                <label className="font-semibold text-foreground block mb-1">Prediction Scope</label>
+                <select
+                  value={filterScope}
+                  onChange={(e) => setFilterScope(e.target.value as "unscored" | "all")}
+                  className="w-full h-9 px-3 rounded-lg bg-background border border-border/80 text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="unscored">Only Unscored Appointments (Fastest)</option>
+                  <option value="all">Re-Score All Filtered Appointments</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Live Matched Appointments Status Preview */}
+            <div className="p-3.5 bg-muted/40 border border-border/80 rounded-2xl flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-foreground font-semibold">Matched Target Appointments:</span>
+                <span className="text-primary font-mono font-bold text-sm">
+                  {matchedAppointmentsCount} Appointments Found
+                </span>
+              </div>
+              <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                <div
+                  className="bg-primary h-2 rounded-full transition-all duration-300"
+                  style={{
+                    width: `${Math.min(
+                      Math.max((matchedAppointmentsCount / Math.max(allAppointments.length, 1)) * 100, 4),
+                      100
+                    )}%`,
+                  }}
+                />
+              </div>
+              {matchedAppointmentsCount === 0 && filterScope === "unscored" && allAppointments.length > 0 && (
+                <p className="text-[11px] text-muted-foreground">
+                  All matching appointments are already scored.{" "}
+                  <button
+                    type="button"
+                    onClick={() => setFilterScope("all")}
+                    className="text-primary font-semibold underline underline-offset-2"
+                  >
+                    Switch to Re-Score All
+                  </button>
+                </p>
+              )}
+              <div className="flex justify-between text-[11px] text-muted-foreground font-mono">
+                <span>Total Day Appointments: {allAppointments.length}</span>
+                <span className="text-primary">
+                  {departmentWise ? "Department-Wise Scoring Active" : "Standard Sequence"}
+                </span>
+              </div>
+            </div>
+
+            {/* Submit Execution Button */}
+            <Button
+              type="button"
+              onClick={handleExecuteBatchPrediction}
+              disabled={isRunningPredictions || matchedAppointmentsCount === 0}
+              className="w-full h-10 rounded-xl bg-primary text-primary-foreground font-bold shadow-lg shadow-primary/20 hover:bg-primary/90 gap-2 text-xs"
+            >
+              <Sparkles className="size-4" />
+              <span>
+                {isRunningPredictions
+                  ? "Executing Batch Scoring..."
+                  : `Execute Filtered Batch Scoring (${matchedAppointmentsCount} Patients)`}
+              </span>
+            </Button>
           </div>
         </div>
       )}

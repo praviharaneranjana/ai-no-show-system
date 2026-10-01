@@ -13,11 +13,18 @@ def test_reasons_use_positive_shap_only_and_dedupe():
     assert outreach_drafter.reasons_from_contributions(contribs) == ["long_wait", "distance", "payment"]
 
 
-def test_template_adds_telehealth_for_distance_in_every_language():
+def test_template_adds_telehealth_for_distance_in_every_language_when_eligible():
     for lang in ("en", "si", "ta"):
-        msg = outreach_drafter.template_draft(lang, "Nimal", "Cardiology", "05 Oct 2026", ["distance"])
+        msg = outreach_drafter.template_draft(lang, "Nimal", "Psychiatry", "05 Oct 2026", ["distance"])
         assert "Nimal" in msg and "3" in msg
     assert "video" not in outreach_drafter.template_draft("en", "A", "ENT", "x", ["long_wait"])
+
+
+def test_template_excludes_telehealth_for_ineligible_specialties():
+    for dept in ("Orthopedics", "Cardiology", "General Surgery", "ENT"):
+        msg = outreach_drafter.template_draft("en", "Nimal", dept, "05 Oct 2026", ["distance"])
+        assert "video" not in msg.lower()
+        assert "3" not in msg
 
 
 def test_draft_endpoint_falls_back_to_template_without_api_key(client, monkeypatch):

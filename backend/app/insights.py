@@ -8,12 +8,12 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import Session, joinedload
 
-from app import geo, models, schemas
+from app import auth, geo, models, schemas
 from app.database import get_db
 
 router = APIRouter()
@@ -71,8 +71,9 @@ def _label(d: date, granularity: str) -> str:
     return f"{d:%Y}"
 
 
-@router.get("/analytics/trend", response_model=TrendResponse)
+@router.get("/analytics/trend", response_model=TrendResponse, dependencies=[Depends(auth.require_role("analyst"))])
 def no_show_trend(
+    request: Request,
     granularity: Literal["day", "week", "month", "year"] = "month",
     department: Optional[str] = None,
     doctor: Optional[str] = None,
@@ -81,9 +82,12 @@ def no_show_trend(
     """Observed no-show rate per period, from appointments whose outcome is recorded."""
     today = date.today()
     since = today - timedelta(days=_WINDOW_DAYS[granularity])
+    hospital_id = getattr(request.state, "hospital_id", None)
 
     def filt(q):
         q = q.filter(models.Appointment.no_show.is_not(None))
+        if hospital_id:
+            q = q.filter(models.Appointment.hospital_id == hospital_id)
         if department:
             q = q.filter(models.Appointment.department == department)
         if doctor:
@@ -117,8 +121,14 @@ def no_show_trend(
     latest = usable[-1].rate if usable else None
     previous = usable[-2].rate if len(usable) > 1 else None
 
-    departments = [r[0] for r in db.query(models.Appointment.department).filter(models.Appointment.department.is_not(None)).distinct().order_by(models.Appointment.department)]
+    dept_q = db.query(models.Appointment.department).filter(models.Appointment.department.is_not(None))
+    if hospital_id:
+        dept_q = dept_q.filter(models.Appointment.hospital_id == hospital_id)
+    departments = [r[0] for r in dept_q.distinct().order_by(models.Appointment.department)]
+
     doctors_q = db.query(models.Appointment.doctor_name).filter(models.Appointment.doctor_name.is_not(None))
+    if hospital_id:
+        doctors_q = doctors_q.filter(models.Appointment.hospital_id == hospital_id)
     if department:
         doctors_q = doctors_q.filter(models.Appointment.department == department)
     doctors = [r[0] for r in doctors_q.distinct().order_by(models.Appointment.doctor_name)]
@@ -153,11 +163,12 @@ class RevenueAtRiskResponse(BaseModel):
     ancillary_multiplier: float
 
 
-@router.get("/analytics/revenue-at-risk", response_model=RevenueAtRiskResponse)
-def revenue_at_risk(days: int = Query(7, ge=1, le=90), db: Session = Depends(get_db)):
+@router.get("/analytics/revenue-at-risk", response_model=RevenueAtRiskResponse, dependencies=[Depends(auth.require_role("analyst"))])
+def revenue_at_risk(request: Request, days: int = Query(7, ge=1, le=90), db: Session = Depends(get_db)):
     """Expected revenue loss = sum of calibrated no-show risk over upcoming appointments x slot value."""
     today = date.today()
-    rows = (
+    hospital_id = getattr(request.state, "hospital_id", None)
+    query = (
         db.query(models.Appointment, models.Prediction.risk_score)
         .join(models.Prediction, models.Prediction.appointment_id == models.Appointment.id)
         .filter(
@@ -165,8 +176,10 @@ def revenue_at_risk(days: int = Query(7, ge=1, le=90), db: Session = Depends(get
             models.Appointment.appointment_day < today + timedelta(days=days),
             models.Appointment.no_show.is_(None),
         )
-        .all()
     )
+    if hospital_id:
+        query = query.filter(models.Appointment.hospital_id == hospital_id)
+    rows = query.all()
 
     def bucketise(keyfn) -> list[RevenueBucket]:
         acc: dict[str, list[float]] = defaultdict(lambda: [0, 0.0])
@@ -232,6 +245,7 @@ def _overview_row(a: models.Appointment) -> schemas.AppointmentOverviewRow:
 
 @router.get("/appointments/register", response_model=RegisterResponse)
 def appointment_register(
+    request: Request,
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=200),
     view: Literal["all", "today", "high_risk", "pending_outcome", "upcoming"] = "all",
@@ -246,12 +260,15 @@ def appointment_register(
 ):
     today = date.today()
     A, P, Pt = models.Appointment, models.Prediction, models.Patient
+    hospital_id = getattr(request.state, "hospital_id", None)
 
     base = (
         db.query(A)
         .join(Pt, A.patient_id == Pt.id)
         .outerjoin(P, P.appointment_id == A.id)
     )
+    if hospital_id:
+        base = base.filter(A.hospital_id == hospital_id)
 
     # Counts for the tab strip (respect search/department filters, not the view itself)
     def common(query):

@@ -48,23 +48,23 @@ import type {
   PredictionRunResponse,
   PredictionTodayResponse,
   HISStatusResponse,
+  HospitalBasic,
+  HospitalDetail,
+  HospitalUpdateInput,
+  HospitalAuditLogItem,
+  StaffMember,
+  DomainResolveResponse,
+  RegisterStaffPayload,
 } from "@/lib/types";
 import { redirect } from "next/navigation";
 
 import { getBackendConfig } from "@/lib/backend-config";
 import { getSessionToken } from "@/lib/session";
+import { ApiError, isRedirectError } from "@/lib/errors";
 
-export class ApiError extends Error {
-  status: number;
+export { ApiError, isRedirectError };
 
-  constructor(status: number, message: string) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-  }
-}
-
-export type AuthRole = "front_desk" | "manager" | "admin";
+export type AuthRole = "front_desk" | "analyst" | "manager" | "admin" | "platform_owner";
 
 export type LoginRequest = {
   email: string;
@@ -76,6 +76,13 @@ export type LoginResponse = {
   name?: string;
   mustChangePassword?: boolean;
   access_token?: string;
+  hospital_id?: string | null;
+  hospital_name?: string | null;
+  hospital_code?: string | null;
+  status?: string;
+  roles?: string[];
+  permissions?: string[];
+  is_platform_owner?: boolean;
 };
 
 // `auth: false` is for the few public endpoints (login) that must not carry a session
@@ -551,7 +558,17 @@ export function getPredictionsToday(date?: string) {
 }
 
 export function triggerBatchRun(
-  req: { run_date?: string; doctor_id?: string; with_sync?: boolean; heavy_rain?: boolean },
+  req: {
+    run_date?: string;
+    doctor_id?: string;
+    department_id?: number;
+    slot_label?: string;
+    user_filter?: string;
+    re_score?: boolean;
+    department_wise?: boolean;
+    with_sync?: boolean;
+    heavy_rain?: boolean;
+  },
   runSync = false
 ) {
   return apiFetch<PredictionRunResponse>(`/predictions/runs${qs({ run_sync: runSync ? "true" : undefined })}`, {
@@ -588,4 +605,84 @@ export function simulateHisArrivals(count = 5) {
     { method: "POST" }
   );
 }
+
+// ===================================
+// Multi-Hospital & Staff API
+// ===================================
+
+export function getHospitalProfile() {
+  return apiFetch<HospitalDetail>("/hospital");
+}
+
+export function updateHospitalProfile(payload: HospitalUpdateInput) {
+  return apiFetch<HospitalDetail>("/hospital", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getHospitalAuditLog(limit = 50) {
+  return apiFetch<HospitalAuditLogItem[]>(`/hospital/audit${qs({ limit })}`);
+}
+
+export function listHospitalStaff() {
+  return apiFetch<StaffMember[]>("/admin/staff");
+}
+
+export function listPendingStaff() {
+  return apiFetch<StaffMember[]>("/admin/staff/pending");
+}
+
+export function approveStaff(membershipId: string, role: string, notes?: string) {
+  return apiFetch<StaffMember>(`/admin/staff/${membershipId}/approve`, {
+    method: "POST",
+    body: JSON.stringify({ role, notes }),
+  });
+}
+
+export function rejectStaff(membershipId: string, reason?: string) {
+  return apiFetch<StaffMember>(`/admin/staff/${membershipId}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export function resolveEmailDomain(email: string) {
+  return apiFetch<DomainResolveResponse>(
+    "/auth/resolve-email",
+    {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    },
+    { auth: false }
+  );
+}
+
+export function listPublicHospitals() {
+  return apiFetch<HospitalBasic[]>("/auth/hospitals", undefined, { auth: false });
+}
+
+export function registerStaff(payload: RegisterStaffPayload) {
+  return apiFetch<{
+    status: string;
+    message: string;
+    membership_id: string;
+    hospital_name: string;
+  }>(
+    "/auth/register",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    { auth: false }
+  );
+}
+
+export function switchHospital(hospitalId: string) {
+  return apiFetch<LoginResponse>("/auth/switch-hospital", {
+    method: "POST",
+    body: JSON.stringify({ hospital_id: hospitalId }),
+  });
+}
+
 

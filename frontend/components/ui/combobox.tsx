@@ -16,6 +16,7 @@ export interface ComboboxProps {
   options: ComboboxOption[];
   value?: string;
   onChange: (value: string) => void;
+  onSearchChange?: (query: string) => void;
   placeholder?: string;
   searchPlaceholder?: string;
   disabled?: boolean;
@@ -28,6 +29,7 @@ export function Combobox({
   options,
   value,
   onChange,
+  onSearchChange,
   placeholder = "Select option...",
   searchPlaceholder = "Search...",
   disabled = false,
@@ -199,7 +201,11 @@ export function Combobox({
               ref={inputRef}
               type="text"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value;
+                setSearch(val);
+                onSearchChange?.(val);
+              }}
               placeholder={searchPlaceholder}
               className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
             />

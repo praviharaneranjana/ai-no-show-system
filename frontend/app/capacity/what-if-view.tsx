@@ -5,6 +5,7 @@ import {
   Sliders,
   Sparkles,
   ArrowRight,
+  ArrowLeft,
   TrendingUp,
   AlertTriangle,
   Wallet,
@@ -44,9 +45,11 @@ import type {
 
 interface WhatIfViewProps {
   sessions: DoctorSession[];
+  onBack?: () => void;
 }
 
-export function WhatIfView({ sessions }: WhatIfViewProps) {
+export function WhatIfView({ sessions, onBack }: WhatIfViewProps) {
+
   // Input parameters
   const [department, setDepartment] = useState<string>("all");
   const [doctorId, setDoctorId] = useState<string>("all");
@@ -146,12 +149,21 @@ export function WhatIfView({ sessions }: WhatIfViewProps) {
           <div>
             <h2 className="text-base font-bold text-foreground">What-If Simulation Studio</h2>
             <p className="text-xs text-muted-foreground">
-              Evaluate real-time policy adjustments using single-server Monte Carlo simulation (2,000 vectorised runs)
+              Instantly see how your overbooking policy changes when you adjust wait times, doctor delays or safety buffers
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-card border border-border/80 text-foreground text-xs font-semibold hover:bg-muted shadow-xs transition-colors"
+            >
+              <ArrowLeft className="size-3.5" /> Back to Capacity
+            </button>
+          )}
           {isPending && (
             <span className="flex items-center gap-1.5 text-xs text-primary font-medium animate-pulse">
               <RefreshCw className="size-3 animate-spin" /> Simulating...
@@ -213,7 +225,7 @@ export function WhatIfView({ sessions }: WhatIfViewProps) {
           {/* Slider 1: Max Wait Tolerance */}
           <div className="flex flex-col gap-2 pt-2 border-t border-border/40">
             <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-foreground">Base Wait Tolerance</span>
+              <span className="font-semibold text-foreground">Max Patient Wait Time</span>
               <span className="font-bold text-primary tabular-nums">{waitTolerance} mins</span>
             </div>
             <input
@@ -225,13 +237,13 @@ export function WhatIfView({ sessions }: WhatIfViewProps) {
               onChange={(e) => setWaitTolerance(Number(e.target.value))}
               className="w-full accent-primary cursor-pointer"
             />
-            <span className="text-[10px] text-muted-foreground">Maximum acceptable delay added to waiting room</span>
+            <span className="text-[10px] text-muted-foreground">How long patients will comfortably wait before getting frustrated</span>
           </div>
 
           {/* Slider 2: Safety Factor Beta */}
           <div className="flex flex-col gap-2 pt-2 border-t border-border/40">
             <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-foreground">Safety Factor (&beta;)</span>
+              <span className="font-semibold text-foreground">Safety Buffer Level</span>
               <span className="font-bold text-primary tabular-nums">{(safetyFactor * 100).toFixed(0)}%</span>
             </div>
             <input
@@ -244,14 +256,14 @@ export function WhatIfView({ sessions }: WhatIfViewProps) {
               className="w-full accent-primary cursor-pointer"
             />
             <span className="text-[10px] text-muted-foreground">
-              Risk conservatism multiplier applied to Poisson-binomial variance
+              How cautious to be when adding extra patients — higher is safer
             </span>
           </div>
 
           {/* Slider 3: Doctor Delay */}
           <div className="flex flex-col gap-2 pt-2 border-t border-border/40">
             <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-foreground">Assumed Doctor Delay</span>
+              <span className="font-semibold text-foreground">Doctor Running Late</span>
               <span className="font-bold text-amber-600 dark:text-amber-400 tabular-nums">+{doctorDelay} mins</span>
             </div>
             <input
@@ -264,7 +276,7 @@ export function WhatIfView({ sessions }: WhatIfViewProps) {
               className="w-full accent-amber-500 cursor-pointer"
             />
             <span className="text-[10px] text-muted-foreground">
-              Effective Tolerance = max(0, {waitTolerance} - {doctorDelay}) = {Math.max(0, waitTolerance - doctorDelay)} mins
+              Effective patient wait budget = {waitTolerance} − {doctorDelay} = {Math.max(0, waitTolerance - doctorDelay)} mins
             </span>
           </div>
 
@@ -397,10 +409,10 @@ export function WhatIfView({ sessions }: WhatIfViewProps) {
           <div className="rounded-[24px] bg-card p-5 shadow-xs border border-border/60 flex flex-col gap-3">
             <div>
               <h4 className="text-xs font-bold text-foreground">
-                Revenue vs Overcrowding Risk Trade-Off Curve
+                Extra Revenue vs Overcrowding Risk
               </h4>
               <p className="text-[11px] text-muted-foreground">
-                Parametric sweep across overbooking depths
+                How revenue and waiting-room risk change as you add more extra patient bookings
               </p>
             </div>
             {result?.trade_off_curve && result.trade_off_curve.length > 0 ? (

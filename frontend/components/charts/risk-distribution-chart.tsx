@@ -126,7 +126,7 @@ export function RiskDistributionChart({
             <span className="size-2.5 rounded-full bg-red-500 shrink-0" />
             <div className="flex flex-col">
               <span className="font-semibold text-red-700 dark:text-red-300">
-                High Risk (≥65%)
+                High Risk (≥27%)
               </span>
               <span className="text-[10px] text-muted-foreground">
                 Requires direct call & rescheduling outreach
@@ -149,7 +149,7 @@ export function RiskDistributionChart({
             <span className="size-2.5 rounded-full bg-amber-500 shrink-0" />
             <div className="flex flex-col">
               <span className="font-semibold text-amber-700 dark:text-amber-300">
-                Medium Risk (40–64%)
+                Medium Risk (17–26%)
               </span>
               <span className="text-[10px] text-muted-foreground">
                 Requires SMS + Email reminder 48h prior
@@ -172,7 +172,7 @@ export function RiskDistributionChart({
             <span className="size-2.5 rounded-full bg-emerald-500 shrink-0" />
             <div className="flex flex-col">
               <span className="font-semibold text-emerald-700 dark:text-emerald-300">
-                Low Risk (&lt;40%)
+                Low Risk (&lt;17%)
               </span>
               <span className="text-[10px] text-muted-foreground">
                 Standard automated reminder is sufficient

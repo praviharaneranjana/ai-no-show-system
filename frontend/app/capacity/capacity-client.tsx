@@ -11,6 +11,7 @@ import {
   Settings,
   Sparkles,
   Gauge,
+  ArrowLeft,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -66,6 +67,25 @@ export function CapacityClient({
   departments,
 }: CapacityClientProps) {
   const [activeTab, setActiveTab] = useState<CapacityTab>("overview");
+  const [previousTab, setPreviousTab] = useState<CapacityTab>("overview");
+  const [isMorphing, setIsMorphing] = useState(false);
+
+  const handleOpenWhatIf = () => {
+    setIsMorphing(true);
+    setPreviousTab(activeTab === "what-if" ? "overview" : activeTab);
+    setTimeout(() => {
+      setActiveTab("what-if");
+      setIsMorphing(false);
+    }, 200);
+  };
+
+  const handleBackToCapacity = () => {
+    setIsMorphing(true);
+    setTimeout(() => {
+      setActiveTab(previousTab === "what-if" ? "overview" : previousTab);
+      setIsMorphing(false);
+    }, 200);
+  };
 
   const tabs: Array<{
     id: CapacityTab;
@@ -82,9 +102,9 @@ export function CapacityClient({
       icon: UserCheck,
       badge: initialOffers.filter((o) => o.status === "proposed").length,
     },
-    { id: "forecast", label: "Forecast (30d)", icon: CalendarDays },
-    { id: "accuracy", label: "Actual vs. Predicted", icon: Target },
-    { id: "settings", label: "Capacity Settings", icon: Settings },
+    { id: "forecast", label: "Forecast", icon: CalendarDays },
+    { id: "accuracy", label: "AI Accuracy", icon: Target },
+    { id: "settings", label: "Settings", icon: Settings },
   ];
 
   return (
@@ -103,13 +123,13 @@ export function CapacityClient({
             </div>
           </div>
           <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
-            Prescriptive queue simulation &amp; calibrated slot buffering for Colombo National Hospital.
+            AI-powered overbooking recommendations and slot optimisation for your hospital.
           </p>
         </div>
 
         <div className="inline-flex items-center gap-2 self-start md:self-auto px-3.5 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
           <Sparkles className="size-3.5" />
-          <span>Queue Simulator · Monte Carlo (2,000 runs) · Lateness Curtailed</span>
+          <span>Live AI Queue Simulation · Updates in Real Time</span>
         </div>
       </div>
 
@@ -123,7 +143,14 @@ export function CapacityClient({
             <button
               key={tab.id}
               type="button"
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                if (tab.id === "what-if") {
+                  handleOpenWhatIf();
+                } else {
+                  if (activeTab === "what-if") setPreviousTab(tab.id);
+                  setActiveTab(tab.id);
+                }
+              }}
               className={cn(
                 "flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer",
                 isActive
@@ -150,8 +177,8 @@ export function CapacityClient({
         })}
       </div>
 
-      {/* Tab Content Panels */}
-      <div className="w-full">
+      {/* Tab Content Panels with Morph Animation */}
+      <div className={cn("w-full transition-opacity duration-200", isMorphing ? "opacity-30 scale-[0.99]" : "opacity-100 scale-100")}>
         {activeTab === "overview" && (
           <CapacityOverviewView
             optimization={initialOptimization}
@@ -164,7 +191,10 @@ export function CapacityClient({
         )}
 
         {activeTab === "what-if" && (
-          <WhatIfView sessions={initialSessions} />
+          <WhatIfView
+            sessions={initialSessions}
+            onBack={handleBackToCapacity}
+          />
         )}
 
         {activeTab === "offers" && (
@@ -191,6 +221,43 @@ export function CapacityClient({
             departments={departments}
           />
         )}
+      </div>
+
+      {/* Floating What-If Studio Trigger / Return Button (Using Header Sliders Icon) */}
+      <div className="fixed bottom-6 right-6 z-40 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={activeTab === "what-if" ? handleBackToCapacity : handleOpenWhatIf}
+          title={activeTab === "what-if" ? "Back to Capacity Engine" : "Open What-If Capacity Studio"}
+          className={cn(
+            "relative group flex items-center gap-2.5 rounded-full px-4 py-3.5 shadow-2xl transition-all duration-300 cursor-pointer border-2 border-white/20 select-none",
+            activeTab === "what-if"
+              ? "bg-gradient-to-tr from-slate-800 to-slate-950 text-white hover:from-slate-700 hover:to-slate-900 shadow-slate-900/50 hover:scale-105 active:scale-95"
+              : "bg-gradient-to-tr from-violet-600 via-indigo-600 to-blue-600 text-white hover:from-violet-500 hover:to-blue-500 shadow-indigo-600/40 hover:scale-110 active:scale-95"
+          )}
+        >
+          {activeTab === "what-if" ? (
+            <>
+              <ArrowLeft className="size-5 transition-transform group-hover:-translate-x-1" />
+              <span className="text-xs font-bold tracking-tight">
+                Back to Capacity
+              </span>
+            </>
+          ) : (
+            <>
+              {/* Exact Header / Tab Sliders Icon */}
+              <Sliders className="size-5 transition-transform group-hover:rotate-12" />
+              <span className="text-xs font-bold tracking-tight">
+                What-If Studio
+              </span>
+            </>
+          )}
+
+          {/* Morph Animation Ping Ring */}
+          {isMorphing && (
+            <span className="absolute inset-0 rounded-full border-2 border-primary animate-ping opacity-75" />
+          )}
+        </button>
       </div>
     </div>
   );

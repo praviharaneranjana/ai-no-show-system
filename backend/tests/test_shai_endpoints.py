@@ -170,7 +170,7 @@ def test_agent_detects_reschedule_intent_in_tamil(client):
 
 def test_agent_detects_telehealth_intent(client):
     patient = make_patient(client)
-    appointment = make_appointment(client, patient["id"])
+    appointment = make_appointment(client, patient["id"], department="Psychiatry")
 
     resp = client.post("/outreach/simulate-agent", json={
         "appointment_id": appointment["id"],
@@ -178,7 +178,28 @@ def test_agent_detects_telehealth_intent(client):
         "language": "en",
     })
     assert resp.status_code == 200, resp.text
-    assert resp.json()["intent"] == "telehealth"
+    body = resp.json()
+    assert body["intent"] == "telehealth"
+    assert "video telehealth" in body["agent_response"].lower()
+    assert "https://telehealth" in body["agent_response"]
+
+
+def test_agent_guards_against_telehealth_for_physical_specialties(client):
+    patient = make_patient(client)
+    appointment = make_appointment(client, patient["id"], department="Orthopedics", doctor_name="Dr. Anura Jayasinghe")
+
+    resp = client.post("/outreach/simulate-agent", json={
+        "appointment_id": appointment["id"],
+        "patient_message": "Can we do a video call instead?",
+        "language": "en",
+    })
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["intent"] == "telehealth"
+    # Clinical guardrail must explain physical exam requirement and offer in-person reschedule
+    assert "physical examination" in body["agent_response"].lower()
+    assert "cannot be conducted virtually" in body["agent_response"].lower()
+    assert "Telehealth Ineligible" in body["action_executed"]
 
 
 def test_agent_detects_prep_inquiry_intent(client):
@@ -324,3 +345,96 @@ def test_predict_uses_visit_history_and_heavy_rain(client):
 def shai_model_columns():
     from app.main import shai
     return shai.columns
+
+
+# ===================================
+# Hospital Expenses & CapEx/OpEx Tests
+# ===================================
+
+def test_expense_categories_and_expenses_crud(client):
+    # 1. Fetch categories (auto-seeded)
+    cats_resp = client.get("/expenses/categories")
+    assert cats_resp.status_code == 200, cats_resp.text
+    cats = cats_resp.json()
+    assert len(cats) >= 5
+    cat_keys = {c["key"] for c in cats}
+    assert "patient_incentives" in cat_keys
+    assert "tech_infrastructure" in cat_keys
+
+    # 2. Fetch default expenses (auto-seeded)
+    exp_resp = client.get("/expenses")
+    assert exp_resp.status_code == 200, exp_resp.text
+    expenses = exp_resp.json()
+    assert len(expenses) >= 3
+
+    # 3. Create a custom hospital giveaway expense
+    incentive_cat = next(c for c in cats if c["key"] == "patient_incentives")
+    new_exp_payload = {
+        "category_id": incentive_cat["id"],
+        "hospital_name": "Colombo Central Hospital",
+        "title": "PickMe Free Transport Vouchers for Cardiology Clinics",
+        "amount_lkr": 500000.0,
+        "recurrence": "annual",
+        "is_active": True,
+        "notes": "Pilot transport subsidy for elderly cardiac patients",
+    }
+    create_resp = client.post("/expenses", json=new_exp_payload)
+    assert create_resp.status_code == 200, create_resp.text
+    created = create_resp.json()
+    assert created["title"] == "PickMe Free Transport Vouchers for Cardiology Clinics"
+    assert created["amount_lkr"] == 500000.0
+
+    # 4. Patch expense (toggle active or edit amount)
+    patch_resp = client.patch(f"/expenses/{created['id']}", json={"amount_lkr": 600000.0, "is_active": False})
+    assert patch_resp.status_code == 200, patch_resp.text
+    updated = patch_resp.json()
+    assert updated["amount_lkr"] == 600000.0
+    assert updated["is_active"] is False
+
+    # 5. Delete expense
+    del_resp = client.delete(f"/expenses/{created['id']}")
+    assert del_resp.status_code == 200, del_resp.text
+
+
+def test_simulator_evaluate_with_custom_expenses(client):
+    payload = {
+        "daily_clinics_count": 30,
+        "avg_consultation_fee_lkr": 4500.0,
+        "baseline_no_show_rate": 0.18,
+        "ai_intervention_coverage": 0.25,
+        "custom_expenses": [
+            {
+                "category_key": "patient_incentives",
+                "title": "PickMe Vouchers",
+                "amount_lkr": 600000.0,
+                "recurrence": "annual",
+                "is_active": True,
+            },
+            {
+                "category_key": "tech_infrastructure",
+                "title": "SHAI License",
+                "amount_lkr": 2000000.0,
+                "recurrence": "annual",
+                "is_active": True,
+            },
+            {
+                "category_key": "telco_outreach",
+                "title": "Inactive SMS Pack",
+                "amount_lkr": 1000000.0,
+                "recurrence": "annual",
+                "is_active": False,
+            }
+        ]
+    }
+    resp = client.post("/simulator/evaluate", json=payload)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    # Total expenses should only sum active items: 600k + 2000k = 2.6M
+    assert data["total_annual_expenses_lkr"] == 2600000.0
+    assert data["gross_revenue_recovered_lkr"] > 0
+    assert data["true_net_profit_lkr"] > 0
+    assert data["payback_period_days"] > 0
+    assert data["expense_drag_pct"] > 0
+    assert data["expense_category_breakdown"]["patient_incentives"] == 600000.0
+    assert data["expense_category_breakdown"]["tech_infrastructure"] == 2000000.0
+

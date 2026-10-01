@@ -208,3 +208,108 @@
 .dark .bento-card-shadow {
   box-shadow: 0 4px 20px -4px rgba(0, 0, 0, 0.35);
 }
+@keyframes shai-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+@keyframes shai-spin {
+  to { transform: rotate(360deg); }
+}
+
+.shai-float {
+  animation: shai-float 7s ease-in-out infinite;
+}
+
+.shai-spin {
+  animation: shai-spin 90s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shai-float,
+  .shai-spin {
+    animation: none;
+  }
+}
+
+/* Floating pill animations for clinical AI consoles */
+@keyframes float-pill-1 {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(-7px) rotate(-1deg); }
+}
+@keyframes float-pill-2 {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(8px) rotate(1deg); }
+}
+@keyframes float-pill-3 {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(-6px) rotate(1.5deg); }
+}
+@keyframes float-pill-4 {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(7px) rotate(-1deg); }
+}
+
+.animate-float-1 { animation: float-pill-1 4.5s ease-in-out infinite; }
+.animate-float-2 { animation: float-pill-2 5.8s ease-in-out infinite; }
+.animate-float-3 { animation: float-pill-3 5.2s ease-in-out infinite; }
+.animate-float-4 { animation: float-pill-4 6.4s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-float-1,
+  .animate-float-2,
+  .animate-float-3,
+  .animate-float-4 {
+    animation: none;
+  }
+}
+
+/* ============================================================
+   SHAI Wordmark — Login Hero Animated Logo
+   CSS-only animation applied directly on the wordmark PNG:
+   1. shai-logo-pulse   – slow breathing glow via drop-shadow
+   2. shai-logo-shimmer – a diagonal shimmer pass across the logo
+   ============================================================ */
+
+@keyframes shai-logo-pulse {
+  0%, 100% {
+    filter: drop-shadow(0 0 8px rgba(139,124,246,0.5)) drop-shadow(0 0 24px rgba(91,124,250,0.25));
+    opacity: 1;
+  }
+  50% {
+    filter: drop-shadow(0 0 18px rgba(139,124,246,0.85)) drop-shadow(0 0 48px rgba(91,124,250,0.5));
+    opacity: 0.95;
+  }
+}
+
+.shai-wordmark-animate {
+  animation: shai-logo-pulse 3.5s ease-in-out infinite;
+  will-change: filter;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shai-wordmark-animate {
+    animation: none;
+    filter: drop-shadow(0 0 10px rgba(139,124,246,0.6));
+  }
+}
+
+/* Scale bounce on hover/focus for sidebar logo */
+.shai-logo-hover {
+  transition: transform 0.25s cubic-bezier(0.34,1.56,0.64,1), filter 0.25s ease;
+}
+.shai-logo-hover:hover {
+  transform: scale(1.04);
+  filter: drop-shadow(0 0 8px rgba(139,124,246,0.5));
+}
+
+/* Hide scrollbars everywhere; content remains scrollable */
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}

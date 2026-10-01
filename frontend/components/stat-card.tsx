@@ -91,21 +91,21 @@ export function StatCard({
           {renderIcon()}
         </div>
 
-        <div className="flex flex-col">
-          <span className="text-xs font-semibold text-muted-foreground leading-tight">
+        <div className="flex flex-col min-w-0">
+          <span className="text-xs font-semibold text-muted-foreground leading-tight truncate">
             {displayLabel}
           </span>
-          <div className="mt-1 flex items-baseline gap-2">
-            <span className="font-rounded text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground tabular-nums">
-              {value}
+          <div className="mt-1 flex flex-wrap items-baseline gap-1.5 sm:gap-2 min-w-0">
+            <span className="font-rounded text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground tabular-nums truncate">
+              {value === undefined || value === null || (typeof value === "number" && isNaN(value)) ? "—" : value}
             </span>
-            {subvalue && (
-              <span className="text-xs font-semibold text-muted-foreground">
+            {subvalue && !subvalue.includes("undefined") && !subvalue.includes("null") && (
+              <span className="text-xs font-semibold text-muted-foreground truncate">
                 {subvalue}
               </span>
             )}
             {deltaStr && (
-              <ChipDelta value={deltaStr} direction={computedDirection} />
+              <ChipDelta value={deltaStr} direction={computedDirection} className="shrink-0 text-[11px]" />
             )}
           </div>
         </div>

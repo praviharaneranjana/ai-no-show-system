@@ -19,7 +19,8 @@
     "appId": "org.shai.desktop",
     "productName": "SHAI",
     "directories": {
-      "output": "dist-electron"
+      "output": "dist-electron",
+      "buildResources": "build"
     },
     "files": [
       "electron/**/*",
@@ -27,10 +28,12 @@
       "package.json"
     ],
     "mac": {
-      "target": "dmg"
+      "target": "dmg",
+      "icon": "build/icon.icns"
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build/icon.ico"
     }
   },
   "dependencies": {

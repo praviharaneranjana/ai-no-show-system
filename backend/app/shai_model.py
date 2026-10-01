@@ -12,16 +12,44 @@ import math
 import os
 from datetime import date, datetime, timedelta, timezone
 
+# Prevent Matplotlib font scan hang in sandboxed/restricted environments
+if "MPLCONFIGDIR" not in os.environ:
+    os.environ["MPLCONFIGDIR"] = "/tmp/matplotlib_cache"
+_mpl_cache = os.environ["MPLCONFIGDIR"]
+os.makedirs(_mpl_cache, exist_ok=True)
+_fontlist = os.path.join(_mpl_cache, "fontlist-v3.11.0.json")
+if not os.path.exists(_fontlist):
+    try:
+        with open(_fontlist, "w") as _f:
+            _f.write('{"_version": "3.11.0", "default_size": null, "defaultWeight": "normal", "defaultFamily": {"ttf": "DejaVu Sans", "afm": "Helvetica"}, "ttflist": [], "afmlist": [], "__class__": "FontManager"}')
+    except OSError:
+        pass
+
 import numpy as np
 import pandas as pd
 import shap
 import xgboost as xgb
 
-BUNDLE_DIR = os.getenv("SHAI_BUNDLE_DIR", "models/shai_bundle")
+DEFAULT_BUNDLE_DIR = os.getenv("SHAI_BUNDLE_DIR", "models/shai_bundle")
 
 # Smoothing used by the notebook: prior_no_show_rate = (no_shows + K*BASE) / (appts + K)
 PRIOR_RATE_BASE = 0.16
 PRIOR_RATE_STRENGTH = 2
+
+
+def resolve_bundle_dir(bundle_dir: str | None = None) -> str:
+    path = bundle_dir or os.getenv("SHAI_BUNDLE_DIR", DEFAULT_BUNDLE_DIR)
+    if os.path.exists(os.path.join(path, "model.json")):
+        return path
+    candidates = [
+        os.path.join(os.path.dirname(__file__), "..", path),
+        os.path.join(os.path.dirname(__file__), "..", "models", os.path.basename(path)),
+        os.path.join("backend", path),
+    ]
+    for cand in candidates:
+        if os.path.exists(os.path.join(cand, "model.json")):
+            return os.path.abspath(cand)
+    return path
 
 
 def _load_json(bundle_dir: str, name: str) -> dict:
@@ -30,15 +58,18 @@ def _load_json(bundle_dir: str, name: str) -> dict:
 
 
 class ShaiModel:
-    def __init__(self, bundle_dir: str = BUNDLE_DIR):
-        if not os.path.exists(os.path.join(bundle_dir, "model.json")):
+    def __init__(self, bundle_dir: str | None = None):
+        self.bundle_dir = resolve_bundle_dir(bundle_dir)
+        if not os.path.exists(os.path.join(self.bundle_dir, "model.json")):
             raise FileNotFoundError(
-                f"SHAI model bundle not found in {bundle_dir}. "
-                "Export it from the Colab notebook (section 12) and unzip it there."
+                f"SHAI model bundle not found in {self.bundle_dir}. "
+                "Rebuild it via backend/train_shai.py or set SHAI_BUNDLE_DIR."
             )
-        schema = _load_json(bundle_dir, "feature_schema.json")
-        cal = _load_json(bundle_dir, "calibration.json")
-        thr = _load_json(bundle_dir, "thresholds.json")
+        schema = _load_json(self.bundle_dir, "feature_schema.json")
+        cal = _load_json(self.bundle_dir, "calibration.json")
+        thr = _load_json(self.bundle_dir, "thresholds.json")
+        metrics_path = os.path.join(self.bundle_dir, "metrics.json")
+        self.metrics: dict = _load_json(self.bundle_dir, "metrics.json") if os.path.exists(metrics_path) else {}
 
         self.columns: list[str] = schema["columns"]
         self.numeric: list[str] = schema["numeric"]
@@ -51,7 +82,7 @@ class ShaiModel:
         self.medium_threshold: float = thr["medium"]
 
         self.model = xgb.XGBClassifier()
-        self.model.load_model(os.path.join(bundle_dir, "model.json"))
+        self.model.load_model(os.path.join(self.bundle_dir, "model.json"))
         self.explainer = shap.TreeExplainer(self.model)
 
     # ---- scoring -------------------------------------------------------
@@ -104,6 +135,30 @@ class ShaiModel:
             contribs.sort(key=lambda d: abs(d["contribution"]), reverse=True)
             out.append(contribs[:top])
         return out
+
+    def info(self) -> dict:
+        """Metadata for the active model bundle (version, thresholds, benchmark metrics)."""
+        metrics = self.metrics.get("test_metrics_tuned") or self.metrics.get("test_metrics", {})
+        return {
+            "version": self.version,
+            "bundle_dir": self.bundle_dir,
+            "thresholds": {
+                "high": self.high_threshold,
+                "medium": self.medium_threshold,
+                "rule": "High = top 10% / Medium = next 20% of validation-set calibrated risk",
+            },
+            "metrics": {
+                "roc_auc": metrics.get("ROC_AUC"),
+                "pr_auc": metrics.get("PR_AUC"),
+                "brier": metrics.get("Brier"),
+                "lift_top20": metrics.get("Lift_top20"),
+                "recall_top20": metrics.get("Recall_top20"),
+                "precision_top20": metrics.get("Precision_top20"),
+            },
+            "data_source": self.metrics.get("data_source", "appointments_synthetic.csv"),
+            "n_rows": self.metrics.get("n_rows", len(self.columns)),
+            "date_range": self.metrics.get("date_range", {}),
+        }
 
 
 # ---- feature engineering ------------------------------------------------

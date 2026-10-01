@@ -17,30 +17,30 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 
 export default function ModelPage() {
   const modelMetrics = [
-    { label: "ROC-AUC Score", value: "0.672", sub: "Discrimination capability across all decision thresholds", status: "good" },
-    { label: "PR-AUC Score", value: "0.266", sub: "Precision-Recall performance vs 0.159 random baseline", status: "good" },
-    { label: "Brier Score", value: "0.124", sub: "Calibrated probability error (lower is better)", status: "optimal" },
-    { label: "Baseline No-Show", value: "15.9%", sub: "Hospital empirical historical non-attendance rate", status: "neutral" },
+    { label: "Prediction Skill", value: "0.672", sub: "How well the AI ranks patients by no-show risk (1.0 = perfect, 0.5 = random guess)", status: "good" },
+    { label: "High-Risk Detection", value: "0.266", sub: "Accuracy at identifying high-risk patients vs. random chance baseline (0.159)", status: "good" },
+    { label: "Prediction Accuracy", value: "0.124", sub: "Average error in the AI's probability estimates — lower is better", status: "optimal" },
+    { label: "Baseline No-Show Rate", value: "15.9%", sub: "Observed non-attendance rate before AI intervention", status: "neutral" },
   ];
 
   const thresholds = [
     {
       tier: "High Risk",
-      range: "> 0.23 calibrated probability",
+      range: "> 0.23 estimated risk score",
       cohort: "Top ~10% of bookings",
       action: "Mandatory phone outreach + smart overbooking candidate",
       color: "text-rose-400 bg-rose-500/10 border-rose-500/30",
     },
     {
       tier: "Medium Risk",
-      range: "0.13 – 0.23 calibrated probability",
+      range: "0.13 – 0.23 estimated risk score",
       cohort: "Next ~20% of bookings",
       action: "Proactive multilingual WhatsApp / SMS reminder",
       color: "text-amber-400 bg-amber-500/10 border-amber-500/30",
     },
     {
       tier: "Low Risk",
-      range: "< 0.13 calibrated probability",
+      range: "< 0.13 estimated risk score",
       cohort: "Remaining ~70% of bookings",
       action: "Standard digital confirmation (no staff intervention)",
       color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30",
@@ -48,12 +48,12 @@ export default function ModelPage() {
   ];
 
   const shapDrivers = [
-    { feature: "lead_days", impact: "+0.42 log-odds", desc: "Long booking horizon (>21 days) significantly increases forgetfulness", pct: 85 },
-    { feature: "prior_no_show_rate", impact: "+0.38 log-odds", desc: "Historical patient non-attendance frequency with Laplace smoothing", pct: 78 },
-    { feature: "distance_km", impact: "+0.25 log-odds", desc: "Patients travelling >20 km across Western/Southern province boundaries", pct: 55 },
-    { feature: "heavy_rain (Monsoon)", impact: "+0.18 log-odds", desc: "Severe localized Colombo rain causing transit disruptions", pct: 40 },
-    { feature: "age (Elderly)", impact: "-0.16 log-odds", desc: "Senior patients (60+) demonstrate significantly higher adherence", pct: 35, positive: true },
-    { feature: "sms_received", impact: "-0.12 log-odds", desc: "Proactive SMS delivery confirmation reduces friction", pct: 28, positive: true },
+    { feature: "Days Before Appointment", impact: "Strong ↑ No-Show", desc: "Patients booked more than 21 days out are much more likely to forget", pct: 85 },
+    { feature: "Past No-Show History", impact: "Strong ↑ No-Show", desc: "Patients who have missed appointments before are more likely to miss again", pct: 78 },
+    { feature: "Distance to Hospital", impact: "Moderate ↑ No-Show", desc: "Patients travelling more than 20 km are at higher risk of not attending", pct: 55 },
+    { feature: "Heavy Rain / Monsoon", impact: "Moderate ↑ No-Show", desc: "Severe Colombo rainfall correlates with travel disruptions and missed appointments", pct: 40 },
+    { feature: "Elderly Patient (60+)", impact: "↓ Risk (Good sign)", desc: "Senior patients tend to attend more reliably than younger age groups", pct: 35, positive: true },
+    { feature: "SMS Reminder Sent", impact: "↓ Risk (Good sign)", desc: "Sending an SMS reminder significantly reduces the chance of a no-show", pct: 28, positive: true },
   ];
 
   return (

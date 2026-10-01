@@ -1,238 +1,432 @@
-"""Seed the local database with sample patients, appointments, sessions, waitlist, and interventions.
+"""Seed the database with multi-hospital tenancy, real verified staff accounts,
+departments, doctors, sessions, patients, appointments, and capacity settings.
 
-Run from backend/ with the venv active: python seed.py
+Hospitals seeded:
+1. Asiri Central Hospital (Colombo 10, domain: asiri.lk)
+2. National Hospital of Sri Lanka (NHSL) (Colombo 08, domain: nhsl.health.gov.lk)
+
+Staff accounts seeded:
+- Platform Owner: owner@shai.health / ShaiAdmin2026!
+- Asiri Central:
+    - Front Desk: kavindi@asiri.lk / HospitalStaff2026!
+    - Manager: asela@asiri.lk / HospitalStaff2026!
+    - Analyst: nipun@asiri.lk / HospitalStaff2026!
+    - Admin: dilani@asiri.lk / HospitalStaff2026!
+    - Pending: tharindu@asiri.lk / HospitalStaff2026!
+- NHSL:
+    - Front Desk: sarath@nhsl.health.gov.lk / HospitalStaff2026!
+    - Manager: chithra@nhsl.health.gov.lk / HospitalStaff2026!
+    - Admin: anura@nhsl.health.gov.lk / HospitalStaff2026!
 """
 import uuid
-from datetime import date, timedelta
-from app.database import Base, SessionLocal, engine
-from app.models import Appointment, DoctorSession, Intervention, Patient, Prediction, WaitlistEntry
+from datetime import date, datetime, timedelta, timezone
 
-SAMPLE_PATIENTS = [
-    dict(
-        uhid="UHID-ASIRI-9812",
-        full_name="Kusumawathi Gunaratne",
-        date_of_birth=date(1958, 4, 12),
-        gender="F",
-        phone="+94771234567",
-        email="kusum@example.com",
-        city="Colombo 07",
-        distance_km=4.2,
-        scholarship=False,
-        hypertension=True,
-        diabetes=True,
-        alcoholism=False,
-        handicap=0,
-    ),
-    dict(
-        uhid="UHID-HEMAS-4431",
-        full_name="Nimal Perera",
-        date_of_birth=date(1975, 11, 2),
-        gender="M",
-        phone="+94772345678",
-        email="nimal@example.com",
-        city="Wattala",
-        distance_km=18.5,
-        scholarship=False,
-        hypertension=True,
-        diabetes=False,
-        alcoholism=False,
-        handicap=0,
-    ),
-    dict(
-        uhid="UHID-ASIRI-1092",
-        full_name="Ishara Silva",
-        date_of_birth=date(2001, 7, 19),
-        gender="F",
-        phone="+94773456789",
-        email="ishara@example.com",
-        city="Nugegoda",
-        distance_km=7.8,
-        scholarship=False,
-        hypertension=False,
-        diabetes=False,
-        alcoholism=False,
-        handicap=0,
-    ),
-    dict(
-        uhid="UHID-HEMAS-8812",
-        full_name="Mohamed Rizwan",
-        date_of_birth=date(1984, 2, 28),
-        gender="M",
-        phone="+94774567890",
-        email="rizwan@example.com",
-        city="Dehiwala",
-        distance_km=11.0,
-        scholarship=False,
-        hypertension=False,
-        diabetes=True,
-        alcoholism=False,
-        handicap=0,
-    ),
-    dict(
-        uhid="UHID-ASIRI-5541",
-        full_name="Priyani Weerasinghe",
-        date_of_birth=date(1962, 9, 15),
-        gender="F",
-        phone="+94775678901",
-        email="priyani@example.com",
-        city="Negombo",
-        distance_km=34.0,
-        scholarship=False,
-        hypertension=True,
-        diabetes=True,
-        alcoholism=False,
-        handicap=1,
-    ),
-]
+from app.database import Base, SessionLocal, engine
+from app import models, security
+
+ASIRI_ID = uuid.UUID("a0000000-0000-0000-0000-000000000001")
+NHSL_ID = uuid.UUID("a0000000-0000-0000-0000-000000000002")
+
+STAFF_PASSWORD = "HospitalStaff2026!"
+OWNER_PASSWORD = "ShaiAdmin2026!"
 
 
 def seed():
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
+    now_utc = datetime.now(timezone.utc)
+    today = date.today()
+
     try:
-        # Seed Doctor Sessions if missing
-        if db.query(DoctorSession).count() == 0:
-            today = date.today()
-            sessions = [
-                DoctorSession(
-                    doctor_name="Dr. Rohan Perera",
-                    specialty="Cardiology",
-                    room_number="Room 204 (Asiri Central)",
-                    session_date=today,
-                    scheduled_start_time="17:00",
-                    status="delayed",
-                    delay_minutes=25,
-                    avg_consultation_mins=12,
-                    max_capacity=25,
-                ),
-                DoctorSession(
-                    doctor_name="Dr. Neluka Fernando",
-                    specialty="Neurology",
-                    room_number="Room 108 (Hemas Wattala)",
-                    session_date=today,
-                    scheduled_start_time="18:00",
-                    status="on_time",
-                    delay_minutes=0,
-                    avg_consultation_mins=15,
-                    max_capacity=20,
-                ),
-                DoctorSession(
-                    doctor_name="Dr. Anura Jayasinghe",
-                    specialty="Orthopedics",
-                    room_number="Room 312 (Asiri Surgical)",
-                    session_date=today,
-                    scheduled_start_time="16:30",
-                    status="on_time",
-                    delay_minutes=0,
-                    avg_consultation_mins=10,
-                    max_capacity=30,
-                ),
-            ]
-            for s in sessions:
-                db.add(s)
-            db.commit()
-
-        # Seed Waitlist if missing
-        if db.query(WaitlistEntry).count() == 0:
-            waitlist = [
-                WaitlistEntry(
-                    patient_name="Sunil Jayawardena",
-                    patient_phone="+94774567890",
-                    specialty="Cardiology",
-                    doctor_name="Dr. Rohan Perera",
-                    urgency_level="High",
-                    preferred_days="Weekday evenings",
-                    status="waiting",
-                ),
-                WaitlistEntry(
-                    patient_name="Malini Dias",
-                    patient_phone="+94775678901",
-                    specialty="Neurology",
-                    doctor_name="Dr. Neluka Fernando",
-                    urgency_level="Normal",
-                    preferred_days="Any evening",
-                    status="waiting",
-                ),
-                WaitlistEntry(
-                    patient_name="Chaminda Vaas",
-                    patient_phone="+94776789012",
-                    specialty="Orthopedics",
-                    doctor_name="Dr. Anura Jayasinghe",
-                    urgency_level="Routine",
-                    preferred_days="Saturdays",
-                    status="waiting",
-                ),
-            ]
-            for w in waitlist:
-                db.add(w)
-            db.commit()
-
-        if db.query(Patient).count() > 0:
-            print("Database already has patients — checking complete.")
-            return
-
-        today = date.today()
-        doctors = ["Dr. Rohan Perera", "Dr. Neluka Fernando", "Dr. Rohan Perera", "Dr. Anura Jayasinghe", "Dr. Rohan Perera"]
-        departments = ["Cardiology", "Neurology", "Cardiology", "Orthopedics", "Cardiology"]
-        channels = ["Doc990", "eChannelling", "Asiri MyHealth", "Doc990", "Hospital Counter"]
-        payments = ["Credit Card (NSR Protected)", "Credit Card", "Corporate Insurance", "Credit Card (NSR Protected)", "Cash"]
-        actions = ["Confirmed via WhatsApp", "Pending", "Rescheduled via AI", "Confirmed via WhatsApp", "Telehealth Converted"]
-
-        for i, patient_data in enumerate(SAMPLE_PATIENTS):
-            patient = Patient(**patient_data)
-            db.add(patient)
-            db.flush()
-
-            appt = Appointment(
-                patient_id=patient.id,
-                scheduled_day=today - timedelta(days=5),
-                appointment_day=today if i < 2 else today + timedelta(days=2 + i),
-                department=departments[i],
-                doctor_name=doctors[i],
-                booking_channel=channels[i],
-                payment_mode=payments[i],
-                scheduled_time=f"{17 + (i % 3)}:{15 * (i % 4):02d}",
-                queue_number=i + 1,
-                ai_action_status=actions[i],
-                sms_received=True,
-                status="scheduled",
+        # 1. Seed Hospitals
+        asiri = db.get(models.Hospital, ASIRI_ID)
+        if not asiri:
+            asiri = models.Hospital(
+                id=ASIRI_ID,
+                slug="asiri-central",
+                name="Asiri Central Hospital",
+                short_name="Asiri Central",
+                legal_name="Asiri Hospital Holdings PLC",
+                brand_color="#8B7CF6",
+                established_date=date(2008, 10, 1),
+                hospital_type="private",
+                registration_number="PV-8921-CMB",
+                bed_count=264,
+                address_line1="114 Norris Canal Road",
+                address_line2="Colombo 10",
+                city="Colombo 10",
+                district="Colombo",
+                province="Western",
+                postal_code="01000",
+                country="Sri Lanka",
+                latitude=6.9190,
+                longitude=79.8668,
+                timezone="Asia/Colombo",
+                currency="LKR",
+                website="https://asirihealth.com",
+                main_phone="+94114524400",
+                main_email="info.central@asiri.lk",
+                emergency_phone="+94114524444",
+                about="Premier tertiary healthcare provider in Colombo featuring state-of-the-art diagnostic and clinical care.",
+                accreditations=["JCI Accredited", "ISO 9001:2015", "ACHS International"],
+                go_live_date=date(2024, 1, 1),
+                is_active=True,
             )
-            db.add(appt)
+            db.add(asiri)
             db.flush()
 
-            # Add sample predictions
-            risk = 0.78 if i == 4 else (0.68 if i == 1 else (0.35 if i == 0 else 0.15))
-            cat = "High" if risk >= 0.65 else ("Medium" if risk >= 0.40 else "Low")
-            db.add(Prediction(
-                appointment_id=appt.id,
-                risk_score=risk,
-                risk_category=cat,
-                explanation={"contributions": [
-                    {"feature": "DaysAhead", "contribution": 0.25, "value": 7.0},
-                    {"feature": "Age", "contribution": -0.15, "value": float(patient_data["date_of_birth"].year)},
-                    {"feature": "SMS_received", "contribution": -0.10, "value": 1.0},
-                ]},
-                recommendation="High risk: Engage via trilingual WhatsApp agent + propose dynamic overbooking slot." if cat == "High" else "Low risk: Routine WhatsApp reminder sent.",
-            ))
+        nhsl = db.get(models.Hospital, NHSL_ID)
+        if not nhsl:
+            nhsl = models.Hospital(
+                id=NHSL_ID,
+                slug="nhsl-colombo",
+                name="National Hospital of Sri Lanka",
+                short_name="NHSL Colombo",
+                legal_name="Ministry of Health Sri Lanka - NHSL",
+                brand_color="#0EA5E9",
+                established_date=date(1864, 3, 15),
+                hospital_type="public",
+                registration_number="MOH-GOV-0001",
+                bed_count=3400,
+                address_line1="Regent Street / E W Perera Mawatha",
+                address_line2="Colombo 08",
+                city="Colombo 08",
+                district="Colombo",
+                province="Western",
+                postal_code="00800",
+                country="Sri Lanka",
+                latitude=6.9195,
+                longitude=79.8672,
+                timezone="Asia/Colombo",
+                currency="LKR",
+                website="https://nhsl.health.gov.lk",
+                main_phone="+94112691111",
+                main_email="director@nhsl.health.gov.lk",
+                emergency_phone="1990",
+                about="The leading national referral tertiary public teaching hospital in Sri Lanka.",
+                accreditations=["Ministry of Health Certified", "WHO Teaching Center"],
+                go_live_date=date(2024, 2, 1),
+                is_active=True,
+            )
+            db.add(nhsl)
+            db.flush()
 
-            # Add sample intervention
-            if i in [0, 2, 4]:
-                db.add(Intervention(
-                    appointment_id=appt.id,
-                    channel="WhatsApp",
-                    language="si" if i == 2 else "en",
-                    status="confirmed" if i == 0 else ("rescheduled" if i == 2 else "telehealth_requested"),
-                    patient_reply="Mata heta enna bahe" if i == 2 else "Confirmed, will attend.",
-                    intent_detected="Reschedule Request (Sinhala)" if i == 2 else "Confirmation (English)",
-                    offered_slot="Saturday 10:00 AM (Token #8)" if i == 2 else "Slot Confirmed",
+        # 2. Seed Email Domains
+        domains = [
+            (ASIRI_ID, "asiri.lk", True),
+            (ASIRI_ID, "asiricentral.lk", False),
+            (NHSL_ID, "nhsl.health.gov.lk", True),
+            (NHSL_ID, "health.gov.lk", False),
+        ]
+        for hid, dom, is_prim in domains:
+            if not db.query(models.HospitalEmailDomain).filter_by(domain=dom).first():
+                db.add(models.HospitalEmailDomain(
+                    hospital_id=hid,
+                    domain=dom,
+                    is_primary=is_prim,
+                    is_verified=True,
+                ))
+        db.flush()
+
+        # 3. Seed Users & Memberships
+        def get_or_create_user(email: str, full_name: str, base_role: str, phone: str | None = None) -> models.User:
+            u = db.query(models.User).filter_by(email=email.lower().strip()).first()
+            if not u:
+                u = models.User(
+                    email=email.lower().strip(),
+                    full_name=full_name,
+                    role=base_role,
+                    phone=phone,
+                    password_hash=security.hash_password(STAFF_PASSWORD if base_role != "platform_owner" else OWNER_PASSWORD),
+                    must_change_password=False,
+                    is_active=True,
+                )
+                db.add(u)
+                db.flush()
+            return u
+
+        # Platform owner
+        owner = get_or_create_user("owner@shai.health", "System Architect (Owner)", "platform_owner", "+94770000000")
+
+        # Asiri users
+        asiri_admin = get_or_create_user("dilani@asiri.lk", "Dilani Wickramasinghe", "admin", "+94771112222")
+        asiri_manager = get_or_create_user("asela@asiri.lk", "Asela Samarasekera", "manager", "+94772223333")
+        asiri_analyst = get_or_create_user("nipun@asiri.lk", "Nipun Bandara", "analyst", "+94773334444")
+        asiri_front = get_or_create_user("kavindi@asiri.lk", "Kavindi Jayasuriya", "front_desk", "+94774445555")
+        asiri_pending = get_or_create_user("tharindu@asiri.lk", "Tharindu Ekanayake", "front_desk", "+94775556666")
+
+        # NHSL users
+        nhsl_admin = get_or_create_user("anura@nhsl.health.gov.lk", "Dr. Anura Kumara", "admin", "+94776667777")
+        nhsl_manager = get_or_create_user("chithra@nhsl.health.gov.lk", "Chithra Dissanayake", "manager", "+94777778888")
+        nhsl_front = get_or_create_user("sarath@nhsl.health.gov.lk", "Sarath Gunawardena", "front_desk", "+94778889999")
+
+        # Memberships
+        asiri_memberships = [
+            (asiri_admin.id, "admin", "active", "Director of Hospital Operations", asiri_admin.id),
+            (asiri_manager.id, "manager", "active", "Clinic Operations Manager", asiri_admin.id),
+            (asiri_analyst.id, "analyst", "active", "Healthcare Data Analyst", asiri_admin.id),
+            (asiri_front.id, "front_desk", "active", "Senior Reception Officer", asiri_admin.id),
+            (asiri_pending.id, "front_desk", "pending", "Junior Receptionist", None),
+        ]
+        for uid, role, status, title, approver in asiri_memberships:
+            m = db.query(models.HospitalMembership).filter_by(user_id=uid, hospital_id=ASIRI_ID).first()
+            if not m:
+                db.add(models.HospitalMembership(
+                    hospital_id=ASIRI_ID,
+                    user_id=uid,
+                    role=role,
+                    status=status,
+                    job_title=title,
+                    is_active=(status == "active"),
+                    approved_at=now_utc if status == "active" else None,
+                    approved_by_user_id=approver,
                 ))
 
+        nhsl_memberships = [
+            (nhsl_admin.id, "admin", "active", "Chief Medical Superintendent", nhsl_admin.id),
+            (nhsl_manager.id, "manager", "active", "Deputy Clinical Director", nhsl_admin.id),
+            (nhsl_front.id, "front_desk", "active", "Outpatient Registration Lead", nhsl_admin.id),
+        ]
+        for uid, role, status, title, approver in nhsl_memberships:
+            m = db.query(models.HospitalMembership).filter_by(user_id=uid, hospital_id=NHSL_ID).first()
+            if not m:
+                db.add(models.HospitalMembership(
+                    hospital_id=NHSL_ID,
+                    user_id=uid,
+                    role=role,
+                    status=status,
+                    job_title=title,
+                    is_active=(status == "active"),
+                    approved_at=now_utc if status == "active" else None,
+                    approved_by_user_id=approver,
+                ))
+        db.flush()
+
+        # 4. Seed Departments & Doctors
+        # Asiri Departments
+        asiri_depts = ["Cardiology", "Neurology", "Orthopedics", "ENT"]
+        dept_map = {}
+        for dname in asiri_depts:
+            dept = db.query(models.Department).filter_by(name=dname).first()
+            if not dept:
+                dept = models.Department(
+                    hospital_id=ASIRI_ID,
+                    name=dname,
+                    model_category=dname,
+                    icon="stethoscope",
+                    active=True,
+                    default_consultation_fee_lkr=4500.0,
+                )
+                db.add(dept)
+                db.flush()
+            else:
+                dept.hospital_id = ASIRI_ID
+            dept_map[dname] = dept
+
+        # Asiri Doctors
+        asiri_docs_data = [
+            ("Dr. Rohan Perera", "Cardiology", "Consultant Cardiologist", 4500.0),
+            ("Dr. Neluka Fernando", "Neurology", "Consultant Neurologist", 5000.0),
+            ("Dr. Anura Jayasinghe", "Orthopedics", "Consultant Orthopedic Surgeon", 4000.0),
+            ("Dr. Preethi Wijesinghe", "ENT", "Consultant ENT Surgeon", 3800.0),
+        ]
+        for doc_name, dname, title, fee in asiri_docs_data:
+            doc = db.query(models.Doctor).filter_by(full_name=doc_name, hospital_id=ASIRI_ID).first()
+            if not doc:
+                db.add(models.Doctor(
+                    hospital_id=ASIRI_ID,
+                    full_name=doc_name,
+                    department_id=dept_map[dname].id,
+                    title=title,
+                    consultation_fee_lkr=fee,
+                    active=True,
+                ))
+
+        # NHSL Departments
+        nhsl_depts = ["General Medicine", "NHSL Cardiology", "General Surgery"]
+        nhsl_dept_map = {}
+        for dname in nhsl_depts:
+            dept = db.query(models.Department).filter_by(name=dname).first()
+            if not dept:
+                dept = models.Department(
+                    hospital_id=NHSL_ID,
+                    name=dname,
+                    model_category="Cardiology" if "Cardiology" in dname else dname,
+                    icon="stethoscope",
+                    active=True,
+                    default_consultation_fee_lkr=0.0,
+                )
+                db.add(dept)
+                db.flush()
+            else:
+                dept.hospital_id = NHSL_ID
+            nhsl_dept_map[dname] = dept
+
+        # NHSL Doctors
+        nhsl_docs_data = [
+            ("Dr. Jayalath Perera", "NHSL Cardiology", "Consultant Cardiologist", 0.0),
+            ("Dr. Shirani Senanayake", "General Medicine", "Senior Consultant Physician", 0.0),
+            ("Dr. Bandula Samarasinghe", "General Surgery", "Consultant Surgeon", 0.0),
+        ]
+        for doc_name, dname, title, fee in nhsl_docs_data:
+            doc = db.query(models.Doctor).filter_by(full_name=doc_name, hospital_id=NHSL_ID).first()
+            if not doc:
+                db.add(models.Doctor(
+                    hospital_id=NHSL_ID,
+                    full_name=doc_name,
+                    department_id=nhsl_dept_map[dname].id,
+                    title=title,
+                    consultation_fee_lkr=fee,
+                    active=True,
+                ))
+        db.flush()
+
+        # Seed clinic sessions for doctors across Monday-Saturday
+        from datetime import time as dt_time
+        all_seeded_doctors = db.query(models.Doctor).filter(models.Doctor.hospital_id.in_([ASIRI_ID, NHSL_ID])).all()
+        session_configs = [
+            ("Morning", dt_time(9, 0), dt_time(12, 0), 20),
+            ("Afternoon", dt_time(14, 0), dt_time(17, 0), 25),
+            ("Evening", dt_time(17, 30), dt_time(20, 30), 20),
+        ]
+        for d in all_seeded_doctors:
+            for wday in range(6):  # Monday (0) to Saturday (5)
+                for label, s_time, e_time, max_pts in session_configs:
+                    exists = (
+                        db.query(models.DoctorClinicSession)
+                        .filter_by(doctor_id=d.id, weekday=wday, label=label)
+                        .first()
+                    )
+                    if not exists:
+                        db.add(
+                            models.DoctorClinicSession(
+                                hospital_id=d.hospital_id,
+                                doctor_id=d.id,
+                                weekday=wday,
+                                label=label,
+                                start_time=s_time,
+                                end_time=e_time,
+                                room=f"Room {101 + (wday % 8)} ({'Asiri Central' if d.hospital_id == ASIRI_ID else 'NHSL OPD'})",
+                                max_patients=max_pts,
+                                slot_minutes=12,
+                                delay_minutes=0,
+                                delay_status="on_time",
+                                active=True,
+                            )
+                        )
+        db.flush()
+
+        # 5. Seed Capacity Settings for both hospitals
+        for hid in [ASIRI_ID, NHSL_ID]:
+            if db.query(models.CapacitySetting).filter_by(hospital_id=hid).count() == 0:
+                db.add(models.CapacitySetting(
+                    hospital_id=hid,
+                    scope="global",
+                    safety_factor=0.75,
+                    max_overbook_per_slot=2,
+                    max_overbook_per_session=4,
+                    wait_tolerance_mins=15,
+                    consultation_fee_lkr=4500.0 if hid == ASIRI_ID else 0.0,
+                    badge_safe_mins=8,
+                    badge_moderate_mins=15,
+                    auto_assign_waitlist=False,
+                    sim_runs=2000,
+                ))
+
+        # 6. Seed Patients & Appointments for NHSL to demonstrate tenant isolation
+        nhsl_patient_count = db.query(models.Patient).filter_by(hospital_id=NHSL_ID).count()
+        if nhsl_patient_count == 0:
+            nhsl_patients = [
+                dict(
+                    hospital_id=NHSL_ID,
+                    uhid="UHID-NHSL-1001",
+                    full_name="Gamini Wickramasinghe",
+                    date_of_birth=date(1965, 8, 22),
+                    gender="M",
+                    phone="+94711122233",
+                    email="gamini@nhsl-patient.lk",
+                    city="Kandy",
+                    distance_km=115.0,
+                    scholarship=True,
+                    hypertension=True,
+                    diabetes=True,
+                    alcoholism=False,
+                    handicap=0,
+                ),
+                dict(
+                    hospital_id=NHSL_ID,
+                    uhid="UHID-NHSL-1002",
+                    full_name="Damayanthi Alwis",
+                    date_of_birth=date(1972, 1, 14),
+                    gender="F",
+                    phone="+94712233344",
+                    email="damayanthi@nhsl-patient.lk",
+                    city="Galle",
+                    distance_km=118.0,
+                    scholarship=False,
+                    hypertension=False,
+                    diabetes=True,
+                    alcoholism=False,
+                    handicap=0,
+                ),
+            ]
+            for pdata in nhsl_patients:
+                p = models.Patient(**pdata)
+                db.add(p)
+                db.flush()
+
+                appt = models.Appointment(
+                    hospital_id=NHSL_ID,
+                    patient_id=p.id,
+                    scheduled_day=today - timedelta(days=3),
+                    appointment_day=today,
+                    department="NHSL Cardiology",
+                    doctor_name="Dr. Jayalath Perera",
+                    booking_channel="Hospital Counter",
+                    payment_mode="Government Subsidized",
+                    scheduled_time="09:00",
+                    queue_number=1,
+                    ai_action_status="Confirmed via WhatsApp",
+                    sms_received=True,
+                    status="scheduled",
+                )
+                db.add(appt)
+                db.flush()
+
+                db.add(models.Prediction(
+                    hospital_id=NHSL_ID,
+                    appointment_id=appt.id,
+                    risk_score=0.42,
+                    risk_category="Medium",
+                    explanation={"contributions": [
+                        {"feature": "DistanceKm", "contribution": 0.30, "value": 115.0},
+                        {"feature": "Age", "contribution": -0.10, "value": 59.0},
+                    ]},
+                    recommendation="Medium risk: Send Sinhala reminder SMS.",
+                ))
+
+        # Ensure all existing Asiri patients and appointments have hospital_id set
+        db.query(models.Patient).filter(models.Patient.hospital_id.is_(None)).update({"hospital_id": ASIRI_ID})
+        db.query(models.Appointment).filter(models.Appointment.hospital_id.is_(None)).update({"hospital_id": ASIRI_ID})
+        db.query(models.Doctor).filter(models.Doctor.hospital_id.is_(None)).update({"hospital_id": ASIRI_ID})
+        db.query(models.Department).filter(models.Department.hospital_id.is_(None)).update({"hospital_id": ASIRI_ID})
+        db.query(models.Prediction).filter(models.Prediction.hospital_id.is_(None)).update({"hospital_id": ASIRI_ID})
+
         db.commit()
-        print(f"Seeded {len(SAMPLE_PATIENTS)} patients with full SHAI context.")
+        print("Successfully seeded multi-hospital data & real user credentials:")
+        print("  - Asiri Admin: dilani@asiri.lk / HospitalStaff2026!")
+        print("  - Asiri Manager: asela@asiri.lk / HospitalStaff2026!")
+        print("  - Asiri Analyst: nipun@asiri.lk / HospitalStaff2026!")
+        print("  - Asiri Front Desk: kavindi@asiri.lk / HospitalStaff2026!")
+        print("  - Asiri Pending: tharindu@asiri.lk / HospitalStaff2026!")
+        print("  - NHSL Admin: anura@nhsl.health.gov.lk / HospitalStaff2026!")
+        print("  - NHSL Manager: chithra@nhsl.health.gov.lk / HospitalStaff2026!")
+        print("  - NHSL Front Desk: sarath@nhsl.health.gov.lk / HospitalStaff2026!")
+        print("  - Platform Owner: owner@shai.health / ShaiAdmin2026!")
+
     finally:
         db.close()
 
 
 if __name__ == "__main__":
     seed()
-

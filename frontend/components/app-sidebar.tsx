@@ -13,6 +13,9 @@ import {
   LogOut,
   ChevronRight,
   Sparkles,
+  Building2,
+  MapPin,
+  ShieldCheck,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -40,22 +43,29 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
     },
     () => {
       try {
-        return `${localStorage.getItem("shai_user_name") ?? ""}|${localStorage.getItem("shai_user_role") ?? ""}`;
+        return `${localStorage.getItem("shai_user_name") ?? ""}|${localStorage.getItem("shai_user_role") ?? ""}|${localStorage.getItem("shai_hospital_name") ?? ""}|${localStorage.getItem("shai_hospital_code") ?? ""}`;
       } catch {
-        return "|";
+        return "|||";
       }
     },
-    () => "|"
+    () => "|||"
   );
 
-  const [storedName, storedRole] = userKey.split("|");
+  const [storedName, storedRole, storedHospitalName, storedHospitalCode] = userKey.split("|");
   const userName = storedName || "Staff Member";
+  const hospitalName = storedHospitalName || "Asiri Central Hospital";
+  const hospitalCode = storedHospitalCode || "ACH";
+
   const userRole =
-    storedRole === "admin"
-      ? "Administrator · Colombo"
+    storedRole === "platform_owner"
+      ? "Platform Owner"
+      : storedRole === "admin"
+      ? `Hospital Admin · ${hospitalCode}`
       : storedRole === "manager"
-      ? "Clinical Ops Manager"
-      : "Front Desk · Colombo";
+      ? `Clinical Ops Manager · ${hospitalCode}`
+      : storedRole === "analyst"
+      ? `Data Analyst · ${hospitalCode}`
+      : `Front Desk · ${hospitalCode}`;
 
   const NAV_ITEMS = [
     {
@@ -75,6 +85,7 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
       label: "Capacity",
       icon: Gauge,
       exact: false,
+      hideForFrontDesk: true,
     },
     {
       href: "/outreach",
@@ -87,12 +98,14 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
       label: "ROI Simulator",
       icon: Calculator,
       exact: false,
+      hideForFrontDesk: true,
     },
     {
       href: "/analytics",
       label: "Analytics",
       icon: BarChart3,
       exact: false,
+      hideForFrontDesk: true,
     },
     {
       href: "/predictions",
@@ -106,11 +119,17 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
       icon: PlusCircle,
       exact: false,
     },
+    {
+      href: "/admin/staff",
+      label: "Staff & Access",
+      icon: ShieldCheck,
+      exact: false,
+      adminOnly: true,
+    },
   ];
 
-  // Pages only managers/admins may open. The backend enforces the same rule; this just hides the links.
-  const MANAGER_ONLY = new Set(["/capacity", "/simulator"]);
-  const isManager = hasRole(storedRole as SessionRole, "manager");
+  const isFrontDesk = storedRole === "front_desk";
+  const isAdminOrOwner = storedRole === "admin" || storedRole === "platform_owner";
   const [navCounts, setNavCounts] = useState<CapacityNavCounts | null>(null);
 
   useEffect(() => {
@@ -170,7 +189,11 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
 
         {/* Navigation Items (Dropify-style active gradient pill with chevron) */}
         <nav className="flex flex-col gap-1.5" aria-label="Main Navigation">
-          {NAV_ITEMS.filter((item) => isManager || !MANAGER_ONLY.has(item.href)).map((item) => {
+          {NAV_ITEMS.filter((item) => {
+            if (item.adminOnly && !isAdminOrOwner) return false;
+            if (item.hideForFrontDesk && isFrontDesk) return false;
+            return true;
+          }).map((item) => {
             const Icon = item.icon;
             const isActive = item.exact
               ? pathname === item.href
@@ -235,8 +258,35 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
         </nav>
       </div>
 
-      {/* Bottom Area: Promo Card, Profile & Theme Toggle */}
-      <div className="flex shrink-0 flex-col gap-4 pt-4 border-t border-[#F0F0F4] dark:border-[#272738]">
+      {/* Bottom Area: Hospital Tab, Promo Card, Profile & Theme Toggle */}
+      <div className="flex shrink-0 flex-col gap-3 pt-3 border-t border-[#F0F0F4] dark:border-[#272738]">
+        {/* Hospital Identity Tab / Card (P1-6) - Clickable to /hospital */}
+        <Link
+          href="/hospital"
+          onClick={onItemClick}
+          className="group relative block overflow-hidden rounded-2xl border border-[#F0F0F4] bg-[#FBFBFE] p-3 transition-all hover:border-[#8B7CF6]/60 hover:bg-white hover:shadow-sm dark:border-[#272738] dark:bg-[#1D1D2B] dark:hover:border-[#8B7CF6]/40 dark:hover:bg-[#222234] cursor-pointer"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#8B7CF6] to-[#5B7CFA] text-white shadow-sm font-bold text-xs">
+              <Building2 className="size-4" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-[#171725] dark:text-white truncate group-hover:text-[#8B7CF6] transition-colors">
+                  {hospitalName}
+                </span>
+                <ChevronRight className="size-3 text-[#8C8CA1] group-hover:text-[#8B7CF6] group-hover:translate-x-0.5 transition-all shrink-0" />
+              </div>
+              <div className="flex items-center gap-1 text-[10px] text-[#78788C] dark:text-[#A0A0B8] truncate">
+                <MapPin className="size-2.5 shrink-0 text-[#8B7CF6]" />
+                <span className="truncate">Sri Lanka</span>
+                <span className="text-slate-300 dark:text-slate-600">·</span>
+                <span className="font-semibold text-emerald-600 dark:text-emerald-400">Connected</span>
+              </div>
+            </div>
+          </div>
+        </Link>
+
         {/* Model Promo Card (§0 Thesis Honesty Rule) - Clickable to /model */}
         <Link
           href="/model"

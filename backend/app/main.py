@@ -15,7 +15,7 @@ import pandas as pd
 
 from contextlib import asynccontextmanager
 
-from app import auth, geo, insights, models, outreach_drafter, schemas, shai_model
+from app import auth, geo, hospital, insights, models, outreach_drafter, schemas, shai_model
 from app.his import get_his_connector, connector as his_connector
 from app.services import capacity_service, geo_service, his_sync, prediction_runner, scoring
 from app.services.uhid import LK_TZ
@@ -69,6 +69,57 @@ if not API_KEY:
     )
 
 PUBLIC_PATHS = auth.PUBLIC_PATHS
+
+
+_DRIVER_LABELS = {
+    "age": ("Age", "{:.0f} yrs"),
+    "distance_km": ("Distance", "{:.1f} km"),
+    "lead_days": ("Lead time", "{:.0f} days"),
+    "appt_hour": ("Appt hour", "{:.0f}:00"),
+    "prior_appts": ("Prior visits", "{:.0f}"),
+    "prior_no_shows": ("Prior no-shows", "{:.0f}"),
+    "prior_no_show_rate": ("Prior no-show rate", "{:.0%}"),
+    "chronic_count": ("Chronic conditions", "{:.0f}"),
+}
+_DRIVER_FLAGS = {
+    "is_first_visit": "First visit",
+    "heavy_rain": "Heavy rain",
+    "is_poya": "Poya day",
+    "is_weekend": "Weekend",
+    "distance_missing": "Distance unknown",
+}
+_DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+_DRIVER_PREFIXES = (
+    ("booking_channel_", "Channel"),
+    ("payment_mode_", "Payment"),
+    ("department_", "Dept"),
+    ("gender_", "Gender"),
+)
+
+
+def _format_driver(c: dict) -> str:
+    """Readable 'Label: value' text for a SHAP driver (e.g. 'Lead time: 12 days')."""
+    if c.get("feature_label"):
+        return str(c["feature_label"])
+    feat = str(c.get("feature") or "")
+    try:
+        v = float(c.get("value"))
+    except (TypeError, ValueError):
+        return feat.replace("_", " ").capitalize()
+    if feat in _DRIVER_FLAGS:
+        return _DRIVER_FLAGS[feat]
+    if feat == "sms_sent":
+        return "SMS reminder sent" if v else "No SMS reminder"
+    if feat == "appt_dow":
+        return f"Day: {_DOW[int(v) % 7]}"
+    if feat in _DRIVER_LABELS:
+        label, fmt = _DRIVER_LABELS[feat]
+        return f"{label}: {fmt.format(v)}"
+    for prefix, label in _DRIVER_PREFIXES:
+        if feat.startswith(prefix):
+            name = feat[len(prefix):].replace("_", " ")
+            return f"{label}: {name}" if v else f"{label} not {name}"
+    return feat.replace("_", " ").capitalize()
 
 
 @app.middleware("http")
@@ -162,6 +213,7 @@ def _patient_history(db: Session, appointment: models.Appointment) -> tuple[int,
 app.include_router(auth.router)
 # Registered before the CRUD routes so /appointments/register isn't captured by /appointments/{id}
 app.include_router(insights.router)
+app.include_router(hospital.router)
 
 
 @app.get("/")
@@ -349,11 +401,34 @@ def create_appointment_intake(
         raise HTTPException(status_code=400, detail="Doctor not found or inactive")
 
     if not req.clinic_session_id:
-        raise HTTPException(status_code=400, detail="clinic_session_id is required")
-
-    session = db.get(models.DoctorClinicSession, req.clinic_session_id)
-    if not session or not session.active or session.doctor_id != doctor.id:
-        raise HTTPException(status_code=400, detail="Clinic session not found for this doctor")
+        weekday = req.appointment_day.weekday()
+        session = (
+            db.query(models.DoctorClinicSession)
+            .filter(
+                models.DoctorClinicSession.doctor_id == doctor.id,
+                models.DoctorClinicSession.weekday == weekday,
+                models.DoctorClinicSession.active == True,
+            )
+            .order_by(models.DoctorClinicSession.start_time.asc())
+            .first()
+        )
+        if not session:
+            session = (
+                db.query(models.DoctorClinicSession)
+                .filter(
+                    models.DoctorClinicSession.doctor_id == doctor.id,
+                    models.DoctorClinicSession.active == True,
+                )
+                .order_by(models.DoctorClinicSession.start_time.asc())
+                .first()
+            )
+        if not session:
+            raise HTTPException(status_code=400, detail="No active clinic session found for this doctor")
+        req.clinic_session_id = session.id
+    else:
+        session = db.get(models.DoctorClinicSession, req.clinic_session_id)
+        if not session or not session.active or session.doctor_id != doctor.id:
+            raise HTTPException(status_code=400, detail="Clinic session not found for this doctor")
 
     today_lk = datetime.now(LK_TZ).date()
     if req.appointment_day < today_lk:
@@ -613,21 +688,27 @@ def create_appointment_intake(
 # Patient CRUD
 # ======================
 @app.post("/patients", response_model=schemas.PatientOut, status_code=201)
-def create_patient(data: schemas.PatientCreate, db: Session = Depends(get_db)):
+def create_patient(data: schemas.PatientCreate, request: Request, db: Session = Depends(get_db)):
     from app.services.uhid import generate_uhid
     fields = data.model_dump()
     patient = models.Patient(**fields)
     patient.id = uuid.uuid4()
+    hospital_id = getattr(request.state, "hospital_id", None)
+    if hospital_id:
+        patient.hospital_id = hospital_id
     if not patient.uhid:
         patient.uhid = generate_uhid(db)
     # Resolve the city to real coordinates and derive the distance from them, so the
     # model input and the map always agree. An explicit lat/lng wins over the city lookup.
+    hospital = getattr(request.state, "hospital", None)
+    h_lat = hospital.latitude if hospital else geo.HOSPITAL_LAT
+    h_lng = hospital.longitude if hospital else geo.HOSPITAL_LNG
     if patient.latitude is None or patient.longitude is None:
         coords = geo.geocode_city(patient.city, seed=patient.id)
         if coords:
             patient.latitude, patient.longitude = coords
     if patient.latitude is not None and patient.longitude is not None:
-        patient.distance_km = geo.distance_to_hospital_km(patient.latitude, patient.longitude)
+        patient.distance_km = geo.distance_to_hospital_km(patient.latitude, patient.longitude, hospital_lat=h_lat, hospital_lng=h_lng)
     db.add(patient)
     db.commit()
     db.refresh(patient)
@@ -635,14 +716,21 @@ def create_patient(data: schemas.PatientCreate, db: Session = Depends(get_db)):
 
 
 @app.get("/patients", response_model=List[schemas.PatientOut])
-def list_patients(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    return db.query(models.Patient).offset(skip).limit(limit).all()
+def list_patients(request: Request, skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    query = db.query(models.Patient)
+    hospital_id = getattr(request.state, "hospital_id", None)
+    if hospital_id:
+        query = query.filter(models.Patient.hospital_id == hospital_id)
+    return query.offset(skip).limit(limit).all()
 
 
 @app.get("/patients/{patient_id}", response_model=schemas.PatientOut)
-def get_patient(patient_id: uuid.UUID, db: Session = Depends(get_db)):
+def get_patient(patient_id: uuid.UUID, request: Request, db: Session = Depends(get_db)):
     patient = db.get(models.Patient, patient_id)
     if patient is None:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    hospital_id = getattr(request.state, "hospital_id", None)
+    if hospital_id and patient.hospital_id and patient.hospital_id != hospital_id:
         raise HTTPException(status_code=404, detail="Patient not found")
     return patient
 
@@ -651,10 +739,18 @@ def get_patient(patient_id: uuid.UUID, db: Session = Depends(get_db)):
 # Appointment CRUD
 # ======================
 @app.post("/appointments", response_model=schemas.AppointmentOut, status_code=201)
-def create_appointment(data: schemas.AppointmentCreate, db: Session = Depends(get_db)):
-    if db.get(models.Patient, data.patient_id) is None:
+def create_appointment(data: schemas.AppointmentCreate, request: Request, db: Session = Depends(get_db)):
+    patient = db.get(models.Patient, data.patient_id)
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    hospital_id = getattr(request.state, "hospital_id", None)
+    if hospital_id and patient.hospital_id and patient.hospital_id != hospital_id:
         raise HTTPException(status_code=404, detail="Patient not found")
     appointment = models.Appointment(**data.model_dump())
+    if hospital_id:
+        appointment.hospital_id = hospital_id
+    elif patient.hospital_id:
+        appointment.hospital_id = patient.hospital_id
     db.add(appointment)
     db.commit()
     db.refresh(appointment)
@@ -663,12 +759,16 @@ def create_appointment(data: schemas.AppointmentCreate, db: Session = Depends(ge
 
 @app.get("/appointments", response_model=List[schemas.AppointmentOut])
 def list_appointments(
+    request: Request,
     skip: int = 0,
     limit: int = 100,
     patient_id: Optional[uuid.UUID] = None,
     db: Session = Depends(get_db),
 ):
     query = db.query(models.Appointment)
+    hospital_id = getattr(request.state, "hospital_id", None)
+    if hospital_id:
+        query = query.filter(models.Appointment.hospital_id == hospital_id)
     if patient_id is not None:
         query = query.filter(models.Appointment.patient_id == patient_id)
     return query.offset(skip).limit(limit).all()
@@ -676,6 +776,7 @@ def list_appointments(
 
 @app.get("/appointments/overview", response_model=List[schemas.AppointmentOverviewRow])
 def appointments_overview(
+    request: Request,
     days_back: int = Query(45, ge=0, le=3650, description="Include appointments from this many days ago onward (and all future ones)"),
     limit: int = Query(1500, ge=1, le=5000),
     db: Session = Depends(get_db),
@@ -686,14 +787,15 @@ def appointments_overview(
     silently drops patients/predictions once there are more than a page of rows.
     """
     since = date.today() - timedelta(days=days_back)
-    rows = (
+    query = (
         db.query(models.Appointment)
         .options(joinedload(models.Appointment.patient), joinedload(models.Appointment.prediction))
         .filter(models.Appointment.appointment_day >= since)
-        .order_by(models.Appointment.appointment_day.desc(), models.Appointment.id)
-        .limit(limit)
-        .all()
     )
+    hospital_id = getattr(request.state, "hospital_id", None)
+    if hospital_id:
+        query = query.filter(models.Appointment.hospital_id == hospital_id)
+    rows = query.order_by(models.Appointment.appointment_day.desc(), models.Appointment.id).limit(limit).all()
     return [
         schemas.AppointmentOverviewRow(
             appointment=schemas.AppointmentOut.model_validate(a),
@@ -705,9 +807,12 @@ def appointments_overview(
 
 
 @app.get("/appointments/{appointment_id}", response_model=schemas.AppointmentOut)
-def get_appointment(appointment_id: uuid.UUID, db: Session = Depends(get_db)):
+def get_appointment(appointment_id: uuid.UUID, request: Request, db: Session = Depends(get_db)):
     appointment = db.get(models.Appointment, appointment_id)
     if appointment is None:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    hospital_id = getattr(request.state, "hospital_id", None)
+    if hospital_id and appointment.hospital_id and appointment.hospital_id != hospital_id:
         raise HTTPException(status_code=404, detail="Appointment not found")
     return appointment
 
@@ -716,10 +821,14 @@ def get_appointment(appointment_id: uuid.UUID, db: Session = Depends(get_db)):
 def record_appointment_outcome(
     appointment_id: uuid.UUID,
     data: schemas.AppointmentOutcomeUpdate,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     appointment = db.get(models.Appointment, appointment_id)
     if appointment is None:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    hospital_id = getattr(request.state, "hospital_id", None)
+    if hospital_id and appointment.hospital_id and appointment.hospital_id != hospital_id:
         raise HTTPException(status_code=404, detail="Appointment not found")
     appointment.no_show = data.no_show
     if data.cancelled:
@@ -791,8 +900,9 @@ def get_appointment_prediction(appointment_id: uuid.UUID, db: Session = Depends(
 # ===================================
 
 @app.get("/departments", response_model=List[schemas.DepartmentOut])
-def list_departments(db: Session = Depends(get_db)):
-    depts = (
+def list_departments(request: Request, db: Session = Depends(get_db)):
+    hospital_id = getattr(request.state, "hospital_id", None)
+    query = (
         db.query(
             models.Department,
             func.count(models.Doctor.id).label("doc_count"),
@@ -803,10 +913,12 @@ def list_departments(db: Session = Depends(get_db)):
             & (models.Doctor.active == True),
         )
         .filter(models.Department.active == True)
-        .group_by(models.Department.id)
-        .order_by(models.Department.name.asc())
-        .all()
     )
+    if hospital_id:
+        query = query.filter(
+            or_(models.Department.hospital_id == hospital_id, models.Department.hospital_id.is_(None))
+        )
+    depts = query.group_by(models.Department.id).order_by(models.Department.name.asc()).all()
     result = []
     for dept, doc_count in depts:
         result.append(
@@ -825,11 +937,13 @@ def list_departments(db: Session = Depends(get_db)):
 
 @app.get("/doctors", response_model=List[schemas.DoctorOut])
 def list_doctors(
+    request: Request,
     department_id: Optional[int] = Query(None),
     q: Optional[str] = Query(None),
     active: bool = Query(True),
     db: Session = Depends(get_db),
 ):
+    hospital_id = getattr(request.state, "hospital_id", None)
     query = (
         db.query(models.Doctor)
         .options(
@@ -838,6 +952,10 @@ def list_doctors(
         )
         .filter(models.Doctor.active == active)
     )
+    if hospital_id:
+        query = query.filter(
+            or_(models.Doctor.hospital_id == hospital_id, models.Doctor.hospital_id.is_(None))
+        )
     if department_id is not None:
         query = query.filter(models.Doctor.department_id == department_id)
     if q and q.strip():
@@ -1107,8 +1225,29 @@ def simulate_his_arrivals(
 # Batch Prediction Engine Endpoints
 # ===================================
 
-def _prediction_run_response(run: models.PredictionRun) -> schemas.PredictionRunResponse:
+def _prediction_run_response(run: models.PredictionRun, db: Optional[Session] = None) -> schemas.PredictionRunResponse:
     pct = round((run.scored / max(run.total, 1)) * 100.0, 1) if run.total > 0 else (100.0 if run.status == "done" else 0.0)
+    dept_breakdown = getattr(run, "_dept_breakdown", None)
+    if dept_breakdown is None and db is not None:
+        try:
+            from sqlalchemy import func
+            dept_rows = (
+                db.query(
+                    func.coalesce(models.Department.name, models.Appointment.department, "General").label("dept"),
+                    func.count(models.Prediction.id)
+                )
+                .join(models.Appointment, models.Prediction.appointment_id == models.Appointment.id)
+                .outerjoin(models.Doctor, models.Appointment.doctor_id == models.Doctor.id)
+                .outerjoin(models.Department, models.Doctor.department_id == models.Department.id)
+                .filter(models.Prediction.prediction_run_id == run.id)
+                .group_by("dept")
+                .all()
+            )
+            if dept_rows:
+                dept_breakdown = {str(r[0]): int(r[1]) for r in dept_rows}
+        except Exception:
+            dept_breakdown = None
+
     return schemas.PredictionRunResponse(
         id=run.id,
         run_date=run.run_date,
@@ -1128,6 +1267,7 @@ def _prediction_run_response(run: models.PredictionRun) -> schemas.PredictionRun
         triggered_by=run.triggered_by,
         started_at=run.started_at,
         finished_at=run.finished_at,
+        department_breakdown=dept_breakdown,
     )
 
 
@@ -1138,6 +1278,12 @@ def _run_predictions_background(
     with_sync: bool,
     heavy_rain: bool,
     actor_email: str,
+    department_id: Optional[int] = None,
+    slot_label: Optional[str] = None,
+    user_filter: Optional[str] = None,
+    re_score: bool = True,
+    department_wise: bool = False,
+    hospital_id: Optional[uuid.UUID] = None,
 ):
     from app.database import SessionLocal
     bg_db = SessionLocal()
@@ -1151,6 +1297,12 @@ def _run_predictions_background(
             db=bg_db,
             user=user,
             run_id=run_id,
+            department_id=department_id,
+            slot_label=slot_label,
+            user_filter=user_filter,
+            re_score=re_score,
+            department_wise=department_wise,
+            hospital_id=hospital_id,
         )
     finally:
         bg_db.close()
@@ -1160,15 +1312,23 @@ def _run_predictions_background(
 def create_prediction_run(
     req: schemas.PredictionRunCreateRequest,
     background_tasks: BackgroundTasks,
+    request: Request,
     run_sync: bool = Query(False),
     current_user: Optional[models.User] = Depends(auth.require_user),
     db: Session = Depends(get_db),
 ):
     target_date = req.run_date or datetime.now(LK_TZ).date()
     actor_email = current_user.email if current_user else "staff"
+    hospital_id = getattr(request.state, "hospital_id", None)
+    if hospital_id is None and current_user:
+        hospital_id = getattr(current_user, "hospital_id", None)
+        if hospital_id is None and getattr(current_user, "memberships", None):
+            hospital_id = current_user.memberships[0].hospital_id
+
 
     run = models.PredictionRun(
         id=uuid.uuid4(),
+        hospital_id=hospital_id,
         run_date=target_date,
         doctor_id=req.doctor_id,
         status="running",
@@ -1190,6 +1350,12 @@ def create_prediction_run(
             db=db,
             user=current_user,
             run_id=run.id,
+            department_id=req.department_id,
+            slot_label=req.slot_label,
+            user_filter=req.user_filter,
+            re_score=req.re_score,
+            department_wise=req.department_wise,
+            hospital_id=hospital_id,
         )
         db.refresh(run)
     else:
@@ -1201,9 +1367,15 @@ def create_prediction_run(
             with_sync=req.with_sync,
             heavy_rain=req.heavy_rain,
             actor_email=actor_email,
+            department_id=req.department_id,
+            slot_label=req.slot_label,
+            user_filter=req.user_filter,
+            re_score=req.re_score,
+            department_wise=req.department_wise,
+            hospital_id=hospital_id,
         )
 
-    return _prediction_run_response(run)
+    return _prediction_run_response(run, db=db)
 
 
 @app.get("/predictions/runs/{run_id}", response_model=schemas.PredictionRunResponse)
@@ -1211,7 +1383,7 @@ def get_prediction_run(run_id: uuid.UUID, db: Session = Depends(get_db)):
     run = db.get(models.PredictionRun, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Prediction run not found")
-    return _prediction_run_response(run)
+    return _prediction_run_response(run, db=db)
 
 
 @app.get("/predictions/today", response_model=schemas.PredictionTodayResponse)
@@ -1306,7 +1478,7 @@ def get_predictions_today(
                 # Filter positive risk drivers, sorted by magnitude desc
                 pos_drivers = [c for c in contribs if isinstance(c, dict) and c.get("contribution", 0) > 0]
                 pos_drivers.sort(key=lambda x: x.get("contribution", 0), reverse=True)
-                top_reasons = [p.get("feature_label") or p.get("feature") for p in pos_drivers[:3]]
+                top_reasons = [_format_driver(p) for p in pos_drivers[:3]]
 
         actions = ["call", "sms"]
         if a.doctor and a.doctor.department and a.doctor.department.telehealth_ok:
@@ -1332,6 +1504,8 @@ def get_predictions_today(
                 actions_available=actions,
                 status=a.status,
                 source=a.source or "manual",
+                booking_channel=a.booking_channel,
+                booked_by=a.booked_by,
             )
         )
 
