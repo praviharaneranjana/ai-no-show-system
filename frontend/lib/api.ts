@@ -15,6 +15,14 @@ import type {
   Appointment,
   AppointmentInput,
   CapacityOptimizeResult,
+  CapacitySlotsResponse,
+  WhatIfResponse,
+  CapacityScenario,
+  SlotOffer,
+  ForecastResponse,
+  AccuracyResponse,
+  CapacitySetting,
+  NavCounts,
   DoctorSession,
   Intervention,
   InterventionLanguage,
@@ -190,6 +198,134 @@ export function optimizeCapacity(maxWaitTimeToleranceMins = 15) {
     method: "POST",
     body: JSON.stringify({ max_wait_time_tolerance_mins: maxWaitTimeToleranceMins }),
   });
+}
+
+export function getCapacityOverview(date?: string, doctorId?: string, maxWaitTolerance?: number) {
+  const params = new URLSearchParams();
+  if (date) params.set("date", date);
+  if (doctorId) params.set("doctor_id", doctorId);
+  if (maxWaitTolerance) params.set("max_wait_tolerance", String(maxWaitTolerance));
+  const q = params.toString();
+  return apiFetch<CapacityOptimizeResult>(`/capacity/overview${q ? `?${q}` : ""}`);
+}
+
+export function getCapacitySlots(date?: string, doctorId?: string) {
+  const params = new URLSearchParams();
+  if (date) params.set("date", date);
+  if (doctorId && doctorId !== "all") params.set("doctor_id", doctorId);
+  const q = params.toString();
+  return apiFetch<CapacitySlotsResponse>(`/capacity/slots${q ? `?${q}` : ""}`);
+}
+
+export function evaluateWhatIf(params: {
+  target_date?: string;
+  doctor_id?: string;
+  department_id?: number;
+  max_wait_time_tolerance_mins?: number;
+  safety_factor?: number;
+  max_overbook_per_slot?: number;
+  consultation_fee_lkr?: number;
+  assume_doctor_delay_mins?: number;
+}) {
+  return apiFetch<WhatIfResponse>("/capacity/what-if", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export function listCapacityScenarios() {
+  return apiFetch<CapacityScenario[]>("/capacity/scenarios");
+}
+export const getCapacityScenarios = listCapacityScenarios;
+
+export function createCapacityScenario(
+  scenarioOrName: { name: string; notes?: string; department?: string; params: Record<string, unknown>; results: Record<string, unknown> } | string,
+  params?: Record<string, unknown>,
+  results?: Record<string, unknown>
+) {
+  const body =
+    typeof scenarioOrName === "string"
+      ? { name: scenarioOrName, params, results }
+      : scenarioOrName;
+  return apiFetch<CapacityScenario>("/capacity/scenarios", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+export const saveCapacityScenario = createCapacityScenario;
+
+export function deleteCapacityScenario(scenarioId: string) {
+  return apiFetch<{ message: string }>(`/capacity/scenarios/${scenarioId}`, {
+    method: "DELETE",
+  });
+}
+
+export function getCapacitySettings(scopeOrDept?: string | number, doctorId?: string) {
+  const params = new URLSearchParams();
+  if (typeof scopeOrDept === "string" && scopeOrDept) {
+    params.set("scope", scopeOrDept);
+  } else if (typeof scopeOrDept === "number") {
+    params.set("department_id", String(scopeOrDept));
+  }
+  if (doctorId) params.set("doctor_id", doctorId);
+  const q = params.toString();
+  return apiFetch<CapacitySetting>(`/capacity/settings${q ? `?${q}` : ""}`);
+}
+
+export function updateCapacitySettings(
+  scopeOrData: string | Partial<CapacitySetting>,
+  dataOrDept?: Partial<CapacitySetting> | number,
+  doctorId?: string
+) {
+  let scope = "global";
+  let payload: Partial<CapacitySetting> = {};
+  if (typeof scopeOrData === "string") {
+    scope = scopeOrData;
+    payload = (dataOrDept as Partial<CapacitySetting>) ?? {};
+  } else {
+    payload = scopeOrData ?? {};
+  }
+
+  const params = new URLSearchParams();
+  params.set("scope", scope);
+  if (doctorId) params.set("doctor_id", doctorId);
+  const q = params.toString();
+
+  return apiFetch<CapacitySetting>(`/capacity/settings${q ? `?${q}` : ""}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getCapacityForecast(days = 14, department?: string) {
+  const params = new URLSearchParams();
+  params.set("days", String(days));
+  if (department && department !== "all") params.set("department", department);
+  return apiFetch<ForecastResponse>(`/capacity/forecast?${params.toString()}`);
+}
+
+export function getCapacityAccuracy(days = 30, department?: string, doctorId?: string) {
+  const params = new URLSearchParams();
+  params.set("days", String(days));
+  if (department && department !== "all") params.set("department", department);
+  if (doctorId && doctorId !== "all") params.set("doctor_id", doctorId);
+  return apiFetch<AccuracyResponse>(`/capacity/accuracy?${params.toString()}`);
+}
+
+export function getSlotOffers(status?: string) {
+  const q = status ? `?status=${status}` : "";
+  return apiFetch<SlotOffer[]>(`/capacity/slot-offers${q}`);
+}
+
+export function actOnSlotOffer(offerId: string, action: "approve" | "decline" | "undo") {
+  return apiFetch<SlotOffer>(`/capacity/slot-offers/${offerId}/act`, {
+    method: "POST",
+    body: JSON.stringify({ action }),
+  });
+}
+
+export function getCapacityNavCounts() {
+  return apiFetch<NavCounts>("/capacity/nav-counts");
 }
 
 export function getWaitlist() {

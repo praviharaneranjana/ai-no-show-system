@@ -559,6 +559,7 @@ class AgentSimulateResponse(BaseModel):
     agent_response: str
     language: str
     suggested_action: str
+    action_executed: str | None = None
     status_updated: str
 
 
@@ -600,17 +601,39 @@ class CapacityOptimizeRequest(BaseModel):
 
 
 class SessionOptimizationDetail(BaseModel):
+    doctor_id: uuid.UUID | None = None
     doctor_name: str
     specialty: str
     room_number: str
+    max_capacity: int = 25
     total_booked: int
     predicted_no_shows: int
+    expected_no_shows_float: float = 0.0
+    interval_low: float = 0.0
+    interval_high: float = 0.0
     high_risk_slots: int
     recommended_overbook_count: int
     expected_revenue_gain_lkr: float
     expected_wait_time_mins: float
+    linear_fallback_wait_mins: float = 0.0
+    booked_utilisation_pct: float = 0.0
+    expected_attendance_pct: float = 0.0
+    consultation_fee_lkr: float = 4500.0
+    delay_minutes: int = 0
+    effective_tolerance_mins: int = 15
+    p_overcrowding: float = 0.0
     risk_level: str
     status_advice: str
+
+
+class DepartmentCapacitySummary(BaseModel):
+    department: str
+    total_capacity: int
+    total_booked: int
+    expected_no_shows: float
+    recommended_overbook: int
+    interval_low: float
+    interval_high: float
 
 
 class CapacityOptimizeResponse(BaseModel):
@@ -618,9 +641,216 @@ class CapacityOptimizeResponse(BaseModel):
     total_capacity: int
     total_booked: int
     total_predicted_no_shows: int
+    expected_no_shows_total: float = 0.0
+    expected_no_shows_interval_low: float = 0.0
+    expected_no_shows_interval_high: float = 0.0
     total_recommended_overbooks: int
     estimated_revenue_recovery_lkr: float
+    booked_utilisation_pct: float = 0.0
+    expected_attendance_pct: float = 0.0
     sessions: list[SessionOptimizationDetail]
+    departments: list[DepartmentCapacitySummary] = []
+
+
+# ===================================
+# Capacity v2 New Feature Schemas
+# ===================================
+
+class CapacitySettingOut(BaseModel):
+    id: uuid.UUID
+    scope: str
+    department_id: int | None = None
+    doctor_id: uuid.UUID | None = None
+    safety_factor: float
+    max_overbook_per_slot: int
+    max_overbook_per_session: int
+    wait_tolerance_mins: int
+    consultation_fee_lkr: float
+    badge_safe_mins: int
+    badge_moderate_mins: int
+    auto_assign_waitlist: bool
+    sim_runs: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CapacitySettingUpdate(BaseModel):
+    safety_factor: float | None = None
+    max_overbook_per_slot: int | None = None
+    max_overbook_per_session: int | None = None
+    wait_tolerance_mins: int | None = None
+    consultation_fee_lkr: float | None = None
+    badge_safe_mins: int | None = None
+    badge_moderate_mins: int | None = None
+    auto_assign_waitlist: bool | None = None
+    sim_runs: int | None = None
+
+
+class SlotPatientOut(BaseModel):
+    appointment_id: uuid.UUID
+    patient_id: uuid.UUID
+    uhid: str
+    patient_name: str
+    gender: str | None = None
+    age: int | None = None
+    phone: str | None = None
+    city: str | None = None
+    distance_km: float | None = None
+    risk_score: float
+    risk_category: str
+    status: str
+    sms_received: bool = False
+    factors: list[str] = []
+
+
+class SlotDetailOut(BaseModel):
+    slot_time: str
+    booked_count: int
+    expected_no_shows: float
+    recommended_overbook: int
+    heat_color: str  # green, amber, red, grey
+    simulated_wait_mins: float = 0.0
+    patients: list[SlotPatientOut] = []
+
+
+class DoctorSlotsOut(BaseModel):
+    doctor_id: uuid.UUID
+    doctor_name: str
+    specialty: str
+    room_number: str
+    delay_minutes: int
+    delay_status: str
+    total_booked: int
+    total_recommended_overbook: int
+    slots: list[SlotDetailOut]
+
+
+class CapacitySlotsResponse(BaseModel):
+    date: date
+    doctors: list[DoctorSlotsOut]
+
+
+class WhatIfRequest(BaseModel):
+    target_date: date | None = None
+    doctor_id: uuid.UUID | None = None
+    department_id: int | None = None
+    max_wait_time_tolerance_mins: int = 15
+    safety_factor: float = 0.75
+    max_overbook_per_slot: int = 2
+    consultation_fee_lkr: float = 4500.0
+    assume_doctor_delay_mins: int = 0
+
+
+class WhatIfPolicyStats(BaseModel):
+    recommended_overbook: int
+    expected_wait_mins: float
+    p_overcrowding: float
+    expected_filled_gaps: float
+    expected_revenue_lkr: float
+
+
+class WhatIfResponse(BaseModel):
+    current_policy: WhatIfPolicyStats
+    what_if_policy: WhatIfPolicyStats
+    delta_overbook: int
+    delta_wait_mins: float
+    delta_revenue_lkr: float
+    wait_histogram: list[int]
+    trade_off_curve: list[dict]
+
+
+class CapacityScenarioCreate(BaseModel):
+    name: str
+    params: dict
+    results: dict
+
+
+class CapacityScenarioOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    params: dict
+    results: dict
+    created_by: str | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CandidateScoreBreakdown(BaseModel):
+    specialty_doctor_match: float
+    attendance_reliability: float
+    waiting_time_priority: float
+    clinical_urgency: float
+    travel_proximity: float
+    days_waiting: float
+    predicted_no_show_prob: float
+
+
+class SlotOfferOut(BaseModel):
+    id: uuid.UUID
+    doctor_id: uuid.UUID
+    doctor_name: str
+    specialty: str
+    room: str
+    slot_time: str
+    slot_date: date
+    freed_reason: str
+    waitlist_entry_id: uuid.UUID
+    candidate_patient_name: str
+    candidate_patient_phone: str
+    candidate_uhid: str | None = None
+    match_score: float
+    score_breakdown: CandidateScoreBreakdown
+    status: str
+    acted_by: str | None = None
+    acted_at: datetime | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SlotOfferActionRequest(BaseModel):
+    action: str  # approve, decline, undo
+
+
+class ForecastDayOut(BaseModel):
+    date: date
+    total_projected_booked: int
+    expected_no_shows: float
+    interval_low: float
+    interval_high: float
+    bufferable_overbooks: int
+    revenue_at_risk_lkr: float
+    recoverable_revenue_lkr: float
+
+
+class ForecastResponse(BaseModel):
+    horizon_days: int
+    summary: dict
+    days: list[ForecastDayOut]
+    departments: list[dict]
+
+
+class AccuracyDecile(BaseModel):
+    decile: int
+    mean_predicted_prob: float
+    observed_no_show_rate: float
+    count: int
+
+
+class AccuracyResponse(BaseModel):
+    brier_score: float
+    roc_auc: float
+    gap_absorption_rate: float
+    overbook_regret_rate: float
+    total_evaluated_appointments: int
+    confusion_matrix: dict
+    calibration_deciles: list[AccuracyDecile]
+    overbook_outcome_mix: dict
+    daily_accuracy_trend: list[dict]
+
 
 
 class SimulatorEvaluateRequest(BaseModel):

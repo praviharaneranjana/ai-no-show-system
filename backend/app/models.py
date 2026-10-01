@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime, time
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, Numeric, SmallInteger, String, Text, Time
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, Numeric, SmallInteger, String, Text, Time, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -23,6 +23,7 @@ class Department(Base):
     telehealth_ok: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
+    default_consultation_fee_lkr: Mapped[float] = mapped_column(Float, nullable=False, default=4500.0)
     doctors: Mapped[list["Doctor"]] = relationship(back_populates="department")
 
 
@@ -35,6 +36,7 @@ class Doctor(Base):
     department_id: Mapped[int] = mapped_column(ForeignKey("departments.id"), nullable=False)
     his_doctor_code: Mapped[str | None] = mapped_column(Text, unique=True, nullable=True)
     default_room: Mapped[str | None] = mapped_column(Text, nullable=True)
+    consultation_fee_lkr: Mapped[float] = mapped_column(Float, nullable=False, default=4500.0)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     needs_review: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -46,6 +48,9 @@ class Doctor(Base):
 
 class DoctorClinicSession(Base):
     __tablename__ = "doctor_clinic_sessions"
+    __table_args__ = (
+        UniqueConstraint("doctor_id", "weekday", "label", name="uq_doctor_weekday_label"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     doctor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("doctors.id", ondelete="CASCADE"), nullable=False)
@@ -56,6 +61,8 @@ class DoctorClinicSession(Base):
     room: Mapped[str] = mapped_column(Text, nullable=False)
     max_patients: Mapped[int] = mapped_column(Integer, nullable=False, default=25)
     slot_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=12)
+    delay_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    delay_status: Mapped[str] = mapped_column(Text, nullable=False, default="on_time")
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     doctor: Mapped["Doctor"] = relationship(back_populates="sessions")
@@ -64,6 +71,9 @@ class DoctorClinicSession(Base):
 
 class Location(Base):
     __tablename__ = "locations"
+    __table_args__ = (
+        UniqueConstraint("name_norm", "district", name="uq_locations_norm_district"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -135,6 +145,7 @@ class Appointment(Base):
     booking_channel: Mapped[str | None] = mapped_column(String)
     payment_mode: Mapped[str | None] = mapped_column(String)
     scheduled_time: Mapped[str | None] = mapped_column(String)
+    slot_start: Mapped[time | None] = mapped_column(Time, nullable=True)
     queue_number: Mapped[int | None] = mapped_column(Integer)
     ai_action_status: Mapped[str | None] = mapped_column(String)
     sms_reminder_opt_in: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -350,3 +361,91 @@ class PredictionRun(Base):
     triggered_by: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# ===================================
+# Capacity & Smart Overbooking v2
+# ===================================
+
+class CapacitySetting(Base):
+    __tablename__ = "capacity_settings"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    scope: Mapped[str] = mapped_column(Text, nullable=False, default="global")  # global, department, doctor
+    department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id", ondelete="CASCADE"), nullable=True)
+    doctor_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("doctors.id", ondelete="CASCADE"), nullable=True)
+    safety_factor: Mapped[float] = mapped_column(Float, nullable=False, default=0.75)
+    max_overbook_per_slot: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    max_overbook_per_session: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
+    wait_tolerance_mins: Mapped[int] = mapped_column(Integer, nullable=False, default=15)
+    consultation_fee_lkr: Mapped[float] = mapped_column(Float, nullable=False, default=4500.0)
+    badge_safe_mins: Mapped[int] = mapped_column(Integer, nullable=False, default=8)
+    badge_moderate_mins: Mapped[int] = mapped_column(Integer, nullable=False, default=15)
+    auto_assign_waitlist: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sim_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=2000)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    department: Mapped["Department | None"] = relationship()
+    doctor: Mapped["Doctor | None"] = relationship()
+
+
+class CapacityRecommendation(Base):
+    __tablename__ = "capacity_recommendations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, default=uuid.uuid4)
+    doctor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("doctors.id", ondelete="CASCADE"), nullable=False)
+    clinic_session_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("doctor_clinic_sessions.id", ondelete="SET NULL"), nullable=True)
+    slot_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    target_date: Mapped[date] = mapped_column(Date, nullable=False)
+    booked_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expected_no_shows: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    interval_low: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    interval_high: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    recommended_overbook: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expected_wait_mins: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    expected_revenue_lkr: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    p_overcrowding: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    effective_tolerance_mins: Mapped[int] = mapped_column(Integer, nullable=False, default=15)
+    settings_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    model_version: Mapped[str] = mapped_column(Text, nullable=False, default="shai-lk-synth-v1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    doctor: Mapped["Doctor"] = relationship()
+    clinic_session: Mapped["DoctorClinicSession | None"] = relationship()
+
+
+class CapacityScenario(Base):
+    __tablename__ = "capacity_scenarios"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    params: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    results: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SlotOffer(Base):
+    __tablename__ = "slot_offers"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    doctor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("doctors.id", ondelete="CASCADE"), nullable=False)
+    clinic_session_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("doctor_clinic_sessions.id", ondelete="SET NULL"), nullable=True)
+    slot_time: Mapped[time] = mapped_column(Time, nullable=False)
+    slot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    freed_reason: Mapped[str] = mapped_column(Text, nullable=False)  # cancellation, unconfirmed_high_risk, reschedule
+    waitlist_entry_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("waitlist.id", ondelete="CASCADE"), nullable=False)
+    match_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    score_breakdown: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="proposed")  # proposed, approved, declined, expired, undone
+    acted_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    acted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    doctor: Mapped["Doctor"] = relationship()
+    clinic_session: Mapped["DoctorClinicSession | None"] = relationship()
+    waitlist_entry: Mapped["WaitlistEntry"] = relationship()
+

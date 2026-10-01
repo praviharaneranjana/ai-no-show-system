@@ -127,6 +127,8 @@ export type DoctorSessionStatus = "on_time" | "delayed" | "in_progress" | "compl
 
 export type DoctorSession = {
   id: string;
+  doctor_id?: string;
+  session_id?: string;
   doctor_name: string;
   specialty: string;
   room_number: string;
@@ -186,28 +188,373 @@ export type WaitlistEntry = {
 };
 
 export type SessionOptimizationDetail = {
+  doctor_id?: string | null;
+  session_id?: string;
   doctor_name: string;
   specialty: string;
   room_number: string;
+  max_capacity?: number;
+  capacity?: number;
   total_booked: number;
   predicted_no_shows: number;
+  expected_no_shows_float?: number;
+  interval_low?: number;
+  interval_high?: number;
+  expected_no_shows_range?: [number, number];
   high_risk_slots: number;
   recommended_overbook_count: number;
   expected_revenue_gain_lkr: number;
   expected_wait_time_mins: number;
+  linear_fallback_wait_mins?: number;
+  booked_utilisation_pct?: number;
+  utilization_pct?: number;
+  expected_attendance_pct?: number;
+  consultation_fee_lkr?: number;
+  delay_minutes?: number;
+  effective_tolerance_mins?: number;
+  effective_wait_tolerance_mins?: number;
+  p_overcrowding?: number;
   risk_level: "Safe" | "Moderate" | "Caution";
   status_advice: string;
 };
 
+export type CapacitySessionCard = SessionOptimizationDetail;
+
+export type DepartmentCapacitySummary = {
+  department: string;
+  total_capacity?: number;
+  capacity?: number;
+  total_booked?: number;
+  booked?: number;
+  expected_no_shows: number;
+  recommended_overbook?: number;
+  recommended_overbooks?: number;
+  interval_low?: number;
+  interval_high?: number;
+};
+
 export type CapacityOptimizeResult = {
-  session_date: string;
+  date?: string;
+  session_date?: string;
   total_capacity: number;
   total_booked: number;
   total_predicted_no_shows: number;
+  expected_no_shows_total?: number;
+  expected_no_shows_interval_low?: number;
+  expected_no_shows_interval_high?: number;
+  expected_no_shows_range?: [number, number];
   total_recommended_overbooks: number;
   estimated_revenue_recovery_lkr: number;
+  booked_utilisation_pct?: number;
+  overall_utilization_pct?: number;
+  expected_attendance_pct?: number;
   sessions: SessionOptimizationDetail[];
+  departments?: DepartmentCapacitySummary[];
+  department_breakdown?: DepartmentCapacitySummary[];
 };
+
+export type SlotPatient = {
+  appointment_id: string;
+  patient_id: string;
+  uhid?: string;
+  patient_name: string;
+  gender?: string | null;
+  age?: number | null;
+  phone?: string | null;
+  city?: string | null;
+  distance_km?: number | null;
+  risk_score?: number;
+  risk_probability?: number;
+  risk_category: string;
+  status?: string;
+  sms_received?: boolean;
+  factors?: string[];
+};
+
+export type SlotDetail = {
+  time?: string;
+  slot_time?: string;
+  booked?: number;
+  booked_count?: number;
+  expected_no_shows: number;
+  recommended_overbook: number;
+  heat_color?: "green" | "amber" | "red" | "grey";
+  heat_level?: "low" | "medium" | "high" | "empty";
+  simulated_wait_mins?: number;
+  patients: SlotPatient[];
+};
+
+export type DoctorSlots = {
+  doctor_id: string;
+  doctor_name: string;
+  specialty: string;
+  room_number: string;
+  session_time?: string;
+  delay_minutes: number;
+  delay_status: string;
+  total_booked: number;
+  total_recommended_overbook: number;
+  slots: SlotDetail[] | Record<string, SlotDetail>;
+};
+
+export type SlotDoctorRow = DoctorSlots;
+
+export type CapacitySlotsResponse = {
+  date: string;
+  time_slots?: string[];
+  doctors: DoctorSlots[];
+};
+
+export type WhatIfPolicyStats = {
+  total_overbooks?: number;
+  recommended_overbook?: number;
+  expected_wait_mins: number;
+  p_overcrowding?: number;
+  risk_of_overcrowding_pct?: number;
+  expected_filled_gaps?: number;
+  expected_revenue_lkr: number;
+};
+
+export type WhatIfMetrics = WhatIfPolicyStats;
+
+export type WhatIfRequest = {
+  date?: string;
+  department?: string;
+  doctor_id?: string;
+  wait_tolerance_mins?: number;
+  safety_factor?: number;
+  max_overbook_per_slot?: number;
+  consultation_fee_lkr?: number;
+  assumed_delay_mins?: number;
+};
+
+export type WhatIfResponse = {
+  baseline?: WhatIfMetrics;
+  scenario?: WhatIfMetrics;
+  current_policy?: WhatIfPolicyStats;
+  what_if_policy?: WhatIfPolicyStats;
+  delta_overbook?: number;
+  delta_wait_mins?: number;
+  delta_revenue_lkr?: number;
+  delta?: {
+    extra_patients: number;
+    expected_wait_mins_diff: number;
+    expected_revenue_lkr_diff: number;
+    risk_of_overcrowding_pct_diff: number;
+  };
+  wait_histogram?: number[];
+  simulated_wait_distribution?: Array<{ wait_bin: string; frequency: number }>;
+  trade_off_curve: Array<{
+    overbook?: number;
+    overbook_count?: number;
+    mean_wait?: number;
+    expected_wait_mins?: number;
+    p_overcrowd?: number;
+    overcrowding_risk_pct?: number;
+    filled_gaps?: number;
+    expected_revenue_lkr?: number;
+  }>;
+};
+
+export type CapacityScenario = {
+  id: string;
+  name: string;
+  department?: string;
+  notes?: string;
+  params: Record<string, unknown>;
+  results: Record<string, unknown>;
+  created_by?: string | null;
+  created_at: string;
+};
+
+export type CandidateScoreBreakdown = {
+  specialty_doctor_match?: number;
+  specialty_match?: number;
+  attendance_reliability?: number;
+  reliability?: number;
+  waiting_time_priority?: number;
+  wait_time?: number;
+  clinical_urgency?: number;
+  urgency?: number;
+  travel_proximity?: number;
+  distance?: number;
+  days_waiting?: number;
+  predicted_no_show_prob?: number;
+};
+
+export type SlotOfferCandidate = {
+  waitlist_id: string;
+  patient_id: string;
+  patient_name: string;
+  phone: string;
+  total_score: number;
+  score_breakdown: CandidateScoreBreakdown;
+  predicted_no_show_prob: number;
+  wait_days: number;
+  distance_km?: number;
+  urgency: string;
+  preferred_time?: string;
+};
+
+export type SlotOffer = {
+  id: string;
+  doctor_id: string;
+  doctor_name: string;
+  department?: string;
+  specialty: string;
+  room?: string;
+  room_number?: string;
+  slot_time: string;
+  slot_date?: string;
+  reason?: string;
+  freed_reason?: string;
+  waitlist_entry_id?: string;
+  candidate_patient_name?: string;
+  candidate_patient_phone?: string;
+  candidate_uhid?: string | null;
+  match_score?: number;
+  score_breakdown?: CandidateScoreBreakdown;
+  candidates?: SlotOfferCandidate[];
+  status: "proposed" | "approved" | "declined" | "expired" | "undone";
+  acted_by?: string | null;
+  acted_at?: string | null;
+  created_at: string;
+};
+
+export type ForecastDay = {
+  date: string;
+  weekday?: string;
+  total_projected_booked?: number;
+  booked_appointments?: number;
+  expected_no_shows: number;
+  interval_low: number;
+  interval_high: number;
+  bufferable_overbooks?: number;
+  recommended_overbooks?: number;
+  revenue_at_risk_lkr: number;
+  recoverable_revenue_lkr?: number;
+  heat_intensity?: number;
+};
+
+export type DailyForecastPoint = ForecastDay;
+
+export type DepartmentForecastItem = {
+  department: string;
+  share_pct?: number;
+  appointments?: number;
+  expected_no_shows: number;
+  recommended_overbooks?: number;
+  revenue_at_risk_lkr?: number;
+};
+
+export type ForecastResponse = {
+  days?: number | ForecastDay[];
+  horizon_days?: number;
+  department?: string;
+  total_forecasted_appointments?: number;
+  total_expected_no_shows?: number;
+  expected_no_shows_range?: [number, number];
+  total_recommended_overbooks?: number;
+  total_revenue_at_risk_lkr?: number;
+  daily_forecast?: DailyForecastPoint[];
+  department_breakdown?: DepartmentForecastItem[];
+  summary?: {
+    horizon_days: number;
+    total_projected_appointments: number;
+    total_expected_no_shows: number;
+    total_bufferable_overbooks: number;
+    total_revenue_at_risk_lkr: number;
+    total_recoverable_revenue_lkr: number;
+  };
+  departments?: Array<{ department: string; share_pct: number; expected_no_shows: number }>;
+};
+
+export type AccuracyDecile = {
+  decile: number;
+  mean_predicted_prob?: number;
+  predicted_prob?: number;
+  observed_no_show_rate?: number;
+  actual_rate?: number;
+  count: number;
+};
+
+export type AccuracyResponse = {
+  days?: number;
+  sample_size?: number;
+  brier_score: number;
+  roc_auc?: number;
+  calibration_slope?: number;
+  gap_absorption_rate?: number;
+  overbook_regret_rate?: number;
+  overbook_regret_rate_pct?: number;
+  absorbed_by_no_shows_pct?: number;
+  total_evaluated_appointments?: number;
+  precision_high_risk?: number;
+  recall_high_risk?: number;
+  confusion_matrix: {
+    true_negative_attended?: number;
+    true_negative?: number;
+    false_positive: number;
+    false_negative_noshow?: number;
+    false_negative?: number;
+    true_positive_noshow?: number;
+    true_positive?: number;
+    precision_high_risk?: number;
+    recall_high_risk?: number;
+  };
+  calibration_curve?: AccuracyDecile[];
+  calibration_deciles?: AccuracyDecile[];
+  overbook_outcome_mix?: {
+    absorbed_by_noshow_pct: number;
+    concurrent_ontime_consultation_pct: number;
+    waited_over_tolerance_regret_pct: number;
+    unused_buffer_pct: number;
+  };
+  daily_accuracy?: Array<{
+    date: string;
+    predicted_no_shows: number;
+    actual_no_shows: number;
+    absorbed_overbooks: number;
+    regret_count: number;
+  }>;
+  daily_accuracy_trend?: Array<{ day: string; predicted: number; actual: number; brier: number }>;
+  department_brier?: Array<{
+    department: string;
+    brier_score: number;
+    sample_size: number;
+  }>;
+};
+
+export type CapacitySetting = {
+  id?: string;
+  scope: string;
+  department_id?: number | null;
+  doctor_id?: string | null;
+  safety_factor: number;
+  max_overbook_per_slot: number;
+  max_overbook_per_session: number;
+  wait_tolerance_mins: number;
+  consultation_fee_lkr: number;
+  badge_safe_mins?: number;
+  badge_safe_wait_mins?: number;
+  badge_moderate_mins?: number;
+  badge_moderate_wait_mins?: number;
+  auto_assign_waitlist: boolean;
+  auto_assign_time_window_mins?: number;
+  sim_runs?: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type NavCounts = {
+  waitlist_waiting: number;
+  open_slot_offers?: number;
+  today_sessions_count?: number;
+  high_risk_open?: number;
+  unscored_today?: number;
+};
+
+export type CapacityNavCounts = NavCounts;
 
 export type SimulatorParams = {
   daily_clinics_count: number;
