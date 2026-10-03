@@ -269,6 +269,9 @@ class AppointmentOut(BaseModel):
     ai_action_status: str | None = None
     sms_reminder_opt_in: bool = False
     sms_received: bool = False
+    heavy_rain: bool = False
+    fee_lkr: float | None = None
+    data_source: str | None = None
     reminder_sent_at: datetime | None = None
     status: str = "scheduled"
     cancelled_at: datetime | None = None
@@ -925,40 +928,13 @@ class HospitalExpenseResponse(BaseModel):
 
 
 class SimulatorEvaluateRequest(BaseModel):
-    daily_clinics_count: int = Field(30, ge=1, le=150)
-    avg_consultation_fee_lkr: float = Field(4500.0, ge=1000.0, le=30000.0)
-    baseline_no_show_rate: float = Field(0.18, ge=0.01, le=0.60)
-    ai_intervention_coverage: float = Field(0.25, ge=0.05, le=1.0)
-    patient_reachability_rate: float = Field(0.85, ge=0.50, le=1.0)
-    reschedule_success_rate: float = Field(0.65, ge=0.20, le=1.0)
-    overbooking_fill_rate: float = Field(0.70, ge=0.20, le=1.0)
-    
-    # Enhanced parameters (with sensible private-hospital defaults)
-    hospital_retained_fee_pct: float = Field(0.30, ge=0.05, le=1.0)
-    ancillary_revenue_per_attended_lkr: float = Field(3500.0, ge=0.0, le=50000.0)
-    staff_hourly_rate_lkr: float = Field(850.0, ge=100.0, le=10000.0)
-    telco_cost_per_msg_lkr: float = Field(2.0, ge=0.0, le=50.0)
-    operational_days_year: int = Field(310, ge=100, le=365)
-    custom_expenses: list[HospitalExpenseEvaluateItem] | None = None
-
-
-class SimulatorEvaluateResponse(BaseModel):
-    daily_slots_at_risk: float
-    annual_revenue_leakage_lkr: float
-    annual_revenue_recovered_lkr: float
-    recovered_doctor_hours_annual: float
-    nurse_phone_hours_saved_monthly: float
-    net_roi_multiple: float
-
-    # Enhanced metrics
-    total_annual_expenses_lkr: float = 1800000.0
-    gross_revenue_recovered_lkr: float = 0.0
-    direct_labor_savings_lkr: float = 0.0
-    total_gross_value_created_lkr: float = 0.0
-    true_net_profit_lkr: float = 0.0
-    payback_period_days: float = 0.0
-    expense_drag_pct: float = 0.0
-    expense_category_breakdown: dict[str, float] = Field(default_factory=dict)
+    """Assumptions for the ROI replay. Volume, fee and no-show rate are read from the database, not sent."""
+    contact_fraction: float = Field(0.20, ge=0.01, le=1.0)  # share of each day's bookings contacted, riskiest first
+    intervention_efficacy: float = Field(0.30, ge=0.0, le=1.0)  # P(a contacted would-be no-show is recovered)
+    value_multiplier: float = Field(1.0, ge=0.1, le=3.0)  # hospital revenue per LKR of consultation fee
+    cost_per_contact_lkr: float = Field(50.0, ge=0.0, le=5000.0)
+    window_days: int = Field(90, ge=14, le=730)  # history window replayed
+    custom_expenses: list[HospitalExpenseEvaluateItem] | None = None  # override the stored expense rows
 
 
 # ===================================

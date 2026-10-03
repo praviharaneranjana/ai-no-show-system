@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 
 from app import auth, geo, hospital, insights, models, outreach_drafter, schemas, shai_model
 from app.his import get_his_connector, connector as his_connector
-from app.services import capacity_service, geo_service, his_sync, model_eval, prediction_runner, scoring
+from app.services import capacity_service, geo_service, his_sync, model_eval, prediction_runner, roi, scoring
 from app.services.uhid import LK_TZ
 from app.database import get_db
 
@@ -2244,86 +2244,16 @@ def delete_hospital_expense(expense_id: uuid.UUID, db: Session = Depends(get_db)
     return {"ok": True, "id": str(expense_id)}
 
 
-@app.post("/simulator/evaluate", response_model=schemas.SimulatorEvaluateResponse, dependencies=[Depends(auth.require_role("manager"))])
-def evaluate_roi_simulation(params: schemas.SimulatorEvaluateRequest):
-    # Calculations based on Sri Lankan Private Hospital Outpatient Metrics
-    daily_consultations = params.daily_clinics_count * 20  # ~20 patients per consultant clinic
-    daily_at_risk_slots = daily_consultations * params.baseline_no_show_rate
-    
-    annual_operational_days = params.operational_days_year
-    total_annual_lost_slots = daily_at_risk_slots * annual_operational_days
-    
-    # Financial Leakage (Direct Doctor + Hospital Facility Fee + Ancillary Lab/Pharmacy estimate)
-    ancillary_multiplier = 1.6  # Lab tests, pharmacy, follow-up revenue per attended patient
-    effective_slot_value = params.avg_consultation_fee_lkr * ancillary_multiplier
-    annual_revenue_leakage = total_annual_lost_slots * effective_slot_value
-
-    # AI Recovered Capacity
-    intervened_slots = daily_at_risk_slots * params.ai_intervention_coverage
-    reached_patients = intervened_slots * params.patient_reachability_rate
-    
-    # Reclaimed through autonomous rescheduling + dynamic overbooking
-    rescheduled_slots_daily = reached_patients * params.reschedule_success_rate
-    overbooked_filled_daily = (daily_at_risk_slots - rescheduled_slots_daily) * params.overbooking_fill_rate * 0.6
-    total_recovered_daily = rescheduled_slots_daily + overbooked_filled_daily
-    
-    annual_revenue_recovered = total_recovered_daily * annual_operational_days * effective_slot_value
-    
-    # Doctor clinical hours reclaimed (avg 12 mins per consultation)
-    annual_doctor_hours = (total_recovered_daily * annual_operational_days * 12) / 60.0
-
-    # Nurse/Staff phone hours eliminated (each patient confirmation call takes ~3.5 mins)
-    monthly_calls_automated = (daily_consultations * 0.85) * 26  # 26 working days/month
-    nurse_hours_saved_monthly = (monthly_calls_automated * 3.5) / 60.0
-    direct_labor_savings = (nurse_hours_saved_monthly * 12.0) * params.staff_hourly_rate_lkr
-
-    # Dynamic CapEx/OpEx Normalization
-    category_breakdown: dict[str, float] = {}
-    if params.custom_expenses is not None:
-        total_annual_expenses = 0.0
-        for item in params.custom_expenses:
-            if not item.is_active:
-                continue
-            cat_key = item.category_key or "other"
-            if item.recurrence == "monthly":
-                annual_cost = item.amount_lkr * 12.0
-            elif item.recurrence == "per_patient":
-                annual_cost = item.amount_lkr * (intervened_slots * annual_operational_days)
-            else:  # "annual" or "one_off"
-                annual_cost = item.amount_lkr
-            
-            total_annual_expenses += annual_cost
-            category_breakdown[cat_key] = round(category_breakdown.get(cat_key, 0.0) + annual_cost, 2)
-    else:
-        total_annual_expenses = 1_800_000.0  # LKR 1.8M / year default baseline
-        category_breakdown["tech_infrastructure"] = 1_800_000.0
-
-    total_gross_value = annual_revenue_recovered + direct_labor_savings
-    true_net_profit = total_gross_value - total_annual_expenses
-    
-    payback_days = 0.0
-    if total_gross_value > 0:
-        payback_days = round((total_annual_expenses / total_gross_value) * 365.0, 1)
-
-    expense_drag = 0.0
-    if total_gross_value > 0:
-        expense_drag = round((total_annual_expenses / total_gross_value) * 100.0, 2)
-
-    net_roi = round(annual_revenue_recovered / max(total_annual_expenses, 1.0), 1)
-
-    return schemas.SimulatorEvaluateResponse(
-        daily_slots_at_risk=round(daily_at_risk_slots, 1),
-        annual_revenue_leakage_lkr=round(annual_revenue_leakage, 0),
-        annual_revenue_recovered_lkr=round(annual_revenue_recovered, 0),
-        recovered_doctor_hours_annual=round(annual_doctor_hours, 1),
-        nurse_phone_hours_saved_monthly=round(nurse_hours_saved_monthly, 1),
-        net_roi_multiple=net_roi,
-        total_annual_expenses_lkr=round(total_annual_expenses, 2),
-        gross_revenue_recovered_lkr=round(annual_revenue_recovered, 0),
-        direct_labor_savings_lkr=round(direct_labor_savings, 0),
-        total_gross_value_created_lkr=round(total_gross_value, 0),
-        true_net_profit_lkr=round(true_net_profit, 0),
-        payback_period_days=payback_days,
-        expense_drag_pct=expense_drag,
-        expense_category_breakdown=category_breakdown,
+@app.post("/simulator/evaluate", dependencies=[Depends(auth.require_role("manager"))])
+def evaluate_roi_simulation(params: schemas.SimulatorEvaluateRequest, request: Request, db: Session = Depends(get_db)):
+    """ROI of risk-ranked outreach, replayed on this hospital's recorded history (see services/roi.py)."""
+    return roi.evaluate(
+        db,
+        hospital_id=getattr(request.state, "hospital_id", None),
+        contact_fraction=params.contact_fraction,
+        efficacy=params.intervention_efficacy,
+        value_multiplier=params.value_multiplier,
+        cost_per_contact_lkr=params.cost_per_contact_lkr,
+        window_days=params.window_days,
+        custom_expenses=[i.model_dump() for i in params.custom_expenses] if params.custom_expenses is not None else None,
     )

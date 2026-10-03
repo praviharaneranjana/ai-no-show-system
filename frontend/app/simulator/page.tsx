@@ -18,18 +18,18 @@ export default async function SimulatorPage() {
             </div>
             <div>
               <h1 className="text-2xl font-bold tracking-tight text-foreground">
-                Executive ROI & What-If Simulator
+                Outreach ROI
               </h1>
             </div>
           </div>
           <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
-            Adjust clinic scale, hospital expense profiles, and patient giveaways to model true boardroom EBITDA.
+            Replays past bookings: contact the riskiest share first and compare the recovered revenue with random contact.
           </p>
         </div>
 
         <div className="inline-flex items-center gap-2 self-start md:self-auto px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-medium">
           <Sparkles className="size-3.5" />
-          <span>Parametric CapEx/OpEx Model · Currency in LKR</span>
+          <span>Replay on history · Currency in LKR</span>
         </div>
       </div>
 

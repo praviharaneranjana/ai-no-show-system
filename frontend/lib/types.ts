@@ -25,6 +25,8 @@ export type PatientInput = Omit<Patient, "id" | "created_at" | "uhid" | "city" |
 };
 
 export type Appointment = {
+  fee_lkr?: number | null;
+  data_source?: string | null;
   id: string;
   patient_id: string;
   scheduled_day: string;
@@ -574,40 +576,65 @@ export type HospitalExpense = {
   updated_at?: string;
 };
 
+/** Assumptions sent to POST /simulator/evaluate. Volume, fee and no-show rate are read from the database. */
 export type SimulatorParams = {
-  daily_clinics_count: number;
-  avg_consultation_fee_lkr: number;
-  baseline_no_show_rate: number;
-  ai_intervention_coverage: number;
-  patient_reachability_rate: number;
-  reschedule_success_rate: number;
-  overbooking_fill_rate: number;
-  // Advanced hospital economics
-  hospital_retained_fee_pct?: number;
-  ancillary_revenue_per_attended_lkr?: number;
-  staff_hourly_rate_lkr?: number;
-  telco_cost_per_msg_lkr?: number;
-  operational_days_year?: number;
-  custom_expenses?: HospitalExpense[];
+  contact_fraction: number;
+  intervention_efficacy: number;
+  value_multiplier: number;
+  cost_per_contact_lkr: number;
+  window_days: number;
 };
 
-export type SimulatorResult = {
-  daily_slots_at_risk: number;
-  annual_revenue_leakage_lkr: number;
-  annual_revenue_recovered_lkr: number;
-  recovered_doctor_hours_annual: number;
-  nurse_phone_hours_saved_monthly: number;
-  net_roi_multiple: number;
-  // Enhanced boardroom metrics
-  total_annual_expenses_lkr: number;
-  gross_revenue_recovered_lkr: number;
-  direct_labor_savings_lkr: number;
-  total_gross_value_created_lkr: number;
-  true_net_profit_lkr: number;
-  payback_period_days: number;
-  expense_drag_pct: number;
-  expense_category_breakdown: Record<string, number>;
+export type RoiScenario = {
+  k: number;
+  efficacy: number;
+  contacts: number;
+  recovered_lkr_model: number;
+  recovered_lkr_random: number;
+  contact_cost_lkr: number;
+  net_lkr_model: number;
+  net_lkr_random: number;
+  uplift_vs_random_lkr: number;
+  recall_model: number | null;
+  recall_random: number | null;
 };
+
+export type SimulatorResult =
+  | { empty: true; assumptions: SimulatorParams }
+  | {
+      empty: false;
+      assumptions: SimulatorParams;
+      baseline: {
+        source: "database";
+        n_appointments: number;
+        days_with_appointments: number;
+        window_calendar_days: number;
+        daily_appointments: number;
+        avg_fee_lkr: number;
+        no_show_rate: number;
+        synthetic: boolean;
+      };
+      replay: RoiScenario & { no_shows: number; appointments: number; days: number; caught_model: number; caught_random: number };
+      annual: {
+        scale: number;
+        recovered_lkr: number;
+        recovered_lkr_random_contact: number;
+        contact_cost_lkr: number;
+        fixed_expenses_lkr: number;
+        net_benefit_lkr: number;
+        net_benefit_low_lkr: number;
+        net_benefit_high_lkr: number;
+        roi_multiple: number | null;
+        payback_days: number | null;
+        expense_category_breakdown: Record<string, number>;
+        expenses_recorded: number;
+      };
+      sensitivity: {
+        efficacies: number[];
+        ks: number[];
+        cells: Array<RoiScenario & { annual_net_lkr: number; annual_recovered_lkr: number }>;
+      };
+    };
 
 // ===================================
 // Dashboard drill-down screens (backend app/insights.py)

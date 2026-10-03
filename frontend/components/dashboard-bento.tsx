@@ -19,7 +19,6 @@ import { RingProgress } from "@/components/ring-progress";
 import { ShapDriverBars } from "@/components/shap-driver-bars";
 import { JourneyMap } from "@/components/journey-map";
 import { useStaffName } from "@/components/use-staff-name";
-import { ROI_SIMULATOR_DEFAULTS } from "@/lib/roi";
 import { NoShowTrendChart } from "@/components/charts/no-show-trend-chart";
 import { AppointmentRows } from "@/components/appointment-rows";
 import { INTERVENTION_STATUS_LABEL, LANGUAGE_LABEL, timeAgo } from "@/lib/format";
@@ -48,7 +47,6 @@ function CardLink({ href, label }: { href: string; label: string }) {
 
 // Revenue per predicted no-show: standard consultation fee + ancillary revenue (same
 // assumptions as the ROI simulator, see lib/roi.ts).
-const ANCILLARY_MULTIPLIER = 1.6;
 const DAY_MS = 86_400_000;
 
 // Local calendar date as YYYY-MM-DD (en-CA formats that way), offset by whole days.
@@ -112,9 +110,13 @@ export function DashboardBento({ records, doctorSessions, trend, activity, regis
     (r) => nextSevenDays.includes(r.appointment.appointment_day) && r.appointment.no_show === null
   ).length;
 
-  const feeLkr = ROI_SIMULATOR_DEFAULTS.avg_consultation_fee_lkr;
-  const revenueAtRiskLkr = expectedNoShows * feeLkr * ANCILLARY_MULTIPLIER;
-  const revenuePerDay = expectedPerDay.map((e) => e * feeLkr * ANCILLARY_MULTIPLIER);
+  // Revenue at risk = sum of risk x the appointment's own recorded fee (no assumed fee, no ancillary uplift).
+  const revenueOn = (day: string) =>
+    records
+      .filter((r) => r.appointment.appointment_day === day && r.appointment.no_show === null)
+      .reduce((sum, r) => sum + (r.prediction?.risk_score ?? 0) * (r.appointment.fee_lkr ?? 0), 0);
+  const revenuePerDay = nextSevenDays.map(revenueOn);
+  const revenueAtRiskLkr = revenuePerDay.reduce((a, b) => a + b, 0);
   const maxRevenueDay = Math.max(...revenuePerDay, 1);
 
   // Capacity load: today's booked appointments vs the combined capacity of today's doctor sessions.

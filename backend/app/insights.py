@@ -18,10 +18,8 @@ from app.database import get_db
 
 router = APIRouter()
 
-# Same revenue assumptions as the ROI simulator (frontend/lib/roi.ts).
-CONSULTATION_FEE_LKR = 4500.0
-ANCILLARY_MULTIPLIER = 1.6
-SLOT_VALUE_LKR = CONSULTATION_FEE_LKR * ANCILLARY_MULTIPLIER
+# Revenue at risk uses each appointment's own fee (appointment.fee_lkr, else the doctor's fee); no ancillary uplift.
+ANCILLARY_MULTIPLIER = 1.0
 
 RISK_ORDER = case(
     (models.Prediction.risk_category == "High", 0),
@@ -169,8 +167,13 @@ def revenue_at_risk(request: Request, days: int = Query(7, ge=1, le=90), db: Ses
     today = date.today()
     hospital_id = getattr(request.state, "hospital_id", None)
     query = (
-        db.query(models.Appointment, models.Prediction.risk_score)
+        db.query(
+            models.Appointment,
+            models.Prediction.risk_score,
+            func.coalesce(models.Appointment.fee_lkr, models.Doctor.consultation_fee_lkr, 0.0),
+        )
         .join(models.Prediction, models.Prediction.appointment_id == models.Appointment.id)
+        .outerjoin(models.Doctor, models.Doctor.id == models.Appointment.doctor_id)
         .filter(
             models.Appointment.appointment_day >= today,
             models.Appointment.appointment_day < today + timedelta(days=days),
@@ -182,19 +185,22 @@ def revenue_at_risk(request: Request, days: int = Query(7, ge=1, le=90), db: Ses
     rows = query.all()
 
     def bucketise(keyfn) -> list[RevenueBucket]:
-        acc: dict[str, list[float]] = defaultdict(lambda: [0, 0.0])
-        for appt, risk in rows:
+        acc: dict[str, list[float]] = defaultdict(lambda: [0, 0.0, 0.0])
+        for appt, risk, fee in rows:
             k = keyfn(appt) or "Unassigned"
             acc[k][0] += 1
             acc[k][1] += float(risk)
+            acc[k][2] += float(risk) * float(fee)
         out = [
             RevenueBucket(key=k, appointments=int(v[0]), expected_no_shows=round(v[1], 2),
-                          revenue_at_risk_lkr=round(v[1] * SLOT_VALUE_LKR))
+                          revenue_at_risk_lkr=round(v[2]))
             for k, v in acc.items()
         ]
         return out
 
-    expected = sum(float(r) for _, r in rows)
+    expected = sum(float(r) for _, r, _ in rows)
+    at_risk = sum(float(r) * float(f) for _, r, f in rows)
+    avg_fee = (sum(float(f) for _, _, f in rows) / len(rows)) if rows else 0.0
     by_day = sorted(bucketise(lambda a: a.appointment_day.isoformat()), key=lambda b: b.key)
     # include empty days so the chart is a continuous window
     have = {b.key for b in by_day}
@@ -206,11 +212,11 @@ def revenue_at_risk(request: Request, days: int = Query(7, ge=1, le=90), db: Ses
 
     return RevenueAtRiskResponse(
         days=days, total_appointments=len(rows), expected_no_shows=round(expected, 2),
-        revenue_at_risk_lkr=round(expected * SLOT_VALUE_LKR),
+        revenue_at_risk_lkr=round(at_risk),
         by_department=sorted(bucketise(lambda a: a.department), key=lambda b: -b.revenue_at_risk_lkr),
         by_doctor=sorted(bucketise(lambda a: a.doctor_name), key=lambda b: -b.revenue_at_risk_lkr)[:15],
         by_day=by_day,
-        consultation_fee_lkr=CONSULTATION_FEE_LKR, ancillary_multiplier=ANCILLARY_MULTIPLIER,
+        consultation_fee_lkr=round(avg_fee), ancillary_multiplier=ANCILLARY_MULTIPLIER,
     )
 
 

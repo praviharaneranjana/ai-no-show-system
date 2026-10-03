@@ -1,121 +1,82 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  Cell,
-  ReferenceLine,
-  CartesianGrid,
-} from "recharts";
-import {
-  ChevronDown,
-  Wallet,
-  TrendingDown,
-  Clock3,
-  PhoneOff,
-  Sparkles,
-  Info,
-  Gift,
-  MessageSquare,
-  Cpu,
-  Users,
-  Building2,
-  Plus,
-  Trash2,
-  CheckCircle2,
-  ArrowUpRight,
-  RotateCcw,
-  Percent,
-  Layers,
-  Check,
-  Receipt,
-  AlertCircle,
-  HelpCircle,
-  Settings,
-  Save,
-  X,
-} from "lucide-react";
+import { useCallback, useEffect, useState, useTransition } from "react";
+import { Plus, Trash2, Receipt, Info } from "lucide-react";
 
+import { EmptyState } from "@/components/empty-state";
+import { SyntheticBadgeStatic } from "@/components/synthetic-badge";
 import { Slider } from "@/components/ui/slider";
-import { formatLkr } from "@/lib/utils";
-import {
-  DEFAULT_HOSPITAL_PROFILE,
-  ROI_SIMULATOR_DEFAULTS,
-  evaluateRoi,
-  type HospitalProfile,
-} from "@/lib/roi";
-import type {
-  ExpenseCategory,
-  ExpenseRecurrence,
-  HospitalExpense,
-  SimulatorParams,
-} from "@/lib/types";
+import { cn, formatLkr } from "@/lib/utils";
+import type { ExpenseCategory, ExpenseRecurrence, HospitalExpense, SimulatorParams, SimulatorResult } from "@/lib/types";
 import {
   createHospitalExpenseAction,
   deleteHospitalExpenseAction,
+  evaluateSimulatorAction,
   updateHospitalExpenseAction,
 } from "@/app/simulator/actions";
 
-function getCategoryIcon(key?: string) {
-  switch (key) {
-    case "patient_incentives":
-      return <Gift className="size-4 text-pink-500" />;
-    case "telco_outreach":
-      return <MessageSquare className="size-4 text-sky-500" />;
-    case "tech_infrastructure":
-      return <Cpu className="size-4 text-indigo-500" />;
-    case "staff_overtime":
-      return <Users className="size-4 text-amber-500" />;
-    case "admin_overhead":
-      return <Building2 className="size-4 text-emerald-500" />;
-    default:
-      return <Receipt className="size-4 text-primary" />;
-  }
-}
+const DEFAULTS: SimulatorParams = {
+  contact_fraction: 0.2,
+  intervention_efficacy: 0.3,
+  value_multiplier: 1.0,
+  cost_per_contact_lkr: 50,
+  window_days: 90,
+};
 
-function SliderField({
+const pct = (v: number | null | undefined, d = 1) => (v == null ? "—" : `${(v * 100).toFixed(d)}%`);
+const lkr = (v: number) => `LKR ${formatLkr(Math.round(v))}`;
+
+function Assumption({
   label,
+  hint,
+  display,
   value,
-  displayValue,
   min,
   max,
   step,
   onChange,
-  sublabel,
 }: {
   label: string;
+  hint: string;
+  display: string;
   value: number;
-  displayValue: string;
   min: number;
   max: number;
   step: number;
   onChange: (v: number) => void;
-  sublabel?: string;
 }) {
   return (
-    <div className="flex flex-col gap-2 p-3 rounded-2xl bg-muted/20 border border-border/40 hover:border-border/80 transition-all">
-      <div className="flex items-center justify-between text-xs">
+    <div className="flex flex-col gap-2 rounded-2xl border border-border/40 bg-muted/20 p-3">
+      <div className="flex items-start justify-between gap-2 text-xs">
         <div className="flex flex-col">
-          <span className="font-semibold text-foreground text-xs">{label}</span>
-          {sublabel && <span className="text-[10px] text-muted-foreground">{sublabel}</span>}
+          <span className="flex items-center gap-1.5 font-semibold text-foreground">
+            {label}
+            <span className="rounded bg-amber-500/15 px-1.5 py-px text-[9px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-300">
+              assumption
+            </span>
+          </span>
+          <span className="text-[10px] text-muted-foreground">{hint}</span>
         </div>
-        <span className="font-semibold tabular-nums text-primary text-xs px-2.5 py-0.5 rounded-full bg-primary/10 border border-primary/20">
-          {displayValue}
+        <span className="rounded-full border border-primary/20 bg-primary/10 px-2.5 py-0.5 font-semibold tabular-nums text-primary">
+          {display}
         </span>
       </div>
-      <Slider
-        value={value}
-        min={min}
-        max={max}
-        step={step}
-        onValueChange={(v) => onChange(v as number)}
-        className="py-1 cursor-pointer"
-      />
+      <Slider value={value} min={min} max={max} step={step} onValueChange={(v) => onChange(v as number)} className="cursor-pointer py-1" />
+    </div>
+  );
+}
+
+function Fact({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="rounded-2xl border border-border/50 bg-card p-3">
+      <div className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
+        {label}
+        <span className="rounded bg-emerald-500/15 px-1.5 py-px text-[9px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+          from database
+        </span>
+      </div>
+      <div className="mt-1 font-mono text-xl font-extrabold text-foreground">{value}</div>
+      {sub && <div className="text-[10px] text-muted-foreground">{sub}</div>}
     </div>
   );
 }
@@ -127,1045 +88,353 @@ export function RoiSimulator({
   initialCategories?: ExpenseCategory[];
   initialExpenses?: HospitalExpense[];
 }) {
-  const [hospitalProfile, setHospitalProfile] = useState<HospitalProfile>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const saved = localStorage.getItem("shai_hospital_profile");
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          return {
-            ...DEFAULT_HOSPITAL_PROFILE,
-            ...parsed,
-            defaults: { ...DEFAULT_HOSPITAL_PROFILE.defaults, ...parsed.defaults },
-          };
-        }
-      } catch {}
-    }
-    return DEFAULT_HOSPITAL_PROFILE;
-  });
-
-  const [showProfileModal, setShowProfileModal] = useState(false);
-
-  // Edit form state for hospital baseline
-  const [editHospitalName, setEditHospitalName] = useState(hospitalProfile.hospital_name);
-  const [editFacilityTier, setEditFacilityTier] = useState(hospitalProfile.facility_tier || "Tertiary Private Care");
-  const [editClinics, setEditClinics] = useState(hospitalProfile.defaults.daily_clinics_count);
-  const [editFee, setEditFee] = useState(hospitalProfile.defaults.avg_consultation_fee_lkr);
-  const [editNoShowRate, setEditNoShowRate] = useState(hospitalProfile.defaults.baseline_no_show_rate * 100);
-  const [editHospitalShare, setEditHospitalShare] = useState((hospitalProfile.defaults.hospital_retained_fee_pct ?? 0.3) * 100);
-  const [editAncillary, setEditAncillary] = useState(hospitalProfile.defaults.ancillary_revenue_per_attended_lkr ?? 3500);
-  const [editStaffWage, setEditStaffWage] = useState(hospitalProfile.defaults.staff_hourly_rate_lkr ?? 850);
-  const [editDays, setEditDays] = useState(hospitalProfile.defaults.operational_days_year ?? 310);
-
+  const [params, setParams] = useState<SimulatorParams>(DEFAULTS);
+  const [result, setResult] = useState<SimulatorResult | null>(null);
+  const [failed, setFailed] = useState(false);
   const [expenses, setExpenses] = useState<HospitalExpense[]>(initialExpenses);
-  const [categories] = useState<ExpenseCategory[]>(initialCategories);
+  const [version, setVersion] = useState(0); // bump to re-run after the stored expenses change
+  const [, startTransition] = useTransition();
 
-  const [params, setParams] = useState<SimulatorParams>({
-    ...hospitalProfile.defaults,
-    custom_expenses: initialExpenses,
-  });
-
-  const [showAdvancedEconomics, setShowAdvancedEconomics] = useState(false);
-  const [showAdvancedConversion, setShowAdvancedConversion] = useState(false);
-  const [showAddExpense, setShowAddExpense] = useState(false);
-
-  // New Expense Form State
+  const [showAdd, setShowAdd] = useState(false);
   const [newTitle, setNewTitle] = useState("");
-  const [newCategoryId, setNewCategoryId] = useState(initialCategories[0]?.id || "");
-  const [newAmount, setNewAmount] = useState<number>(250000);
+  const [newCategoryId, setNewCategoryId] = useState(initialCategories[0]?.id ?? "");
+  const [newAmount, setNewAmount] = useState(250000);
   const [newRecurrence, setNewRecurrence] = useState<ExpenseRecurrence>("annual");
-  const [newNotes, setNewNotes] = useState("");
 
-  const [isPending, startTransition] = useTransition();
+  useEffect(() => {
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const res = await evaluateSimulatorAction(params);
+      if (cancelled) return;
+      setFailed(res == null);
+      if (res) setResult(res);
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [params, version]);
 
-  // Instant reactive evaluation
-  const result = useMemo(() => {
-    return evaluateRoi({ ...params, custom_expenses: expenses });
-  }, [params, expenses]);
-
-  function set<K extends keyof SimulatorParams>(key: K, value: number) {
+  const set = useCallback(<K extends keyof SimulatorParams>(key: K, value: number) => {
     setParams((p) => ({ ...p, [key]: value }));
+  }, []);
+
+  function toggleExpense(id: string, active: boolean) {
+    setExpenses((prev) => prev.map((e) => (e.id === id ? { ...e, is_active: !active } : e)));
+    startTransition(async () => {
+      await updateHospitalExpenseAction(id, { is_active: !active });
+      setVersion((v) => v + 1);
+    });
   }
 
-  function handleOpenProfileModal() {
-    setEditHospitalName(hospitalProfile.hospital_name);
-    setEditFacilityTier(hospitalProfile.facility_tier || "Tertiary Private Care");
-    setEditClinics(hospitalProfile.defaults.daily_clinics_count);
-    setEditFee(hospitalProfile.defaults.avg_consultation_fee_lkr);
-    setEditNoShowRate(Math.round(hospitalProfile.defaults.baseline_no_show_rate * 100));
-    setEditHospitalShare(Math.round((hospitalProfile.defaults.hospital_retained_fee_pct ?? 0.3) * 100));
-    setEditAncillary(hospitalProfile.defaults.ancillary_revenue_per_attended_lkr ?? 3500);
-    setEditStaffWage(hospitalProfile.defaults.staff_hourly_rate_lkr ?? 850);
-    setEditDays(hospitalProfile.defaults.operational_days_year ?? 310);
-    setShowProfileModal(true);
+  function removeExpense(id: string) {
+    setExpenses((prev) => prev.filter((e) => e.id !== id));
+    startTransition(async () => {
+      await deleteHospitalExpenseAction(id);
+      setVersion((v) => v + 1);
+    });
   }
 
-  function handleSaveHospitalProfile(e: React.FormEvent) {
+  function addExpense(e: React.FormEvent) {
     e.preventDefault();
-    const updated: HospitalProfile = {
-      hospital_name: editHospitalName.trim() || "Hospital Main Center",
-      facility_tier: editFacilityTier.trim() || "Tertiary Private Care",
-      defaults: {
-        ...params,
-        daily_clinics_count: Number(editClinics),
-        avg_consultation_fee_lkr: Number(editFee),
-        baseline_no_show_rate: Number(editNoShowRate) / 100,
-        hospital_retained_fee_pct: Number(editHospitalShare) / 100,
-        ancillary_revenue_per_attended_lkr: Number(editAncillary),
-        staff_hourly_rate_lkr: Number(editStaffWage),
-        operational_days_year: Number(editDays),
-      },
-    };
-
-    setHospitalProfile(updated);
-    setParams({
-      ...updated.defaults,
-      custom_expenses: expenses,
-    });
-    try {
-      localStorage.setItem("shai_hospital_profile", JSON.stringify(updated));
-    } catch {}
-    setShowProfileModal(false);
-  }
-
-  function handleResetToHospitalBaseline() {
-    setParams({
-      ...hospitalProfile.defaults,
-      custom_expenses: expenses,
-    });
-  }
-
-  function handleToggleExpense(expenseId: string, currentActive: boolean) {
-    const updated = expenses.map((e) =>
-      e.id === expenseId ? { ...e, is_active: !currentActive } : e
-    );
-    setExpenses(updated);
+    const cat = initialCategories.find((c) => c.id === newCategoryId) ?? initialCategories[0];
+    if (!newTitle.trim() || newAmount <= 0 || !cat) return;
     startTransition(async () => {
-      await updateHospitalExpenseAction(expenseId, { is_active: !currentActive });
-    });
-  }
-
-  function handleDeleteExpense(expenseId: string) {
-    const updated = expenses.filter((e) => e.id !== expenseId);
-    setExpenses(updated);
-    startTransition(async () => {
-      await deleteHospitalExpenseAction(expenseId);
-    });
-  }
-
-  function handleCreateExpense(e: React.FormEvent) {
-    e.preventDefault();
-    if (!newTitle.trim() || newAmount <= 0) return;
-
-    const matchedCat = categories.find((c) => c.id === newCategoryId) || categories[0];
-    const tempId = `temp-${Date.now()}`;
-    const newRecord: HospitalExpense = {
-      id: tempId,
-      hospital_name: "Default Hospital",
-      category_id: matchedCat?.id || "temp",
-      category: matchedCat,
-      category_key: matchedCat?.key,
-      title: newTitle.trim(),
-      amount_lkr: Number(newAmount),
-      recurrence: newRecurrence,
-      is_active: true,
-      notes: newNotes.trim() || undefined,
-    };
-
-    setExpenses((prev) => [newRecord, ...prev]);
-    setNewTitle("");
-    setNewAmount(250000);
-    setNewNotes("");
-    setShowAddExpense(false);
-
-    startTransition(async () => {
-      const persisted = await createHospitalExpenseAction({
-        category_id: matchedCat?.id || categories[0]?.id || "",
-        hospital_name: "Default Hospital",
-        title: newRecord.title,
-        amount_lkr: newRecord.amount_lkr,
-        recurrence: newRecord.recurrence,
+      const created = await createHospitalExpenseAction({
+        category_id: cat.id,
+        title: newTitle.trim(),
+        amount_lkr: Number(newAmount),
+        recurrence: newRecurrence,
         is_active: true,
-        notes: newRecord.notes || undefined,
       });
-      if (persisted) {
-        setExpenses((curr) => curr.map((x) => (x.id === tempId ? persisted : x)));
-      }
+      if (created) setExpenses((prev) => [created, ...prev]);
+      setVersion((v) => v + 1);
     });
+    setNewTitle("");
+    setShowAdd(false);
   }
 
-  const activeExpensesCount = expenses.filter((e) => e.is_active).length;
+  const synthetic = result && !result.empty && result.baseline.synthetic;
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Confidential Hospital Baseline & Operating Identity Banner */}
-      <div className="rounded-[24px] bg-card p-4 sm:p-5 shadow-xs border border-border/60 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center gap-3.5">
-          <div className="size-10 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0">
-            <Building2 className="size-5" />
-          </div>
-          <div className="flex flex-col">
-            <div className="flex items-center gap-2">
-              <h3 className="text-base font-bold text-foreground">{hospitalProfile.hospital_name}</h3>
-              <span className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                {hospitalProfile.facility_tier || "Active Hospital Baseline"}
-              </span>
-            </div>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Calibrated Baseline: {hospitalProfile.defaults.daily_clinics_count} daily clinics · LKR {hospitalProfile.defaults.avg_consultation_fee_lkr.toLocaleString()} fee · {Math.round(hospitalProfile.defaults.baseline_no_show_rate * 100)}% no-show · {hospitalProfile.defaults.operational_days_year ?? 310} operating days
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 self-start md:self-auto">
-          <button
-            type="button"
-            onClick={handleResetToHospitalBaseline}
-            title="Reset sliders back to your saved hospital baseline"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border/70 hover:bg-muted text-xs font-semibold text-foreground transition-all cursor-pointer"
-          >
-            <RotateCcw className="size-3.5 text-muted-foreground" />
-            <span>Reset to Baseline</span>
-          </button>
-          <button
-            type="button"
-            onClick={handleOpenProfileModal}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-semibold shadow-xs hover:bg-primary/90 transition-all cursor-pointer"
-          >
-            <Settings className="size-3.5" />
-            <span>Edit Hospital Baseline</span>
-          </button>
-        </div>
+      <div className="flex items-start gap-3 rounded-2xl border border-border/60 bg-card p-4 text-xs text-muted-foreground">
+        <Info className="mt-0.5 size-4 shrink-0 text-primary" />
+        <p>
+          Volume, average fee and no-show rate are read from this hospital&apos;s recorded history. The benefit is a
+          replay: each past day&apos;s bookings are ranked by their stored risk score, the top share is contacted, and the
+          no-shows caught are valued at the booking&apos;s own fee. Everything marked <b>assumption</b> is a guess you can change.
+          {synthetic && <span className="ml-2 inline-block align-middle"><SyntheticBadgeStatic /></span>}
+        </p>
       </div>
 
-      {/* Hospital Baseline Configuration Modal / Slide-over */}
-      {showProfileModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-200">
-          <div className="relative w-full max-w-2xl rounded-[28px] bg-card p-6 sm:p-7 shadow-2xl border border-border/80 flex flex-col gap-5 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-border/40">
-              <div className="flex items-center gap-2.5">
-                <div className="size-8 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
-                  <Building2 className="size-4.5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-foreground">Configure Our Hospital Baseline</h3>
-                  <p className="text-xs text-muted-foreground">
-                    Customize default metrics for your hospital. Saved values become your permanent baseline.
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowProfileModal(false)}
-                className="size-8 rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground flex items-center justify-center transition-all cursor-pointer"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
+      {failed && <p className="text-xs text-rose-600">Could not evaluate the model. Try again.</p>}
 
-            <form onSubmit={handleSaveHospitalProfile} className="flex flex-col gap-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-foreground">Hospital / Facility Name</label>
-                  <input
-                    type="text"
-                    value={editHospitalName}
-                    onChange={(e) => setEditHospitalName(e.target.value)}
-                    required
-                    placeholder="e.g. Royal Central Hospital"
-                    className="h-9 px-3 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-foreground">Facility Tier / Branch Label</label>
-                  <input
-                    type="text"
-                    value={editFacilityTier}
-                    onChange={(e) => setEditFacilityTier(e.target.value)}
-                    placeholder="e.g. Main Hospital & Outpatient Wing"
-                    className="h-9 px-3 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-2 border-t border-border/40">
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-foreground">Default Daily Consultant Clinics</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={200}
-                    value={editClinics}
-                    onChange={(e) => setEditClinics(Number(e.target.value))}
-                    required
-                    className="h-9 px-3 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                  <span className="text-[10px] text-muted-foreground">Standard active specialist clinics per day</span>
-                </div>
-
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-foreground">Default Consultation Fee (LKR)</label>
-                  <input
-                    type="number"
-                    min={500}
-                    max={50000}
-                    step={250}
-                    value={editFee}
-                    onChange={(e) => setEditFee(Number(e.target.value))}
-                    required
-                    className="h-9 px-3 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                  <span className="text-[10px] text-muted-foreground">Average channeling fee charged to patients</span>
-                </div>
-
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-foreground">Baseline No-Show Rate (%)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={60}
-                    step={1}
-                    value={editNoShowRate}
-                    onChange={(e) => setEditNoShowRate(Number(e.target.value))}
-                    required
-                    className="h-9 px-3 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                  <span className="text-[10px] text-muted-foreground">Historical observed no-show percentage</span>
-                </div>
-
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-foreground">Hospital Facility Share (%)</label>
-                  <input
-                    type="number"
-                    min={5}
-                    max={100}
-                    step={1}
-                    value={editHospitalShare}
-                    onChange={(e) => setEditHospitalShare(Number(e.target.value))}
-                    required
-                    className="h-9 px-3 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                  <span className="text-[10px] text-muted-foreground">Hospital retained share of the channeling fee</span>
-                </div>
-
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-foreground">Avg Ancillary Lab & Pharmacy (LKR)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    max={50000}
-                    step={250}
-                    value={editAncillary}
-                    onChange={(e) => setEditAncillary(Number(e.target.value))}
-                    required
-                    className="h-9 px-3 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                  <span className="text-[10px] text-muted-foreground">Diagnostic lab & pharmacy revenue per attended slot</span>
-                </div>
-
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-foreground">Staff Loaded Hourly Rate (LKR/hr)</label>
-                  <input
-                    type="number"
-                    min={300}
-                    max={5000}
-                    step={50}
-                    value={editStaffWage}
-                    onChange={(e) => setEditStaffWage(Number(e.target.value))}
-                    required
-                    className="h-9 px-3 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                  <span className="text-[10px] text-muted-foreground">Hourly wage rate to monetize staff calling time</span>
-                </div>
-
-                <div className="flex flex-col gap-1 sm:col-span-2">
-                  <label className="text-xs font-semibold text-foreground">Annual Active Operating Days</label>
-                  <input
-                    type="number"
-                    min={200}
-                    max={365}
-                    step={5}
-                    value={editDays}
-                    onChange={(e) => setEditDays(Number(e.target.value))}
-                    required
-                    className="h-9 px-3 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                  <span className="text-[10px] text-muted-foreground">Total operating days per calendar year (e.g. 310 - 365)</span>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-border/40">
-                <button
-                  type="button"
-                  onClick={() => setShowProfileModal(false)}
-                  className="px-4 py-2 rounded-xl border border-border text-xs font-semibold hover:bg-muted text-muted-foreground transition-all cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold shadow-xs hover:bg-primary/90 transition-all cursor-pointer"
-                >
-                  <Save className="size-3.5" />
-                  <span>Save as Our Hospital Defaults</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {result?.empty && (
+        <EmptyState
+          title="No history to replay"
+          description="The simulator needs appointments with a recorded outcome and a stored prediction in the replay window."
+        />
       )}
 
+      {result && !result.empty && (
+        <>
+          <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Fact
+              label="Bookings per day"
+              value={result.baseline.daily_appointments.toFixed(0)}
+              sub={`${result.baseline.n_appointments.toLocaleString()} appointments over ${result.baseline.window_calendar_days} days`}
+            />
+            <Fact label="Average fee" value={lkr(result.baseline.avg_fee_lkr)} sub="per appointment, recorded" />
+            <Fact label="No-show rate" value={pct(result.baseline.no_show_rate)} sub="observed outcomes" />
+            <Fact
+              label="Recorded platform costs"
+              value={lkr(result.annual.fixed_expenses_lkr)}
+              sub={result.annual.expenses_recorded ? `${result.annual.expenses_recorded} active expense rows / year` : "none recorded"}
+            />
+          </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Column: Sliders, Operating Model & Custom Expenses (6 Cols) */}
-        <div className="lg:col-span-6 flex flex-col gap-5">
-          {/* Card 1: Clinic Scale & Operating Model */}
-          <div className="rounded-[24px] bg-card p-5 sm:p-6 shadow-xs border border-border/60 flex flex-col gap-4">
-            <div className="flex items-center justify-between pb-2 border-b border-border/40">
+          <section className="rounded-[24px] border border-border/60 bg-card p-5 shadow-xs">
+            <h3 className="text-sm font-bold text-foreground">Annual net benefit of risk-ranked outreach</h3>
+            <div className="mt-2 flex flex-wrap items-end gap-x-8 gap-y-2">
               <div>
-                <h2 className="text-base font-bold text-foreground">Clinic Scale & Operating Model</h2>
-                <p className="text-xs text-muted-foreground">Calibrate baseline parameters for hospital volume & economics</p>
+                <div
+                  className={cn(
+                    "font-mono text-4xl font-extrabold tracking-tight",
+                    result.annual.net_benefit_lkr >= 0 ? "text-emerald-600" : "text-rose-600"
+                  )}
+                >
+                  {lkr(result.annual.net_benefit_lkr)}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  range across the sensitivity table: {lkr(result.annual.net_benefit_low_lkr)} to {lkr(result.annual.net_benefit_high_lkr)}
+                </div>
               </div>
+              <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs sm:grid-cols-4">
+                <div><dt className="text-muted-foreground">Recovered revenue</dt><dd className="font-mono font-semibold">{lkr(result.annual.recovered_lkr)}</dd></div>
+                <div><dt className="text-muted-foreground">Contact cost</dt><dd className="font-mono font-semibold">{lkr(result.annual.contact_cost_lkr)}</dd></div>
+                <div><dt className="text-muted-foreground">Platform costs</dt><dd className="font-mono font-semibold">{lkr(result.annual.fixed_expenses_lkr)}</dd></div>
+                <div>
+                  <dt className="text-muted-foreground">Return on cost</dt>
+                  <dd className="font-mono font-semibold">
+                    {result.annual.roi_multiple == null ? "—" : `${result.annual.roi_multiple.toFixed(2)}×`}
+                    {result.annual.payback_days != null && (
+                      <span className="ml-1 font-sans text-muted-foreground">· payback {Math.round(result.annual.payback_days)} d</span>
+                    )}
+                  </dd>
+                </div>
+              </dl>
             </div>
-
-            <div className="flex flex-col gap-3">
-              <SliderField
-                label="Daily Consultant Sessions"
-                sublabel="Active outpatient clinics per day (~20 patients/clinic)"
-                value={params.daily_clinics_count}
-                displayValue={`${params.daily_clinics_count} clinics`}
-                min={1}
-                max={150}
-                step={1}
-                onChange={(v) => set("daily_clinics_count", v)}
-              />
-              <SliderField
-                label="Average Consultation Fee"
-                sublabel="Specialist doctor channeling fee (LKR)"
-                value={params.avg_consultation_fee_lkr}
-                displayValue={`LKR ${params.avg_consultation_fee_lkr.toLocaleString()}`}
-                min={1000}
-                max={30000}
-                step={250}
-                onChange={(v) => set("avg_consultation_fee_lkr", v)}
-              />
-              <SliderField
-                label="Baseline No-Show Rate"
-                sublabel="Observed baseline prior to SHAI deployment"
-                value={params.baseline_no_show_rate}
-                displayValue={`${Math.round(params.baseline_no_show_rate * 100)}%`}
-                min={0.01}
-                max={0.6}
-                step={0.01}
-                onChange={(v) => set("baseline_no_show_rate", v)}
-              />
-              <SliderField
-                label="AI Intervention Coverage"
-                sublabel="Which patients receive SMS/WhatsApp outreach reminders"
-                value={params.ai_intervention_coverage}
-                displayValue={`Top ${Math.round(params.ai_intervention_coverage * 100)}%`}
-                min={0.05}
-                max={1}
-                step={0.05}
-                onChange={(v) => set("ai_intervention_coverage", v)}
-              />
-            </div>
-
-            {/* Expandable: Hospital Margin & Revenue Attribution */}
-            <div className="border-t border-border/40 pt-2 flex flex-col gap-3">
-              <button
-                type="button"
-                onClick={() => setShowAdvancedEconomics((s) => !s)}
-                className="flex items-center justify-between text-xs font-semibold text-primary hover:underline transition-all py-1 cursor-pointer"
-              >
-                <div className="flex items-center gap-1.5">
-                  <Percent className="size-3.5" />
-                  <span>Hospital Facility Share & Ancillary Margins</span>
-                </div>
-                <ChevronDown className={`size-3.5 transition-transform ${showAdvancedEconomics ? "rotate-180" : ""}`} />
-              </button>
-
-              {showAdvancedEconomics && (
-                <div className="flex flex-col gap-3 pt-1 animate-in fade-in duration-200">
-                  <SliderField
-                    label="Hospital Facility Retained Share"
-                    sublabel="Hospital portion of the doctor channeling fee"
-                    value={params.hospital_retained_fee_pct ?? 0.3}
-                    displayValue={`${Math.round((params.hospital_retained_fee_pct ?? 0.3) * 100)}%`}
-                    min={0.1}
-                    max={1}
-                    step={0.02}
-                    onChange={(v) => set("hospital_retained_fee_pct", v)}
-                  />
-                  <SliderField
-                    label="Average Ancillary Lab/Pharmacy Revenue"
-                    sublabel="Estimated diagnostic tests & pharmacy per attended patient (LKR)"
-                    value={params.ancillary_revenue_per_attended_lkr ?? 3500}
-                    displayValue={`LKR ${(params.ancillary_revenue_per_attended_lkr ?? 3500).toLocaleString()}`}
-                    min={0}
-                    max={25000}
-                    step={250}
-                    onChange={(v) => set("ancillary_revenue_per_attended_lkr", v)}
-                  />
-                  <SliderField
-                    label="Staff Loaded Hourly Rate"
-                    sublabel="Nursing/Front-desk hourly rate to monetize saved time (LKR/hr)"
-                    value={params.staff_hourly_rate_lkr ?? 850}
-                    displayValue={`LKR ${(params.staff_hourly_rate_lkr ?? 850).toLocaleString()}/hr`}
-                    min={300}
-                    max={3000}
-                    step={50}
-                    onChange={(v) => set("staff_hourly_rate_lkr", v)}
-                  />
-                  <SliderField
-                    label="Annual Operating Days"
-                    sublabel="Annual active clinic operational days (e.g., 310 - 365)"
-                    value={params.operational_days_year ?? 310}
-                    displayValue={`${params.operational_days_year ?? 310} days`}
-                    min={250}
-                    max={365}
-                    step={5}
-                    onChange={(v) => set("operational_days_year", v)}
-                  />
-                </div>
-              )}
-            </div>
-
-            {/* Expandable: Advanced Outreach Assumptions */}
-            <div className="border-t border-border/40 pt-2 flex flex-col gap-3">
-              <button
-                type="button"
-                onClick={() => setShowAdvancedConversion((s) => !s)}
-                className="flex items-center justify-between text-xs font-semibold text-primary hover:underline transition-all py-1 cursor-pointer"
-              >
-                <div className="flex items-center gap-1.5">
-                  <Layers className="size-3.5" />
-                  <span>Outreach Conversion & Overbooking Ratios</span>
-                </div>
-                <ChevronDown className={`size-3.5 transition-transform ${showAdvancedConversion ? "rotate-180" : ""}`} />
-              </button>
-
-              {showAdvancedConversion && (
-                <div className="flex flex-col gap-3 pt-1 animate-in fade-in duration-200">
-                  <SliderField
-                    label="Patient Reachability Rate"
-                    sublabel="SMS/WhatsApp delivery & open rate"
-                    value={params.patient_reachability_rate}
-                    displayValue={`${Math.round(params.patient_reachability_rate * 100)}%`}
-                    min={0.5}
-                    max={1}
-                    step={0.01}
-                    onChange={(v) => set("patient_reachability_rate", v)}
-                  />
-                  <SliderField
-                    label="Reschedule Conversion Success"
-                    sublabel="Patients accepting proposed rescheduled date"
-                    value={params.reschedule_success_rate}
-                    displayValue={`${Math.round(params.reschedule_success_rate * 100)}%`}
-                    min={0.2}
-                    max={1}
-                    step={0.01}
-                    onChange={(v) => set("reschedule_success_rate", v)}
-                  />
-                  <SliderField
-                    label="Overbooking Slot Fill Rate"
-                    sublabel="Waitlist arrivals taking vacated capacity"
-                    value={params.overbooking_fill_rate}
-                    displayValue={`${Math.round(params.overbooking_fill_rate * 100)}%`}
-                    min={0.2}
-                    max={1}
-                    step={0.01}
-                    onChange={(v) => set("overbooking_fill_rate", v)}
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Card 2: Hospital CapEx, OpEx & Patient Giveaways Manager */}
-          <div className="rounded-[24px] bg-card p-5 sm:p-6 shadow-xs border border-border/60 flex flex-col gap-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-border/40 gap-2">
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-base font-bold text-foreground">Hospital Expenses & Giveaways</h2>
-                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary/10 text-primary">
-                    {activeExpensesCount} Active
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Define running expenses (giveaways, transport subsidies, telco, IT) to evaluate real net revenue
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setShowAddExpense((v) => !v)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-semibold shadow-xs hover:bg-primary/90 transition-all self-start sm:self-auto cursor-pointer"
-              >
-                <Plus className="size-3.5" />
-                <span>Add Expense Item</span>
-              </button>
-            </div>
-
-            {/* Inline Add Expense Form */}
-            {showAddExpense && (
-              <form
-                onSubmit={handleCreateExpense}
-                className="p-4 rounded-2xl bg-muted/30 border border-primary/20 flex flex-col gap-3 animate-in fade-in duration-200"
-              >
-                <div className="flex items-center justify-between pb-2 border-b border-border/40">
-                  <span className="text-xs font-bold text-foreground">New Expense / Giveaway Item</span>
-                  <span className="text-[11px] text-muted-foreground">Saves to hospital database</span>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[11px] font-semibold text-foreground">Expense Category</label>
-                    <select
-                      value={newCategoryId}
-                      onChange={(e) => setNewCategoryId(e.target.value)}
-                      className="h-9 px-2.5 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer"
-                    >
-                      {categories.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[11px] font-semibold text-foreground">Frequency / Recurrence</label>
-                    <select
-                      value={newRecurrence}
-                      onChange={(e) => setNewRecurrence(e.target.value as ExpenseRecurrence)}
-                      className="h-9 px-2.5 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer"
-                    >
-                      <option value="annual">Annual Fixed Overhead</option>
-                      <option value="monthly">Monthly Recurring</option>
-                      <option value="per_patient">Per Intervened Patient (e.g. Voucher)</option>
-                      <option value="one_off">One-Off Setup (Year 1)</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[11px] font-semibold text-foreground">
-                      Title / Reason for Expense
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Free PickMe vouchers for elderly patients"
-                      value={newTitle}
-                      onChange={(e) => setNewTitle(e.target.value)}
-                      required
-                      className="h-9 px-3 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                    />
-                  </div>
-
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[11px] font-semibold text-foreground">
-                      Amount (LKR)
-                    </label>
-                    <input
-                      type="number"
-                      min={0}
-                      step={5000}
-                      placeholder="e.g. 450000"
-                      value={newAmount}
-                      onChange={(e) => setNewAmount(Number(e.target.value))}
-                      required
-                      className="h-9 px-3 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-1">
-                  <label className="text-[11px] font-semibold text-foreground">Clinical / Operational Justification (Optional)</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Subsidizes transport to eliminate travel friction for cardiology clinic"
-                    value={newNotes}
-                    onChange={(e) => setNewNotes(e.target.value)}
-                    className="h-8 px-3 rounded-xl bg-background border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                </div>
-
-                <div className="flex items-center justify-end gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowAddExpense(false)}
-                    className="px-3 py-1.5 rounded-xl border border-border text-xs font-semibold hover:bg-muted text-muted-foreground transition-all cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-4 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-semibold shadow-xs hover:bg-primary/90 transition-all cursor-pointer"
-                  >
-                    Save & Recalculate
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {/* List of Expense Cards with Live Toggle */}
-            <div className="flex flex-col gap-2.5">
-              {expenses.length === 0 ? (
-                <div className="p-6 rounded-2xl bg-muted/20 border border-dashed border-border/80 text-center flex flex-col items-center gap-2">
-                  <Receipt className="size-6 text-muted-foreground" />
-                  <p className="text-xs text-muted-foreground">No custom expenses entered yet.</p>
-                </div>
-              ) : (
-                expenses.map((expense) => {
-                  const categoryKey = expense.category?.key || expense.category_key;
-                  return (
-                    <div
-                      key={expense.id}
-                      className={`flex items-center justify-between p-3.5 rounded-2xl border transition-all ${
-                        expense.is_active
-                          ? "bg-card border-border/70 hover:border-border shadow-2xs"
-                          : "bg-muted/10 border-border/30 opacity-60 hover:opacity-90"
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="checkbox"
-                          checked={expense.is_active}
-                          onChange={() => handleToggleExpense(expense.id, expense.is_active)}
-                          className="size-4 rounded accent-primary cursor-pointer"
-                          title="Toggle expense on/off to see live EBITDA delta"
-                        />
-                        <div className="size-8 rounded-xl bg-muted/40 flex items-center justify-center shrink-0">
-                          {getCategoryIcon(categoryKey)}
-                        </div>
-                        <div className="flex flex-col">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-bold text-foreground">
-                              {expense.title}
-                            </span>
-                            <span className="text-[9px] uppercase font-mono tracking-wider px-1.5 py-0.2 rounded-full bg-muted border border-border/50 text-muted-foreground">
-                              {expense.recurrence.replace("_", " ")}
-                            </span>
-                          </div>
-                          {expense.notes && (
-                            <span className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5">
-                              {expense.notes}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-3 shrink-0">
-                        <div className="flex flex-col text-right">
-                          <span className={`text-xs font-bold font-mono tabular-nums ${expense.is_active ? "text-foreground" : "text-muted-foreground line-through"}`}>
-                            LKR {expense.amount_lkr.toLocaleString()}
-                          </span>
-                          <span className="text-[10px] text-muted-foreground">
-                            {expense.recurrence === "monthly" ? "/month" : expense.recurrence === "per_patient" ? "/intervened" : "/year"}
-                          </span>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteExpense(expense.id)}
-                          title="Delete expense"
-                          className="size-7 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 flex items-center justify-center transition-all cursor-pointer"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            {/* Real-Time Sensitivity Dial Badge */}
-            <div className="rounded-[18px] bg-primary/5 p-3.5 border border-primary/20 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <Sparkles className="size-4 text-primary shrink-0" />
-                <div className="flex flex-col">
-                  <span className="text-xs font-bold text-foreground">Live Expense Drag Telemetry</span>
-                  <span className="text-[11px] text-muted-foreground">
-                    Active expenses consume <strong>{result.expense_drag_pct}%</strong> of gross recovered value
-                  </span>
-                </div>
-              </div>
-              <div className="text-right">
-                <span className="text-xs font-bold font-mono text-primary tabular-nums">
-                  {formatLkr(result.total_annual_expenses_lkr)}
-                </span>
-                <span className="block text-[10px] text-muted-foreground">Total Deductions</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column: Hero Boardroom Impact & Operational Outputs (6 Cols) */}
-        <div className="lg:col-span-6 flex flex-col gap-5">
-          {/* Net ROI Hero Card */}
-          <div className="rounded-[24px] bg-gradient-to-br from-[#8B7CF6]/20 via-background to-[#5B7CFA]/15 p-6 sm:p-7 shadow-xs border border-primary/30 flex flex-col gap-5 relative overflow-hidden">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-primary">
-                  Boardroom Impact & Net EBITDA
-                </span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold border border-emerald-500/20">
-                  Fully Amortized
-                </span>
-              </div>
-              <div className="size-9 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-                <Sparkles className="size-4.5" />
-              </div>
-            </div>
-
-            {/* Hero Main Numbers */}
-            <div className="flex flex-col gap-1.5">
-              <div className="flex flex-wrap items-baseline gap-3">
-                <span className="text-4xl sm:text-5xl font-extrabold tracking-tight text-foreground font-mono">
-                  {formatLkr(result.true_net_profit_lkr)}
-                </span>
-                <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
-                  True Net Hospital Gain
-                </span>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Actual profit generated after deducting all custom hospital expenses, patient giveaways, and software licensing.
-              </p>
-            </div>
-
-            {/* 3-Pillar Boardroom Grid */}
-            <div className="grid grid-cols-3 gap-3 pt-4 border-t border-border/40">
-              <div className="flex flex-col">
-                <span className="text-[11px] text-muted-foreground">Net ROI Multiple</span>
-                <span className="text-xl font-bold font-mono text-primary tabular-nums">
-                  {result.net_roi_multiple}x
-                </span>
-                <span className="text-[10px] text-muted-foreground mt-0.5">Yield on CapEx</span>
-              </div>
-
-              <div className="flex flex-col">
-                <span className="text-[11px] text-muted-foreground">Payback Velocity</span>
-                <span className="text-xl font-bold font-mono text-emerald-600 dark:text-emerald-400 tabular-nums">
-                  {result.payback_period_days} Days
-                </span>
-                <span className="text-[10px] text-muted-foreground mt-0.5">To Break Even</span>
-              </div>
-
-              <div className="flex flex-col">
-                <span className="text-[11px] text-muted-foreground">Annual Leakage</span>
-                <span className="text-xl font-bold font-mono text-rose-600 dark:text-rose-400 tabular-nums">
-                  {formatLkr(result.annual_revenue_leakage_lkr)}
-                </span>
-                <span className="text-[10px] text-muted-foreground mt-0.5">Without AI</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Financial Waterfall Breakdown Card — Visual Bar Chart */}
-          {(() => {
-            const grossRev = result.gross_revenue_recovered_lkr;
-            const laborSav = result.direct_labor_savings_lkr;
-            const expenses = result.total_annual_expenses_lkr;
-            const netGain = result.true_net_profit_lkr;
-            const total = grossRev + laborSav;
-            // Waterfall data: running base + span for each bar
-            const waterfallData = [
-              {
-                name: "Reclaimed\nAppointments",
-                base: 0,
-                value: grossRev,
-                color: "#10B981",
-                label: `+${formatLkr(grossRev)}`,
-              },
-              {
-                name: "Staff Hours\nSaved",
-                base: grossRev,
-                value: laborSav,
-                color: "#8B7CF6",
-                label: `+${formatLkr(laborSav)}`,
-              },
-              {
-                name: "CapEx &\nExpenses",
-                base: total - expenses,
-                value: expenses,
-                color: "#EF4444",
-                label: `-${formatLkr(expenses)}`,
-              },
-              {
-                name: "Net Hospital\nGain",
-                base: 0,
-                value: netGain,
-                color: netGain >= 0 ? "#10B981" : "#EF4444",
-                label: formatLkr(netGain),
-              },
-            ];
-            return (
-              <div className="rounded-[24px] bg-card p-5 sm:p-6 shadow-xs border border-border/60 flex flex-col gap-4">
-                <div className="flex items-center justify-between pb-2 border-b border-border/40">
-                  <div className="flex items-center gap-2">
-                    <Wallet className="size-4 text-primary" />
-                    <h3 className="text-sm font-bold text-foreground">Financial Waterfall</h3>
-                  </div>
-                  <span className="text-[11px] text-muted-foreground">Annualised · LKR</span>
-                </div>
-
-                {/* Visual Recharts Waterfall */}
-                <div className="h-52 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={waterfallData}
-                      margin={{ top: 14, right: 8, left: -10, bottom: 16 }}
-                      barCategoryGap="30%"
-                    >
-                      <CartesianGrid strokeDasharray="3 3" opacity={0.12} />
-                      <XAxis
-                        dataKey="name"
-                        tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
-                        tickLine={false}
-                      />
-                      <YAxis
-                        tickFormatter={(v: number) =>
-                          v === 0 ? "0" : `${(v / 1_000_000).toFixed(1)}M`
-                        }
-                        tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
-                        tickLine={false}
-                        axisLine={false}
-                      />
-                      <Tooltip
-                        formatter={(val, _name, item) => {
-                          const lbl = (item as { payload?: { label?: string } })?.payload?.label;
-                          return [lbl ?? (typeof val === "number" ? formatLkr(val) : String(val)), "Amount"];
-                        }}
-                        contentStyle={{
-                          backgroundColor: "var(--card)",
-                          borderColor: "var(--border)",
-                          borderRadius: "12px",
-                          fontSize: "12px",
-                        }}
-                      />
-                      {/* Invisible base bar to stack on */}
-                      <Bar dataKey="base" stackId="wf" fill="transparent" radius={[0, 0, 0, 0]} />
-                      {/* Visible bar on top */}
-                      <Bar
-                        dataKey="value"
-                        stackId="wf"
-                        radius={[6, 6, 0, 0]}
-                        label={{
-                          position: "top",
-                          fontSize: 9,
-                          fill: "var(--muted-foreground)",
-                          formatter: (v: unknown) => (typeof v === "number" && v > 0 ? formatLkr(v) : ""),
-                        }}
-                      >
-                        {waterfallData.map((entry, idx) => (
-                          <Cell key={idx} fill={entry.color} fillOpacity={0.85} />
-                        ))}
-                      </Bar>
-                      <ReferenceLine y={0} stroke="var(--border)" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-
-                {/* Summary rows (detail beneath chart) */}
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center justify-between text-xs p-2.5 rounded-xl bg-muted/20">
-                    <div className="flex flex-col">
-                      <span className="font-semibold text-foreground">Reclaimed Clinical Appointments</span>
-                      <span className="text-[10px] text-muted-foreground">Doctor channeling + hospital facility fees</span>
-                    </div>
-                    <span className="font-bold font-mono text-emerald-600 dark:text-emerald-400 tabular-nums">
-                      + {formatLkr(result.gross_revenue_recovered_lkr)}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between text-xs p-2.5 rounded-xl bg-muted/20">
-                    <div className="flex flex-col">
-                      <span className="font-semibold text-foreground">Nursing Call-Center Hours Saved</span>
-                      <span className="text-[10px] text-muted-foreground">Eliminated manual calling at LKR {params.staff_hourly_rate_lkr ?? 850}/hr</span>
-                    </div>
-                    <span className="font-bold font-mono text-emerald-600 dark:text-emerald-400 tabular-nums">
-                      + {formatLkr(result.direct_labor_savings_lkr)}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between text-xs p-2.5 rounded-xl bg-rose-500/[0.04] border border-rose-500/20">
-                    <div className="flex flex-col">
-                      <span className="font-semibold text-rose-700 dark:text-rose-300">
-                        CapEx, Giveaways & Running Costs
-                      </span>
-                      <span className="text-[10px] text-muted-foreground">
-                        All {activeExpensesCount} active expenses, telco & IT licenses
-                      </span>
-                    </div>
-                    <span className="font-bold font-mono text-rose-600 dark:text-rose-400 tabular-nums">
-                      - {formatLkr(result.total_annual_expenses_lkr)}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between text-xs p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
-                    <div className="flex flex-col">
-                      <span className="font-bold text-foreground">True Net Hospital Gain</span>
-                      <span className="text-[10px] text-emerald-700 dark:text-emerald-300 font-semibold">
-                        Net cash impact after all costs
-                      </span>
-                    </div>
-                    <span className="text-base font-extrabold font-mono text-emerald-600 dark:text-emerald-400 tabular-nums">
-                      {formatLkr(result.true_net_profit_lkr)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* Operational Dividends Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Doctor Clinical Hours Reclaimed */}
-            <div className="rounded-[24px] bg-card p-5 shadow-xs border border-border/60 flex flex-col justify-between gap-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-foreground">Doctor Hours Reclaimed</span>
-                <div className="size-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-                  <Clock3 className="size-4" />
-                </div>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-2xl font-bold tracking-tight text-foreground tabular-nums font-mono">
-                  {result.recovered_doctor_hours_annual.toLocaleString()}
-                </span>
-                <span className="text-[11px] text-muted-foreground mt-0.5">Specialist clinical hours / year</span>
-              </div>
-            </div>
-
-            {/* Front Desk Phone Hours Saved */}
-            <div className="rounded-[24px] bg-card p-5 shadow-xs border border-border/60 flex flex-col justify-between gap-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-foreground">Front-Desk Hours Saved</span>
-                <div className="size-8 rounded-full bg-muted flex items-center justify-center text-muted-foreground">
-                  <PhoneOff className="size-4" />
-                </div>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-2xl font-bold tracking-tight text-foreground tabular-nums font-mono">
-                  {result.nurse_phone_hours_saved_monthly.toLocaleString()}
-                </span>
-                <span className="text-[11px] text-muted-foreground mt-0.5">Manual calling hours / month</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Transparency & Governance Card */}
-          <div className="rounded-[20px] bg-muted/20 p-4 border border-border/40 flex items-start gap-3">
-            <Info className="size-4 text-muted-foreground shrink-0 mt-0.5" />
-            <p className="text-[11px] text-muted-foreground leading-relaxed">
-              Every expense line item in this simulator updates calculations dynamically via Next.js and persists to PostgreSQL. Toggling expenses allows leadership to test sensitivity of giveaways (like PickMe vouchers or lab discounts) against recovered outpatient volume.
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Annualised from a {result.baseline.window_calendar_days}-day replay (×{result.annual.scale.toFixed(2)}). Net = recovered revenue − contact cost − recorded platform costs.
             </p>
-          </div>
+          </section>
+        </>
+      )}
+
+      <section className="rounded-[24px] border border-border/60 bg-card p-5 shadow-xs">
+        <h3 className="mb-3 text-sm font-bold text-foreground">Assumptions</h3>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <Assumption
+            label="Contact top share"
+            hint="Of each day's bookings, contact the riskiest this share"
+            display={pct(params.contact_fraction, 0)}
+            value={params.contact_fraction}
+            min={0.05}
+            max={0.5}
+            step={0.05}
+            onChange={(v) => set("contact_fraction", v)}
+          />
+          <Assumption
+            label="Efficacy"
+            hint="Chance a contacted would-be no-show is recovered"
+            display={pct(params.intervention_efficacy, 0)}
+            value={params.intervention_efficacy}
+            min={0.05}
+            max={0.6}
+            step={0.05}
+            onChange={(v) => set("intervention_efficacy", v)}
+          />
+          <Assumption
+            label="Cost per contact"
+            hint="Staff time and message cost per call or message"
+            display={`LKR ${params.cost_per_contact_lkr}`}
+            value={params.cost_per_contact_lkr}
+            min={0}
+            max={300}
+            step={5}
+            onChange={(v) => set("cost_per_contact_lkr", v)}
+          />
+          <Assumption
+            label="Revenue per LKR of fee"
+            hint="1.0 = consultation fee only; above 1 adds lab / pharmacy revenue"
+            display={`${params.value_multiplier.toFixed(1)}×`}
+            value={params.value_multiplier}
+            min={0.3}
+            max={2}
+            step={0.1}
+            onChange={(v) => set("value_multiplier", v)}
+          />
+          <Assumption
+            label="History replayed"
+            hint="Most recent days of recorded outcomes"
+            display={`${params.window_days} days`}
+            value={params.window_days}
+            min={30}
+            max={365}
+            step={30}
+            onChange={(v) => set("window_days", v)}
+          />
         </div>
-      </div>
+      </section>
+
+      {result && !result.empty && (
+        <>
+          <section className="rounded-[24px] border border-border/60 bg-card p-5 shadow-xs">
+            <h3 className="text-sm font-bold text-foreground">Replay on history</h3>
+            <p className="mb-3 text-xs text-muted-foreground">
+              {result.replay.appointments.toLocaleString()} past bookings over {result.replay.days} days; {result.replay.contacts.toLocaleString()} contacts
+              ({pct(result.assumptions.contact_fraction, 0)} per day), efficacy {pct(result.assumptions.intervention_efficacy, 0)}.
+            </p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-border text-muted-foreground">
+                    <th className="py-2 font-semibold">Contact policy</th>
+                    <th className="font-semibold">No-shows reached</th>
+                    <th className="font-semibold">Recall</th>
+                    <th className="font-semibold">Recovered</th>
+                    <th className="font-semibold">Contact cost</th>
+                    <th className="font-semibold">Net (window)</th>
+                  </tr>
+                </thead>
+                <tbody className="font-mono">
+                  <tr className="border-b border-border/50">
+                    <td className="py-2 font-sans font-semibold text-foreground">Top risk first</td>
+                    <td>{result.replay.caught_model} of {result.replay.no_shows}</td>
+                    <td>{pct(result.replay.recall_model)}</td>
+                    <td>{lkr(result.replay.recovered_lkr_model)}</td>
+                    <td>{lkr(result.replay.contact_cost_lkr)}</td>
+                    <td>{lkr(result.replay.net_lkr_model)}</td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 font-sans font-semibold text-foreground">Random contact (same count)</td>
+                    <td>{result.replay.caught_random.toFixed(0)} of {result.replay.no_shows}</td>
+                    <td>{pct(result.replay.recall_random)}</td>
+                    <td>{lkr(result.replay.recovered_lkr_random)}</td>
+                    <td>{lkr(result.replay.contact_cost_lkr)}</td>
+                    <td>{lkr(result.replay.net_lkr_random)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-2 text-xs font-semibold text-foreground">
+              Ranking by risk recovers {lkr(result.replay.uplift_vs_random_lkr)} more than random contact over this window.
+            </p>
+          </section>
+
+          <section className="rounded-[24px] border border-border/60 bg-card p-5 shadow-xs">
+            <h3 className="text-sm font-bold text-foreground">Sensitivity — annual net benefit</h3>
+            <p className="mb-3 text-xs text-muted-foreground">Efficacy against share contacted; same replay, costs and platform expenses.</p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-right text-xs">
+                <thead>
+                  <tr className="border-b border-border text-muted-foreground">
+                    <th className="py-2 text-left font-semibold">Efficacy ↓ / Contact top →</th>
+                    {result.sensitivity.ks.map((k) => (
+                      <th key={k} className="font-semibold">{pct(k, 0)}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="font-mono">
+                  {result.sensitivity.efficacies.map((e) => (
+                    <tr key={e} className="border-b border-border/50 last:border-none">
+                      <td className="py-2 text-left font-sans font-semibold text-foreground">{pct(e, 0)}</td>
+                      {result.sensitivity.ks.map((k) => {
+                        const c = result.sensitivity.cells.find((x) => x.k === k && x.efficacy === e);
+                        return (
+                          <td key={k} className={cn(c && c.annual_net_lkr < 0 && "text-rose-600")}>
+                            {c ? lkr(c.annual_net_lkr) : "—"}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </>
+      )}
+
+      <section className="rounded-[24px] border border-border/60 bg-card p-5 shadow-xs">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="flex items-center gap-2 text-sm font-bold text-foreground">
+            <Receipt className="size-4 text-primary" /> Recorded platform costs
+          </h3>
+          <button
+            type="button"
+            onClick={() => setShowAdd((s) => !s)}
+            className="inline-flex items-center gap-1 rounded-xl border border-border/70 px-3 py-1.5 text-xs font-semibold hover:bg-muted"
+          >
+            <Plus className="size-3.5" /> Add cost
+          </button>
+        </div>
+        {showAdd && (
+          <form onSubmit={addExpense} className="mb-4 grid grid-cols-1 gap-2 rounded-2xl border border-border/50 bg-muted/20 p-3 sm:grid-cols-5">
+            <input
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              placeholder="Title"
+              className="h-8 rounded-lg border border-border bg-background px-2 text-xs sm:col-span-2"
+            />
+            <select value={newCategoryId} onChange={(e) => setNewCategoryId(e.target.value)} className="h-8 rounded-lg border border-border bg-background px-2 text-xs">
+              {initialCategories.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            <input
+              type="number"
+              min={1}
+              value={newAmount}
+              onChange={(e) => setNewAmount(Number(e.target.value))}
+              className="h-8 rounded-lg border border-border bg-background px-2 text-xs"
+            />
+            <select value={newRecurrence} onChange={(e) => setNewRecurrence(e.target.value as ExpenseRecurrence)} className="h-8 rounded-lg border border-border bg-background px-2 text-xs">
+              <option value="annual">per year</option>
+              <option value="monthly">per month</option>
+              <option value="one_off">one-off (counted once a year)</option>
+              <option value="per_patient">per contact</option>
+            </select>
+            <button type="submit" className="h-8 rounded-lg bg-primary px-3 text-xs font-semibold text-primary-foreground sm:col-span-5 sm:w-fit">
+              Save
+            </button>
+          </form>
+        )}
+        {expenses.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No costs recorded. The net benefit above then excludes platform and licence costs.</p>
+        ) : (
+          <ul className="divide-y divide-border/50">
+            {expenses.map((e) => (
+              <li key={e.id} className={cn("flex items-center justify-between gap-3 py-2 text-xs", !e.is_active && "opacity-50")}>
+                <div>
+                  <div className="font-semibold text-foreground">{e.title}</div>
+                  <div className="text-[10px] text-muted-foreground">{e.category?.name ?? e.category_key} · {e.recurrence.replace("_", " ")}</div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="font-mono">{lkr(e.amount_lkr)}</span>
+                  <button type="button" onClick={() => toggleExpense(e.id, e.is_active)} className="rounded-lg border border-border/70 px-2 py-1 text-[10px] font-semibold hover:bg-muted">
+                    {e.is_active ? "Disable" : "Enable"}
+                  </button>
+                  <button type="button" onClick={() => removeExpense(e.id)} aria-label="Delete cost" className="text-rose-600 hover:opacity-80">
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }

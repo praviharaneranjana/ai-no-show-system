@@ -271,30 +271,17 @@ def test_agent_unknown_appointment_404s(client):
 # Executive ROI Simulator
 # ===================================
 
-def test_simulator_evaluate_matches_expected_formula_at_defaults(client):
+def test_simulator_evaluate_is_empty_without_history(client):
     resp = client.post("/simulator/evaluate", json={})
     assert resp.status_code == 200, resp.text
     body = resp.json()
-
-    # 30 clinics * 20 patients/clinic * 18% baseline no-show rate
-    assert body["daily_slots_at_risk"] == 108.0
-    assert body["annual_revenue_leakage_lkr"] == 241056000.0
-    assert body["annual_revenue_recovered_lkr"] == 120555119.0
-    assert body["recovered_doctor_hours_annual"] == 3348.8
-    assert body["nurse_phone_hours_saved_monthly"] == 773.5
-    assert body["net_roi_multiple"] == 67.0
-
-
-def test_simulator_evaluate_scales_with_clinic_volume(client):
-    small = client.post("/simulator/evaluate", json={"daily_clinics_count": 5}).json()
-    large = client.post("/simulator/evaluate", json={"daily_clinics_count": 100}).json()
-    assert large["annual_revenue_leakage_lkr"] > small["annual_revenue_leakage_lkr"]
-    assert large["annual_revenue_recovered_lkr"] > small["annual_revenue_recovered_lkr"]
+    assert body["empty"] is True
+    assert body["assumptions"]["intervention_efficacy"] == 0.3
 
 
 def test_simulator_evaluate_rejects_out_of_range_params(client):
-    resp = client.post("/simulator/evaluate", json={"baseline_no_show_rate": 1.5})
-    assert resp.status_code == 422
+    assert client.post("/simulator/evaluate", json={"contact_fraction": 1.5}).status_code == 422
+    assert client.post("/simulator/evaluate", json={"intervention_efficacy": -0.1}).status_code == 422
 
 
 # ===================================
@@ -394,47 +381,3 @@ def test_expense_categories_and_expenses_crud(client):
     # 5. Delete expense
     del_resp = client.delete(f"/expenses/{created['id']}")
     assert del_resp.status_code == 200, del_resp.text
-
-
-def test_simulator_evaluate_with_custom_expenses(client):
-    payload = {
-        "daily_clinics_count": 30,
-        "avg_consultation_fee_lkr": 4500.0,
-        "baseline_no_show_rate": 0.18,
-        "ai_intervention_coverage": 0.25,
-        "custom_expenses": [
-            {
-                "category_key": "patient_incentives",
-                "title": "PickMe Vouchers",
-                "amount_lkr": 600000.0,
-                "recurrence": "annual",
-                "is_active": True,
-            },
-            {
-                "category_key": "tech_infrastructure",
-                "title": "SHAI License",
-                "amount_lkr": 2000000.0,
-                "recurrence": "annual",
-                "is_active": True,
-            },
-            {
-                "category_key": "telco_outreach",
-                "title": "Inactive SMS Pack",
-                "amount_lkr": 1000000.0,
-                "recurrence": "annual",
-                "is_active": False,
-            }
-        ]
-    }
-    resp = client.post("/simulator/evaluate", json=payload)
-    assert resp.status_code == 200, resp.text
-    data = resp.json()
-    # Total expenses should only sum active items: 600k + 2000k = 2.6M
-    assert data["total_annual_expenses_lkr"] == 2600000.0
-    assert data["gross_revenue_recovered_lkr"] > 0
-    assert data["true_net_profit_lkr"] > 0
-    assert data["payback_period_days"] > 0
-    assert data["expense_drag_pct"] > 0
-    assert data["expense_category_breakdown"]["patient_incentives"] == 600000.0
-    assert data["expense_category_breakdown"]["tech_infrastructure"] == 2000000.0
-

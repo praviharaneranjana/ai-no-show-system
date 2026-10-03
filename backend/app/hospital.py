@@ -15,7 +15,6 @@ from app.database import get_db
 logger = logging.getLogger("noshow_api")
 router = APIRouter(prefix="/hospital", tags=["hospital"])
 
-SLOT_VALUE_LKR = 4500.0
 
 
 # ---- Schemas ----------------------------------------------------------------
@@ -183,7 +182,15 @@ def _calculate_hospital_metrics(db: Session, hospital_id: uuid.UUID) -> Hospital
         .filter(models.Intervention.status.in_(["confirmed", "rescheduled"]))
         .count()
     )
-    revenue_recovered = confirmed_interventions * SLOT_VALUE_LKR
+    slot_value = (
+        db.query(func.coalesce(func.avg(models.Appointment.fee_lkr), func.avg(models.Doctor.consultation_fee_lkr), 0.0))
+        .select_from(models.Appointment)
+        .outerjoin(models.Doctor, models.Doctor.id == models.Appointment.doctor_id)
+        .filter(models.Appointment.hospital_id == hospital_id)
+        .scalar()
+    )
+    slot_value = float(slot_value or 0.0)  # average fee recorded for this hospital's appointments
+    revenue_recovered = confirmed_interventions * slot_value
 
     # Revenue at risk: upcoming appointments with calibrated risk
     today = date.today()
@@ -198,7 +205,7 @@ def _calculate_hospital_metrics(db: Session, hospital_id: uuid.UUID) -> Hospital
         .all()
     )
     risk_sum = sum(float(r[0]) for r in upcoming_risks) if upcoming_risks else 0.0
-    revenue_at_risk = round(risk_sum * SLOT_VALUE_LKR, 2)
+    revenue_at_risk = round(risk_sum * slot_value, 2)
 
     # Avoided loss: estimated from recovered appointments and reallocated slots
     avoided_loss = round(revenue_recovered * 0.85, 2)
