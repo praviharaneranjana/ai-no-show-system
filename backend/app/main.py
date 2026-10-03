@@ -1764,10 +1764,17 @@ def get_capacity_forecast_endpoint(
     return capacity_service.get_capacity_forecast(db=db, horizon_days=horizon)
 
 
-@app.get("/capacity/accuracy", response_model=schemas.AccuracyResponse, dependencies=[Depends(auth.require_role("manager"))])
-def get_capacity_accuracy_endpoint(db: Session = Depends(get_db)):
-    """Feature E: Calibration curve, Brier score, and overbooking regret analysis."""
-    return capacity_service.get_capacity_accuracy(db=db)
+@app.get("/capacity/accuracy", dependencies=[Depends(auth.require_role("manager"))])
+def get_capacity_accuracy_endpoint(
+    request: Request,
+    days: int = Query(30, ge=0, le=3650),
+    department: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Model accuracy computed from appointments with recorded outcomes (days=0: all history)."""
+    return capacity_service.get_capacity_accuracy(
+        db=db, hospital_id=getattr(request.state, "hospital_id", None), days=days, department=department
+    )
 
 
 @app.get("/capacity/slot-offers", response_model=List[schemas.SlotOfferOut], dependencies=[Depends(auth.require_role("front_desk"))])

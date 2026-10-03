@@ -478,51 +478,43 @@ export type AccuracyDecile = {
   count: number;
 };
 
+export type AccuracyTier = {
+  n: number;
+  share: number;
+  mean_predicted: number | null;
+  observed_no_show_rate: number | null;
+  no_shows: number;
+};
+
 export type AccuracyResponse = {
-  days?: number;
-  sample_size?: number;
-  brier_score: number;
-  roc_auc?: number;
-  calibration_slope?: number;
-  gap_absorption_rate?: number;
-  overbook_regret_rate?: number;
-  overbook_regret_rate_pct?: number;
-  absorbed_by_no_shows_pct?: number;
-  total_evaluated_appointments?: number;
-  precision_high_risk?: number;
-  recall_high_risk?: number;
-  confusion_matrix: {
-    true_negative_attended?: number;
-    true_negative?: number;
-    false_positive: number;
-    false_negative_noshow?: number;
-    false_negative?: number;
-    true_positive_noshow?: number;
-    true_positive?: number;
-    precision_high_risk?: number;
-    recall_high_risk?: number;
+  empty: boolean;
+  n_evaluated: number;
+  days: number;
+  department?: string | null;
+  synthetic_share?: number;
+  observed_no_show_rate?: number;
+  mean_predicted?: number;
+  roc_auc?: number | null;
+  pr_auc?: number | null;
+  brier?: number;
+  recall_top20?: number | null;
+  precision_top20?: number | null;
+  lift_top20?: number | null;
+  tiers?: Record<"High" | "Medium" | "Low", AccuracyTier>;
+  confusion_matrix?: {
+    rule: string;
+    tp: number;
+    fp: number;
+    fn: number;
+    tn: number;
+    precision: number | null;
+    recall: number | null;
+    specificity: number | null;
+    flagged_share: number;
   };
-  calibration_curve?: AccuracyDecile[];
   calibration_deciles?: AccuracyDecile[];
-  overbook_outcome_mix?: {
-    absorbed_by_noshow_pct: number;
-    concurrent_ontime_consultation_pct: number;
-    waited_over_tolerance_regret_pct: number;
-    unused_buffer_pct: number;
-  };
-  daily_accuracy?: Array<{
-    date: string;
-    predicted_no_shows: number;
-    actual_no_shows: number;
-    absorbed_overbooks: number;
-    regret_count: number;
-  }>;
-  daily_accuracy_trend?: Array<{ day: string; predicted: number; actual: number; brier: number }>;
-  department_brier?: Array<{
-    department: string;
-    brier_score: number;
-    sample_size: number;
-  }>;
+  daily_accuracy?: Array<{ date: string; n: number; predicted_no_shows: number; actual_no_shows: number; brier: number }>;
+  department_brier?: Array<{ department: string; n: number; brier_score: number; roc_auc: number | null }>;
 };
 
 export type CapacitySetting = {

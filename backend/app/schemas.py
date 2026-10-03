@@ -864,26 +864,6 @@ class ForecastResponse(BaseModel):
     departments: list[dict]
 
 
-class AccuracyDecile(BaseModel):
-    decile: int
-    mean_predicted_prob: float
-    observed_no_show_rate: float
-    count: int
-
-
-class AccuracyResponse(BaseModel):
-    brier_score: float
-    roc_auc: float
-    gap_absorption_rate: float
-    overbook_regret_rate: float
-    total_evaluated_appointments: int
-    confusion_matrix: dict
-    calibration_deciles: list[AccuracyDecile]
-    overbook_outcome_mix: dict
-    daily_accuracy_trend: list[dict]
-
-
-
 # ===================================
 # Hospital Expenses & CapEx/OpEx Schemas
 # ===================================

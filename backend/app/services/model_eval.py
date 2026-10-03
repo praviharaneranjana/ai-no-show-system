@@ -163,3 +163,86 @@ def data_source_mix(db: Session, hospital_id: uuid.UUID | None = None) -> dict[s
     if hospital_id is not None:
         q = q.filter(models.Appointment.hospital_id == hospital_id)
     return {(k or "unknown"): int(v) for k, v in q.all()}
+
+
+def accuracy_report(
+    db: Session,
+    *,
+    hospital_id: uuid.UUID | None = None,
+    days: int = 30,
+    department: str | None = None,
+    as_of: date | None = None,
+) -> dict:
+    """The Capacity > AI Accuracy tab: everything computed from appointments with a recorded outcome.
+
+    ``days=0`` means all history. Returns ``{"empty": True, ...}`` when nothing has an outcome yet.
+    """
+    from datetime import timedelta
+
+    as_of = as_of or date.today()
+    q = (
+        db.query(
+            models.Appointment.no_show,
+            models.Appointment.appointment_day,
+            models.Appointment.department,
+            models.Appointment.data_source,
+            models.Prediction.risk_score,
+            models.Prediction.risk_category,
+        )
+        .join(models.Prediction, models.Prediction.appointment_id == models.Appointment.id)
+        .filter(
+            models.Appointment.no_show.isnot(None),
+            models.Appointment.status != "cancelled",
+            models.Appointment.appointment_day < as_of,
+        )
+    )
+    if days and days > 0:
+        q = q.filter(models.Appointment.appointment_day >= as_of - timedelta(days=days))
+    if hospital_id is not None:
+        q = q.filter(models.Appointment.hospital_id == hospital_id)
+    if department:
+        q = q.filter(models.Appointment.department == department)
+    rows = q.all()
+    if not rows:
+        return {"empty": True, "n_evaluated": 0, "days": days, "department": department}
+
+    y = np.array([1 if r[0] else 0 for r in rows], dtype=int)
+    p = np.array([float(r[4]) for r in rows], dtype=float)
+    cats = np.array([r[5] for r in rows], dtype=object)
+    day = np.array([r[1] for r in rows])
+    dept = np.array([r[2] or "Unknown" for r in rows], dtype=object)
+    synthetic = sum(1 for r in rows if r[3] == "synthetic")
+
+    out = evaluate_arrays(y, p, cats)
+    out.update({"empty": False, "days": days, "department": department,
+                "synthetic_share": synthetic / len(rows)})
+
+    # Calibration by predicted-risk decile (equal-count bins)
+    order = np.argsort(p, kind="mergesort")
+    bins = np.array_split(order, 10) if len(p) >= 10 else [order]
+    out["calibration_deciles"] = [
+        {"decile": i + 1, "mean_predicted_prob": float(p[b].mean()),
+         "observed_no_show_rate": float(y[b].mean()), "count": int(len(b))}
+        for i, b in enumerate(bins) if len(b)
+    ]
+
+    # Daily predicted vs actual no-shows
+    daily = []
+    for d in sorted(set(day)):
+        m = day == d
+        daily.append({
+            "date": d.isoformat(), "n": int(m.sum()),
+            "predicted_no_shows": float(p[m].sum()), "actual_no_shows": int(y[m].sum()),
+            "brier": brier(y[m], p[m]),
+        })
+    out["daily_accuracy"] = daily
+
+    out["department_brier"] = sorted(
+        (
+            {"department": str(d), "n": int((dept == d).sum()), "brier_score": brier(y[dept == d], p[dept == d]),
+             "roc_auc": roc_auc(y[dept == d], p[dept == d])}
+            for d in set(dept) if (dept == d).sum() >= 30
+        ),
+        key=lambda r: r["department"],
+    )
+    return out

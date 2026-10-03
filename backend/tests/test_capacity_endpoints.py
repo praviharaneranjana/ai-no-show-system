@@ -68,13 +68,13 @@ def test_forecast_endpoint(client):
     assert "summary" in data
 
 
-def test_accuracy_endpoint(client):
-    """Test Feature E: GET /capacity/accuracy."""
+def test_accuracy_endpoint_empty_state_without_outcomes(client):
+    """GET /capacity/accuracy: no recorded outcomes -> explicit empty state, no invented numbers."""
     response = client.get("/capacity/accuracy")
     assert response.status_code == 200
     data = response.json()
-    assert "brier_score" in data
-    assert "roc_auc" in data
-    assert "calibration_deciles" in data
-    assert len(data["calibration_deciles"]) == 10
+    assert data["empty"] is True
+    assert data["n_evaluated"] == 0
+    assert "roc_auc" not in data and "brier" not in data
+
 

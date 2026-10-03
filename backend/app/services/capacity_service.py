@@ -762,58 +762,11 @@ def get_capacity_forecast(db: Session, horizon_days: int = 7) -> schemas.Forecas
     )
 
 
-def get_capacity_accuracy(db: Session) -> schemas.AccuracyResponse:
-    """Historical accuracy, calibration reliability curve, and regret metrics (Feature E)."""
-    # 10 Decile calibration curve points
-    deciles = [
-        schemas.AccuracyDecile(decile=1, mean_predicted_prob=0.04, observed_no_show_rate=0.038, count=142),
-        schemas.AccuracyDecile(decile=2, mean_predicted_prob=0.09, observed_no_show_rate=0.085, count=142),
-        schemas.AccuracyDecile(decile=3, mean_predicted_prob=0.14, observed_no_show_rate=0.138, count=142),
-        schemas.AccuracyDecile(decile=4, mean_predicted_prob=0.19, observed_no_show_rate=0.182, count=142),
-        schemas.AccuracyDecile(decile=5, mean_predicted_prob=0.25, observed_no_show_rate=0.245, count=142),
-        schemas.AccuracyDecile(decile=6, mean_predicted_prob=0.33, observed_no_show_rate=0.320, count=142),
-        schemas.AccuracyDecile(decile=7, mean_predicted_prob=0.42, observed_no_show_rate=0.415, count=142),
-        schemas.AccuracyDecile(decile=8, mean_predicted_prob=0.53, observed_no_show_rate=0.510, count=142),
-        schemas.AccuracyDecile(decile=9, mean_predicted_prob=0.68, observed_no_show_rate=0.665, count=142),
-        schemas.AccuracyDecile(decile=10, mean_predicted_prob=0.84, observed_no_show_rate=0.815, count=142),
-    ]
+def get_capacity_accuracy(db: Session, hospital_id=None, days: int = 30, department: str | None = None) -> dict:
+    """Model accuracy on appointments with recorded outcomes (no fallbacks; ``empty`` when there are none)."""
+    from app.services import model_eval
 
-    confusion = {
-        "true_negative_attended": 1084,
-        "false_positive": 88,
-        "false_negative_noshow": 64,
-        "true_positive_noshow": 184,
-        "precision_high_risk": 0.718,
-        "recall_high_risk": 0.742,
-    }
-
-    mix = {
-        "absorbed_by_noshow_pct": 74.0,
-        "concurrent_ontime_consultation_pct": 15.0,
-        "waited_over_tolerance_regret_pct": 2.1,
-        "unused_buffer_pct": 8.9,
-    }
-
-    daily_trend = [
-        {"day": "Mon", "predicted": 18.2, "actual": 19, "brier": 0.121},
-        {"day": "Tue", "predicted": 16.5, "actual": 15, "brier": 0.118},
-        {"day": "Wed", "predicted": 14.0, "actual": 13, "brier": 0.125},
-        {"day": "Thu", "predicted": 19.5, "actual": 21, "brier": 0.128},
-        {"day": "Fri", "predicted": 22.0, "actual": 20, "brier": 0.124},
-        {"day": "Sat", "predicted": 12.0, "actual": 11, "brier": 0.115},
-    ]
-
-    return schemas.AccuracyResponse(
-        brier_score=0.124,
-        roc_auc=0.672,
-        gap_absorption_rate=89.4,
-        overbook_regret_rate=2.1,
-        total_evaluated_appointments=1420,
-        confusion_matrix=confusion,
-        calibration_deciles=deciles,
-        overbook_outcome_mix=mix,
-        daily_accuracy_trend=daily_trend,
-    )
+    return model_eval.accuracy_report(db, hospital_id=hospital_id, days=days, department=department)
 
 
 def get_nav_live_counts(db: Session) -> schemas.NavCountsOut:
