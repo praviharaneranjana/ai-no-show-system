@@ -40,22 +40,16 @@ def test_capacity_slots_endpoint(client):
 
 
 def test_what_if_endpoint(client):
-    """Test Feature B: POST /capacity/what-if."""
-    payload = {
-        "max_wait_time_tolerance_mins": 15,
-        "safety_factor": 0.75,
-        "max_overbook_per_slot": 2,
-        "consultation_fee_lkr": 4500.0,
-        "assume_doctor_delay_mins": 10,
-    }
+    """Feature B: POST /capacity/what-if re-runs the exact maths with a different fee / wait cost / limit."""
+    payload = {"consultation_fee_lkr": 4500.0, "wait_cost_lkr": 3000.0, "max_overbook_per_session": 3}
     response = client.post("/capacity/what-if", json=payload)
     assert response.status_code == 200
     data = response.json()
     assert "current_policy" in data
     assert "what_if_policy" in data
     assert "delta_overbook" in data
-    assert "wait_histogram" in data
     assert "trade_off_curve" in data
+    assert "wait_histogram" not in data  # the simulation histogram no longer exists
 
 
 def test_forecast_endpoint(client):

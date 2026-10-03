@@ -630,32 +630,39 @@ class WaitlistOut(WaitlistCreate):
 
 class CapacityOptimizeRequest(BaseModel):
     session_date: date | None = None
-    target_doctor: str | None = None
-    max_wait_time_tolerance_mins: int = 15
 
 
 class SessionOptimizationDetail(BaseModel):
+    """One clinic session on the target date (a doctor's session that has bookings)."""
     doctor_id: uuid.UUID | None = None
+    clinic_session_id: uuid.UUID | None = None
+    session_label: str | None = None
+    session_start: str | None = None
     doctor_name: str
     specialty: str
     room_number: str
-    max_capacity: int = 25
+    max_capacity: int | None = None  # None: the booking has no clinic session, so no known capacity
     total_booked: int
+    free_seats: int = 0
     predicted_no_shows: int
     expected_no_shows_float: float = 0.0
     interval_low: float = 0.0
     interval_high: float = 0.0
     high_risk_slots: int
-    recommended_overbook_count: int
+    unscored_bookings: int = 0  # bookings without a stored prediction (counted at the model's base rate)
+    recommended_extra_bookings: int = 0  # free seats + overbooking
+    recommended_overbook_count: int  # beyond capacity, and only once the session is full (0 while seats are free)
+    overbook_if_full: int = 0  # what the exact optimum would overbook beyond capacity if the session fills up
     expected_revenue_gain_lkr: float
-    expected_wait_time_mins: float
-    linear_fallback_wait_mins: float = 0.0
+    value_gain_lkr: float = 0.0  # fee * E[seen] - wait_cost * E[overflow], versus no extra bookings
+    expected_overflow: float = 0.0
+    expected_wait_time_mins: float = 0.0  # expected session overrun = E[overflow] * slot minutes
+    p_overcrowding: float = 0.0  # P(more patients arrive than capacity)
     booked_utilisation_pct: float = 0.0
     expected_attendance_pct: float = 0.0
-    consultation_fee_lkr: float = 4500.0
+    consultation_fee_lkr: float = 0.0
+    wait_cost_lkr: float = 0.0
     delay_minutes: int = 0
-    effective_tolerance_mins: int = 15
-    p_overcrowding: float = 0.0
     risk_level: str
     status_advice: str
 
@@ -682,6 +689,8 @@ class CapacityOptimizeResponse(BaseModel):
     estimated_revenue_recovery_lkr: float
     booked_utilisation_pct: float = 0.0
     expected_attendance_pct: float = 0.0
+    sessions_running: int = 0  # sessions with at least one booking on this date
+    idle_sessions: int = 0  # sessions on the weekly timetable with no booking this date (not counted in capacity)
     sessions: list[SessionOptimizationDetail]
     departments: list[DepartmentCapacitySummary] = []
 
@@ -704,6 +713,7 @@ class CapacitySettingOut(BaseModel):
     badge_moderate_mins: int
     auto_assign_waitlist: bool
     sim_runs: int
+    wait_cost_lkr: float
     created_at: datetime
     updated_at: datetime
 
@@ -720,6 +730,7 @@ class CapacitySettingUpdate(BaseModel):
     badge_moderate_mins: int | None = None
     auto_assign_waitlist: bool | None = None
     sim_runs: int | None = None
+    wait_cost_lkr: float | None = Field(None, ge=0.0, le=1_000_000.0)
 
 
 class SlotPatientOut(BaseModel):
@@ -750,7 +761,9 @@ class SlotDetailOut(BaseModel):
 
 
 class DoctorSlotsOut(BaseModel):
-    doctor_id: uuid.UUID
+    doctor_id: uuid.UUID | None = None
+    clinic_session_id: uuid.UUID | None = None
+    session_label: str | None = None
     doctor_name: str
     specialty: str
     room_number: str
@@ -767,14 +780,13 @@ class CapacitySlotsResponse(BaseModel):
 
 
 class WhatIfRequest(BaseModel):
+    """Re-run the exact overbooking maths for the sessions on a date with different fee / wait cost / limit."""
     target_date: date | None = None
     doctor_id: uuid.UUID | None = None
     department_id: int | None = None
-    max_wait_time_tolerance_mins: int = 15
-    safety_factor: float = 0.75
-    max_overbook_per_slot: int = 2
-    consultation_fee_lkr: float = 4500.0
-    assume_doctor_delay_mins: int = 0
+    consultation_fee_lkr: float | None = Field(None, ge=0.0)  # None: each doctor's recorded fee
+    wait_cost_lkr: float | None = Field(None, ge=0.0)  # None: the saved setting
+    max_overbook_per_session: int | None = Field(None, ge=0, le=20)  # None: the saved setting
 
 
 class WhatIfPolicyStats(BaseModel):
@@ -783,6 +795,8 @@ class WhatIfPolicyStats(BaseModel):
     p_overcrowding: float
     expected_filled_gaps: float
     expected_revenue_lkr: float
+    expected_overflow: float = 0.0
+    net_value_gain_lkr: float = 0.0
 
 
 class WhatIfResponse(BaseModel):
@@ -791,8 +805,7 @@ class WhatIfResponse(BaseModel):
     delta_overbook: int
     delta_wait_mins: float
     delta_revenue_lkr: float
-    wait_histogram: list[int]
-    trade_off_curve: list[dict]
+    trade_off_curve: list[dict]  # per extra-booking count k, summed over the sessions: value, E[overflow], P(overflow)
 
 
 class CapacityScenarioCreate(BaseModel):

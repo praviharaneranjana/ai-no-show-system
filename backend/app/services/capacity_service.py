@@ -1,85 +1,95 @@
-"""Capacity & Smart Overbooking v2 Service Layer.
+"""Capacity & overbooking service layer.
 
-Implements all core business logic, SQL aggregation, caching,
-queue simulation invocation, and recommendation persistence.
+Capacity is the real ``max_patients`` of the clinic sessions that run on the target date (a session runs on a date
+when it is on the weekly timetable for that weekday and has at least one booking). Expected no-shows are the sum of
+the calibrated risk of the booked patients; the overbooking recommendation is the exact Poisson-binomial optimum in
+``services/overbooking.py`` (no simulation).
+
+Every query is scoped to ``hospital_id`` when one is given.
 """
 
-from datetime import date, datetime, time, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
 import uuid
-import pandas as pd
-from sqlalchemy import func, or_, and_, text
+from datetime import date, datetime, time, timedelta, timezone
+from typing import Any, Dict, List, Optional
+
 from sqlalchemy.orm import Session, joinedload
 
 from app import models, schemas
+from app.services import overbooking
+from app.services.candidate_ranker import score_waitlist_candidate
 from app.services.capacity_math import (
     calculate_poisson_binomial_stats,
-    calculate_effective_tolerance,
     calculate_utilisation_metrics,
-    calculate_expected_filled_gaps,
-    calculate_expected_revenue,
 )
-from app.services.queue_simulator import (
-    optimize_overbook_count,
-    simulate_single_server_queue,
-    linear_wait_estimate_fallback,
-)
-from app.services.candidate_ranker import score_waitlist_candidate
+
+HEAT_AMBER_EXPECTED_NO_SHOWS = 0.5  # per slot, display thresholds only
+HEAT_RED_EXPECTED_NO_SHOWS = 1.0
+
+
+def _label_for_hour(hour: int) -> str:
+    return "Morning" if hour < 12 else "Afternoon" if hour < 17 else "Evening"
+
+
+def _hour_of(scheduled_time: Optional[str]) -> Optional[int]:
+    if not scheduled_time:
+        return None
+    try:
+        return int(scheduled_time.strip()[:2])
+    except ValueError:
+        return None
+
+
+def _model_base_rate() -> float:
+    """Population no-show rate of the active bundle; used only for bookings that have no stored prediction."""
+    from app import shai_model
+    from app.main import shai
+
+    rate = (shai.metrics or {}).get("base_rate")
+    return float(rate) if rate is not None else shai_model.PRIOR_RATE_BASE
 
 
 def get_effective_settings(
     db: Session,
     department_id: Optional[int] = None,
     doctor_id: Optional[uuid.UUID] = None,
+    hospital_id: Optional[uuid.UUID] = None,
 ) -> models.CapacitySetting:
-    """Retrieve the most specific capacity settings (doctor -> department -> global)."""
-    # 1. Doctor override
+    """Most specific capacity settings: doctor -> department -> hospital default."""
+
+    def scoped(q):
+        return q.filter(models.CapacitySetting.hospital_id == hospital_id) if hospital_id else q
+
     if doctor_id:
-        doc_setting = db.query(models.CapacitySetting).filter(
-            models.CapacitySetting.doctor_id == doctor_id,
-            models.CapacitySetting.scope == "doctor",
+        row = scoped(db.query(models.CapacitySetting)).filter(
+            models.CapacitySetting.doctor_id == doctor_id, models.CapacitySetting.scope == "doctor"
         ).first()
-        if doc_setting:
-            return doc_setting
-
-    # 2. Department override
+        if row:
+            return row
     if department_id:
-        dept_setting = db.query(models.CapacitySetting).filter(
-            models.CapacitySetting.department_id == department_id,
-            models.CapacitySetting.scope == "department",
+        row = scoped(db.query(models.CapacitySetting)).filter(
+            models.CapacitySetting.department_id == department_id, models.CapacitySetting.scope == "department"
         ).first()
-        if dept_setting:
-            return dept_setting
+        if row:
+            return row
 
-    # 3. Global hospital default
-    global_setting = db.query(models.CapacitySetting).filter(
-        models.CapacitySetting.scope == "global"
-    ).first()
-
-    if not global_setting:
-        global_setting = models.CapacitySetting(
-            scope="global",
-            safety_factor=0.75,
-            max_overbook_per_slot=2,
-            max_overbook_per_session=4,
-            wait_tolerance_mins=15,
-            consultation_fee_lkr=4500.0,
-            badge_safe_mins=8,
-            badge_moderate_mins=15,
-            auto_assign_waitlist=False,
-            sim_runs=2000,
-        )
-        db.add(global_setting)
+    row = (
+        scoped(db.query(models.CapacitySetting))
+        .filter(models.CapacitySetting.scope == "global")
+        .order_by(models.CapacitySetting.created_at)
+        .first()
+    )
+    if not row:
+        row = models.CapacitySetting(hospital_id=hospital_id, scope="global")
+        db.add(row)
         db.commit()
-        db.refresh(global_setting)
-
-    return global_setting
+        db.refresh(row)
+    return row
 
 
 def clean_room_name(room: Optional[str]) -> str:
-    """Fix duplicate 'Room Room' bug (G9)."""
+    """Normalise 'Room Room 5' / '5' to 'Room 5'. Empty stays empty (no invented room)."""
     if not room:
-        return "Room 204"
+        return ""
     r = room.strip()
     while r.lower().startswith("room room"):
         r = r[5:].strip()
@@ -88,560 +98,489 @@ def clean_room_name(room: Optional[str]) -> str:
     return r
 
 
+# ---------------------------------------------------------------------------
+# Session grouping
+# ---------------------------------------------------------------------------
+class _Group:
+    def __init__(self, session: Optional[models.DoctorClinicSession], doctor: Optional[models.Doctor]):
+        self.session = session
+        self.doctor = doctor
+        self.appts: List[models.Appointment] = []
+
+
+def _resolve_session(appt: models.Appointment, target: date) -> Optional[models.DoctorClinicSession]:
+    if appt.clinic_session is not None:
+        return appt.clinic_session
+    doc = appt.doctor
+    if not doc:
+        return None
+    same_day = [s for s in doc.sessions if s.weekday == target.weekday() and s.active]
+    hr = _hour_of(appt.scheduled_time)
+    if hr is not None:
+        for s in same_day:
+            if s.label == _label_for_hour(hr):
+                return s
+    return same_day[0] if same_day else None
+
+
+def _load_groups(
+    db: Session,
+    target: date,
+    hospital_id: Optional[uuid.UUID],
+    doctor_id: Optional[uuid.UUID] = None,
+    department_id: Optional[int] = None,
+) -> tuple[List[_Group], int]:
+    q = db.query(models.Appointment).options(
+        joinedload(models.Appointment.prediction),
+        joinedload(models.Appointment.patient),
+        joinedload(models.Appointment.clinic_session),
+        joinedload(models.Appointment.doctor).joinedload(models.Doctor.sessions),
+        joinedload(models.Appointment.doctor).joinedload(models.Doctor.department),
+    ).filter(
+        models.Appointment.appointment_day == target,
+        models.Appointment.status != "cancelled",
+    )
+    if hospital_id:
+        q = q.filter(models.Appointment.hospital_id == hospital_id)
+    if doctor_id:
+        q = q.filter(models.Appointment.doctor_id == doctor_id)
+    if department_id:
+        q = q.join(models.Doctor, models.Doctor.id == models.Appointment.doctor_id).filter(
+            models.Doctor.department_id == department_id
+        )
+    groups: Dict[Any, _Group] = {}
+    for a in q.all():
+        sess = _resolve_session(a, target)
+        key = sess.id if sess else ("none", a.doctor_id, a.doctor_name)
+        g = groups.get(key)
+        if g is None:
+            g = groups[key] = _Group(sess, a.doctor)
+        g.appts.append(a)
+
+    # Timetable sessions that exist on this weekday but have no booking (reported, not counted in capacity)
+    sq = db.query(models.DoctorClinicSession).join(models.Doctor).filter(
+        models.DoctorClinicSession.weekday == target.weekday(),
+        models.DoctorClinicSession.active.is_(True),
+        models.Doctor.active.is_(True),
+    )
+    if hospital_id:
+        sq = sq.filter(models.Doctor.hospital_id == hospital_id)
+    if doctor_id:
+        sq = sq.filter(models.Doctor.id == doctor_id)
+    if department_id:
+        sq = sq.filter(models.Doctor.department_id == department_id)
+    idle = sum(1 for s in sq.all() if s.id not in groups)
+    return list(groups.values()), idle
+
+
+def _group_probs(g: _Group, base_rate: float) -> tuple[List[float], int]:
+    probs, unscored = [], 0
+    for a in g.appts:
+        if a.prediction and a.prediction.risk_score is not None:
+            probs.append(float(a.prediction.risk_score))
+        else:
+            probs.append(base_rate)
+            unscored += 1
+    return probs, unscored
+
+
+def _group_fee(g: _Group) -> float:
+    fees = [a.fee_lkr for a in g.appts if a.fee_lkr]
+    if fees:
+        return sum(fees) / len(fees)
+    return float(g.doctor.consultation_fee_lkr) if g.doctor and g.doctor.consultation_fee_lkr else 0.0
+
+
+def _evaluate_group(
+    g: _Group,
+    *,
+    base_rate: float,
+    wait_cost: float,
+    max_overbook: int,
+    fee_override: Optional[float] = None,
+) -> dict:
+    probs, unscored = _group_probs(g, base_rate)
+    fee = fee_override if fee_override is not None else _group_fee(g)
+    capacity = g.session.max_patients if g.session else None
+    exp, var, lo, hi = calculate_poisson_binomial_stats(probs, confidence_level=0.80)
+    if capacity is not None:
+        rec = overbooking.recommend(probs, capacity, fee, wait_cost, max_overbook, base_rate)
+    else:
+        rec = None
+    return {"probs": probs, "unscored": unscored, "fee": fee, "capacity": capacity,
+            "exp": exp, "var": var, "lo": lo, "hi": hi, "rec": rec}
+
+
 def get_capacity_overview(
     db: Session,
     session_date: Optional[date] = None,
     target_doctor_id: Optional[uuid.UUID] = None,
-    max_wait_tolerance: Optional[int] = None,
+    max_wait_tolerance: Optional[int] = None,  # kept for API compatibility; the exact method has no wait tolerance
     persist_run: bool = True,
+    hospital_id: Optional[uuid.UUID] = None,
+    department_id: Optional[int] = None,
+    wait_cost_override: Optional[float] = None,
+    max_overbook_override: Optional[int] = None,
+    fee_override: Optional[float] = None,
 ) -> schemas.CapacityOptimizeResponse:
-    """Prescriptive capacity optimization across all active doctor sessions (G1-G7, G9, G12-G14)."""
-    target_date = session_date or pd.to_datetime("today").date()
-
-    # Query active doctors and their sessions
-    doctors_query = db.query(models.Doctor).options(
-        joinedload(models.Doctor.department),
-        joinedload(models.Doctor.sessions),
-    ).filter(models.Doctor.active == True)
-
-    if target_doctor_id:
-        doctors_query = doctors_query.filter(models.Doctor.id == target_doctor_id)
-
-    doctors = doctors_query.all()
-
-    # Fallback to legacy doctor sessions if reference tables are empty
-    if not doctors:
-        legacy_sessions = db.query(models.DoctorSession).all()
-        if not legacy_sessions:
-            today_date = target_date or date.today()
-            defaults = [
-                models.DoctorSession(
-                    doctor_name="Dr. Rohan Perera",
-                    specialty="Cardiology",
-                    room_number="Room 204",
-                    session_date=today_date,
-                    scheduled_start_time="17:00",
-                    status="delayed",
-                    delay_minutes=25,
-                    avg_consultation_mins=12,
-                    max_capacity=25,
-                ),
-                models.DoctorSession(
-                    doctor_name="Dr. Neluka Fernando",
-                    specialty="Neurology",
-                    room_number="Room 108",
-                    session_date=today_date,
-                    scheduled_start_time="18:00",
-                    status="on_time",
-                    delay_minutes=0,
-                    avg_consultation_mins=15,
-                    max_capacity=20,
-                ),
-            ]
-            db.add_all(defaults)
-            db.commit()
-            legacy_sessions = db.query(models.DoctorSession).all()
-        return _fallback_legacy_overview(db, legacy_sessions, target_date, max_wait_tolerance)
-
-    # Fetch appointments for target_date with joined predictions and patients
-    appointments = db.query(models.Appointment).options(
-        joinedload(models.Appointment.prediction),
-        joinedload(models.Appointment.patient),
-    ).filter(
-        models.Appointment.appointment_day == target_date,
-        models.Appointment.status != "cancelled",
-    ).all()
-
-    # Group appointments strictly by doctor_id (fixes G1)
-    appts_by_doctor: Dict[uuid.UUID, List[models.Appointment]] = {}
-    for a in appointments:
-        if a.doctor_id:
-            appts_by_doctor.setdefault(a.doctor_id, []).append(a)
+    target_date = session_date or date.today()
+    groups, idle = _load_groups(db, target_date, hospital_id, target_doctor_id, department_id)
+    base_rate = _model_base_rate()
+    from app.main import shai
 
     run_id = uuid.uuid4()
-    session_details: List[schemas.SessionOptimizationDetail] = []
+    details: List[schemas.SessionOptimizationDetail] = []
     dept_summaries: Dict[str, Dict[str, Any]] = {}
+    tot_cap = tot_booked = tot_rec = 0
+    tot_exp = tot_rev = 0.0
+    all_probs: List[float] = []
 
-    tot_cap = 0
-    tot_booked = 0
-    tot_expected_no_shows = 0.0
-    tot_rec_overbook = 0
-    tot_rev_recovery = 0.0
-    all_no_show_probs: List[float] = []
-
-    for doc in doctors:
-        settings = get_effective_settings(db, department_id=doc.department_id, doctor_id=doc.id)
-        fee = doc.consultation_fee_lkr or settings.consultation_fee_lkr or 4500.0
-
-        # Primary clinic session for room and delay
-        clinic_session = doc.sessions[0] if doc.sessions else None
-        room_name = clean_room_name(doc.default_room or (clinic_session.room if clinic_session else "Room 204"))
-        max_cap = clinic_session.max_patients if clinic_session else 25
-        avg_consult_mins = float(clinic_session.slot_minutes) if clinic_session else 12.0
-        delay_mins = clinic_session.delay_minutes if clinic_session else 0
-
-        # Check legacy DoctorSession for real-time delay updates
-        legacy_match = db.query(models.DoctorSession).filter(
-            models.DoctorSession.doctor_name == doc.full_name
-        ).first()
-        if legacy_match:
-            delay_mins = max(delay_mins, legacy_match.delay_minutes)
-
-        # Appointments strictly matching this doctor
-        doc_appts = appts_by_doctor.get(doc.id, [])
-        booked_count = len(doc_appts)  # Honest count, no fake baseline (G2)
-
-        # Calibrated no-show probabilities (G3)
-        probs: List[float] = []
-        high_risk_count = 0
-        for a in doc_appts:
-            if a.prediction and a.prediction.risk_score is not None:
-                p = float(a.prediction.risk_score)
-                probs.append(p)
-                if a.prediction.risk_category == "High" or p >= 0.40:
-                    high_risk_count += 1
-            else:
-                probs.append(0.16)  # Baseline synthetic rate fallback
-
-        # Poisson-Binomial stats
-        exp_no_shows, var_no_shows, ci_low, ci_high = calculate_poisson_binomial_stats(probs, confidence_level=0.80)
-        all_no_show_probs.extend(probs)
-
-        # Effective tolerance curtailed by lateness (G4, 4.C)
-        base_tol = max_wait_tolerance if max_wait_tolerance is not None else settings.wait_tolerance_mins
-        eff_tolerance = calculate_effective_tolerance(base_tol, delay_mins)
-
-        # Simulation and overbooking optimization (4.B, 4.D)
-        optimal_k, sim_res, _ = optimize_overbook_count(
-            scheduled_no_show_probs=probs,
-            max_capacity=max_cap,
-            booked_count=booked_count,
-            safety_factor=settings.safety_factor,
-            max_overbook_cap=settings.max_overbook_per_session,
-            effective_tolerance_mins=eff_tolerance,
-            avg_consultation_mins=avg_consult_mins,
-            consultation_std_mins=3.5,
-            doctor_delay_mins=delay_mins,
-            sim_runs=settings.sim_runs,
-            seed=42,
+    for g in sorted(groups, key=lambda x: ((x.doctor.full_name if x.doctor else "~"), x.session.start_time if x.session else time(0))):
+        settings = get_effective_settings(
+            db, department_id=g.doctor.department_id if g.doctor else None,
+            doctor_id=g.doctor.id if g.doctor else None, hospital_id=hospital_id,
         )
+        wait_cost = wait_cost_override if wait_cost_override is not None else settings.wait_cost_lkr
+        max_ob = max_overbook_override if max_overbook_override is not None else settings.max_overbook_per_session
+        ev = _evaluate_group(g, base_rate=base_rate, wait_cost=wait_cost, max_overbook=max_ob, fee_override=fee_override)
+        booked = len(g.appts)
+        cap = ev["capacity"]
+        rec = ev["rec"]
+        delay = g.session.delay_minutes if g.session else 0
+        slot_mins = float(g.session.slot_minutes) if g.session else 0.0
+        high = sum(1 for a in g.appts if a.prediction and a.prediction.risk_category == "High")
 
-        sim_wait = sim_res.get("mean_added_wait_mins", 0.0)
-        p_crowd = sim_res.get("p_overcrowding", 0.0)
-        fallback_wait = linear_wait_estimate_fallback(optimal_k, avg_consult_mins)
+        if rec:
+            k_star, over_if_full = rec["recommended_extra_bookings"], rec["recommended_overbook"]
+            free = rec["free_seats"]
+            # Overbooking proper starts only when every seat is taken; until then the advice is just "keep booking".
+            over = over_if_full if free == 0 else 0
+            base_row = rec["curve"][0]
+            best_row = rec["curve"][k_star]
+            rev_gain = ev["fee"] * (best_row["expected_seen"] - base_row["expected_seen"])
+            overflow, p_over = rec["expected_overflow"], rec["p_overflow"]
+            value_gain = rec["value_gain_lkr"]
+        else:
+            k_star = over = over_if_full = free = 0
+            rev_gain = overflow = p_over = value_gain = 0.0
 
-        # Utilisation and expected attendance (G5)
-        booked_util, exp_attend = calculate_utilisation_metrics(booked_count, max_cap, exp_no_shows)
-
-        # Revenue upside: expected filled gaps * fee (G14, 4.E)
-        filled_gaps = calculate_expected_filled_gaps(optimal_k, exp_no_shows, var_no_shows)
-        rev_gain = calculate_expected_revenue(filled_gaps, fee)
-
-        # Risk badge
-        if sim_wait <= settings.badge_safe_mins and delay_mins <= 5:
+        util, attend = calculate_utilisation_metrics(booked, cap or 0, ev["exp"])
+        wait_mins = overflow * slot_mins
+        if wait_mins <= settings.badge_safe_mins and delay <= 5:
             risk_lvl = "Safe"
-        elif sim_wait <= settings.badge_moderate_mins or delay_mins <= 15:
+        elif wait_mins <= settings.badge_moderate_mins or delay <= 15:
             risk_lvl = "Moderate"
         else:
             risk_lvl = "Caution"
 
-        # Status advice text
-        if booked_count == 0:
-            advice = "Honest empty session. No patients scheduled today. Overbook: 0."
-        elif delay_mins >= 20:
-            advice = f"Doctor delayed +{delay_mins}m. Overbooking curtailed to +{optimal_k} to protect queue latency."
-        elif optimal_k > 0:
-            advice = f"Overbook +{optimal_k} slots. High probability of filling no-shows with under {sim_wait}m simulated added wait."
+        if cap is None:
+            advice = "Booked without a clinic session: capacity unknown, no overbooking advice."
+        elif free > 0:
+            advice = (f"{free} of {cap} seats free: keep booking. If the session fills, the optimum is to overbook "
+                      f"+{over_if_full} (P(overflow) {p_over:.0%} at that point).")
+        elif over > 0:
+            advice = (f"Full at {cap}: overbook +{over}. P(more arrive than {cap}) = {p_over:.0%}, "
+                      f"expected overflow {overflow:.2f} patients.")
         else:
-            advice = "Optimal capacity reached. Do not overbook to maintain zero queue delay."
+            advice = f"Full at {cap}. Overbooking is not worthwhile at this wait cost."
+        if ev["unscored"]:
+            advice += f" {ev['unscored']} booking(s) have no stored prediction and use the base rate."
 
-        detail = schemas.SessionOptimizationDetail(
-            doctor_id=doc.id,
-            doctor_name=doc.full_name,
-            specialty=doc.department.name if doc.department else "General Medicine",
-            room_number=room_name,
-            max_capacity=max_cap,
-            total_booked=booked_count,
-            predicted_no_shows=int(round(exp_no_shows)),
-            expected_no_shows_float=exp_no_shows,
-            interval_low=ci_low,
-            interval_high=ci_high,
-            high_risk_slots=high_risk_count,
-            recommended_overbook_count=optimal_k,
-            expected_revenue_gain_lkr=rev_gain,
-            expected_wait_time_mins=sim_wait,
-            linear_fallback_wait_mins=fallback_wait,
-            booked_utilisation_pct=booked_util,
-            expected_attendance_pct=exp_attend,
-            consultation_fee_lkr=fee,
-            delay_minutes=delay_mins,
-            effective_tolerance_mins=eff_tolerance,
-            p_overcrowding=p_crowd,
+        dept_name = g.doctor.department.name if g.doctor and g.doctor.department else "Unassigned"
+        details.append(schemas.SessionOptimizationDetail(
+            doctor_id=g.doctor.id if g.doctor else None,
+            clinic_session_id=g.session.id if g.session else None,
+            session_label=g.session.label if g.session else None,
+            session_start=g.session.start_time.strftime("%H:%M") if g.session else None,
+            doctor_name=g.doctor.full_name if g.doctor else (g.appts[0].doctor_name or "Unassigned"),
+            specialty=dept_name,
+            room_number=clean_room_name((g.session.room if g.session else None) or (g.doctor.default_room if g.doctor else None)),
+            max_capacity=cap,
+            total_booked=booked,
+            free_seats=free,
+            predicted_no_shows=int(round(ev["exp"])),
+            expected_no_shows_float=ev["exp"],
+            interval_low=ev["lo"],
+            interval_high=ev["hi"],
+            high_risk_slots=high,
+            unscored_bookings=ev["unscored"],
+            recommended_extra_bookings=k_star,
+            recommended_overbook_count=over,
+            overbook_if_full=over_if_full,
+            expected_revenue_gain_lkr=round(rev_gain, 2),
+            value_gain_lkr=round(value_gain, 2),
+            expected_overflow=round(overflow, 4),
+            expected_wait_time_mins=round(wait_mins, 1),
+            p_overcrowding=round(p_over, 4),
+            booked_utilisation_pct=util,
+            expected_attendance_pct=attend,
+            consultation_fee_lkr=round(ev["fee"], 2),
+            wait_cost_lkr=wait_cost,
+            delay_minutes=delay,
             risk_level=risk_lvl,
             status_advice=advice,
-        )
-        session_details.append(detail)
+        ))
 
-        # Department aggregation
-        dept_name = doc.department.name if doc.department else "General Medicine"
-        if dept_name not in dept_summaries:
-            dept_summaries[dept_name] = {
-                "department": dept_name,
-                "total_capacity": 0,
-                "total_booked": 0,
-                "expected_no_shows": 0.0,
-                "recommended_overbook": 0,
-                "probs": [],
-            }
-        dept_summaries[dept_name]["total_capacity"] += max_cap
-        dept_summaries[dept_name]["total_booked"] += booked_count
-        dept_summaries[dept_name]["expected_no_shows"] += exp_no_shows
-        dept_summaries[dept_name]["recommended_overbook"] += optimal_k
-        dept_summaries[dept_name]["probs"].extend(probs)
+        d = dept_summaries.setdefault(dept_name, {"cap": 0, "booked": 0, "exp": 0.0, "rec": 0, "probs": []})
+        d["cap"] += cap or 0
+        d["booked"] += booked
+        d["exp"] += ev["exp"]
+        d["rec"] += over
+        d["probs"].extend(ev["probs"])
+        tot_cap += cap or 0
+        tot_booked += booked
+        tot_exp += ev["exp"]
+        tot_rec += over
+        tot_rev += rev_gain
+        all_probs.extend(ev["probs"])
 
-        # Accumulators
-        tot_cap += max_cap
-        tot_booked += booked_count
-        tot_expected_no_shows += exp_no_shows
-        tot_rec_overbook += optimal_k
-        tot_rev_recovery += rev_gain
-
-        # Persist recommendation snapshot (G12)
-        if persist_run:
-            rec_row = models.CapacityRecommendation(
+        if persist_run and g.doctor:
+            db.add(models.CapacityRecommendation(
+                hospital_id=hospital_id,
                 run_id=run_id,
-                doctor_id=doc.id,
-                clinic_session_id=clinic_session.id if clinic_session else None,
+                doctor_id=g.doctor.id,
+                clinic_session_id=g.session.id if g.session else None,
                 target_date=target_date,
-                booked_count=booked_count,
-                expected_no_shows=exp_no_shows,
-                interval_low=ci_low,
-                interval_high=ci_high,
-                recommended_overbook=optimal_k,
-                expected_wait_mins=sim_wait,
-                expected_revenue_lkr=rev_gain,
-                p_overcrowding=p_crowd,
-                effective_tolerance_mins=eff_tolerance,
-                settings_snapshot={
-                    "safety_factor": settings.safety_factor,
-                    "fee": fee,
-                    "delay": delay_mins,
-                },
-                model_version="shai-lk-synth-v1",
-            )
-            db.add(rec_row)
-
+                booked_count=booked,
+                expected_no_shows=ev["exp"],
+                interval_low=ev["lo"],
+                interval_high=ev["hi"],
+                recommended_overbook=over,
+                expected_wait_mins=round(wait_mins, 1),
+                expected_revenue_lkr=round(rev_gain, 2),
+                p_overcrowding=round(p_over, 4),
+                effective_tolerance_mins=0,
+                settings_snapshot={"method": "exact_poisson_binomial", "fee": ev["fee"], "wait_cost_lkr": wait_cost,
+                                   "max_overbook": max_ob, "capacity": cap},
+                model_version=shai.version,
+            ))
     if persist_run:
         try:
             db.commit()
         except Exception:
             db.rollback()
 
-    # Hospital-wide Poisson-Binomial Interval
-    _, _, tot_ci_low, tot_ci_high = calculate_poisson_binomial_stats(all_no_show_probs, confidence_level=0.80)
-    hosp_booked_util, hosp_exp_attend = calculate_utilisation_metrics(tot_booked, tot_cap, tot_expected_no_shows)
-
-    # Department Summaries
-    dept_out: List[schemas.DepartmentCapacitySummary] = []
-    for d_name, d_info in dept_summaries.items():
-        _, _, d_low, d_high = calculate_poisson_binomial_stats(d_info["probs"], confidence_level=0.80)
+    _, _, tot_lo, tot_hi = calculate_poisson_binomial_stats(all_probs, confidence_level=0.80)
+    util, attend = calculate_utilisation_metrics(tot_booked, tot_cap, tot_exp)
+    dept_out = []
+    for name, d in sorted(dept_summaries.items()):
+        _, _, lo, hi = calculate_poisson_binomial_stats(d["probs"], confidence_level=0.80)
         dept_out.append(schemas.DepartmentCapacitySummary(
-            department=d_name,
-            total_capacity=d_info["total_capacity"],
-            total_booked=d_info["total_booked"],
-            expected_no_shows=round(d_info["expected_no_shows"], 1),
-            recommended_overbook=d_info["recommended_overbook"],
-            interval_low=d_low,
-            interval_high=d_high,
+            department=name, total_capacity=d["cap"], total_booked=d["booked"],
+            expected_no_shows=round(d["exp"], 1), recommended_overbook=d["rec"], interval_low=lo, interval_high=hi,
         ))
-
     return schemas.CapacityOptimizeResponse(
         session_date=target_date,
         total_capacity=tot_cap,
         total_booked=tot_booked,
-        total_predicted_no_shows=int(round(tot_expected_no_shows)),
-        expected_no_shows_total=round(tot_expected_no_shows, 1),
-        expected_no_shows_interval_low=tot_ci_low,
-        expected_no_shows_interval_high=tot_ci_high,
-        total_recommended_overbooks=tot_rec_overbook,
-        estimated_revenue_recovery_lkr=round(tot_rev_recovery, 2),
-        booked_utilisation_pct=hosp_booked_util,
-        expected_attendance_pct=hosp_exp_attend,
-        sessions=session_details,
+        total_predicted_no_shows=int(round(tot_exp)),
+        expected_no_shows_total=round(tot_exp, 1),
+        expected_no_shows_interval_low=tot_lo,
+        expected_no_shows_interval_high=tot_hi,
+        total_recommended_overbooks=tot_rec,
+        estimated_revenue_recovery_lkr=round(tot_rev, 2),
+        booked_utilisation_pct=util,
+        expected_attendance_pct=attend,
+        sessions_running=len(details),
+        idle_sessions=idle,
+        sessions=details,
         departments=dept_out,
     )
 
 
-def get_capacity_slots(db: Session, target_date: date) -> schemas.CapacitySlotsResponse:
-    """Heatmap grid data: doctor x time slots (Feature A)."""
-    doctors = db.query(models.Doctor).options(
-        joinedload(models.Doctor.department),
-        joinedload(models.Doctor.sessions),
-    ).filter(models.Doctor.active == True).all()
+# ---------------------------------------------------------------------------
+# Slot heat map
+# ---------------------------------------------------------------------------
+def get_capacity_slots(db: Session, target_date: date, hospital_id: Optional[uuid.UUID] = None) -> schemas.CapacitySlotsResponse:
+    """Doctor-session x time grid with booked patients; colours show expected no-shows per slot."""
+    groups, _ = _load_groups(db, target_date, hospital_id)
+    base_rate = _model_base_rate()
+    times = sorted({a.scheduled_time for g in groups for a in g.appts if a.scheduled_time})
 
-    appts = db.query(models.Appointment).options(
-        joinedload(models.Appointment.prediction),
-        joinedload(models.Appointment.patient),
-    ).filter(
-        models.Appointment.appointment_day == target_date,
-        models.Appointment.status != "cancelled",
-    ).all()
-
-    # Pre-defined 15-minute slot intervals from 16:00 to 18:30 (11 slots)
-    slot_times = [
-        "16:00", "16:15", "16:30", "16:45",
-        "17:00", "17:15", "17:30", "17:45",
-        "18:00", "18:15", "18:30"
-    ]
-
-    doc_slots_list: List[schemas.DoctorSlotsOut] = []
-
-    for doc in doctors:
-        sess = doc.sessions[0] if doc.sessions else None
-        delay_mins = sess.delay_minutes if sess else 0
-        room = clean_room_name(doc.default_room or (sess.room if sess else "Room 204"))
-
-        # Find appointments for this doctor
-        doc_appts = [a for a in appts if a.doctor_id == doc.id or a.doctor_name == doc.full_name]
-
-        slots_out: List[schemas.SlotDetailOut] = []
-        doc_rec_overbook = 0
-
-        for st in slot_times:
-            # Match appointment time
-            matched = [
-                a for a in doc_appts
-                if a.scheduled_time and a.scheduled_time.startswith(st)
-            ]
-
-            p_list = []
-            slot_patients: List[schemas.SlotPatientOut] = []
+    rows: List[schemas.DoctorSlotsOut] = []
+    for g in sorted(groups, key=lambda x: ((x.doctor.full_name if x.doctor else "~"), x.session.start_time if x.session else time(0))):
+        settings = get_effective_settings(
+            db, department_id=g.doctor.department_id if g.doctor else None,
+            doctor_id=g.doctor.id if g.doctor else None, hospital_id=hospital_id,
+        )
+        ev = _evaluate_group(g, base_rate=base_rate, wait_cost=settings.wait_cost_lkr,
+                             max_overbook=settings.max_overbook_per_session)
+        over = ev["rec"]["recommended_overbook"] if ev["rec"] and ev["rec"]["free_seats"] == 0 else 0
+        slots: List[schemas.SlotDetailOut] = []
+        for st in times:
+            matched = [a for a in g.appts if a.scheduled_time == st]
+            patients: List[schemas.SlotPatientOut] = []
+            exp = 0.0
             for a in matched:
-                p_risk = float(a.prediction.risk_score) if a.prediction else 0.16
-                p_list.append(p_risk)
-                
-                cat = a.prediction.risk_category if a.prediction else "Low"
-                dist = float(a.patient.distance_km) if (a.patient and a.patient.distance_km is not None) else 8.5
-                
-                # Factors breakdown
+                p = float(a.prediction.risk_score) if a.prediction else base_rate
+                exp += p
+                pat = a.patient
+                age = None
+                if pat and pat.date_of_birth:
+                    age = max(a.appointment_day.year - pat.date_of_birth.year
+                              - ((a.appointment_day.month, a.appointment_day.day) < (pat.date_of_birth.month, pat.date_of_birth.day)), 0)
+                dist = float(pat.distance_km) if pat and pat.distance_km is not None else None
                 factors = []
-                if dist > 30.0:
+                if dist is not None and dist > 30.0:
                     factors.append(f"Long distance ({dist:.0f} km)")
-                if a.payment_mode == "cash":
+                if (a.payment_mode or "").lower() == "cash":
                     factors.append("Cash payment on arrival")
                 if not a.sms_received:
                     factors.append("SMS unconfirmed")
-
-                slot_patients.append(schemas.SlotPatientOut(
+                patients.append(schemas.SlotPatientOut(
                     appointment_id=a.id,
-                    patient_id=a.patient.id if a.patient else a.patient_id,
-                    uhid=a.patient.uhid if a.patient else "SH-UNKNOWN",
-                    patient_name=a.patient.full_name if a.patient else "Patient",
-                    gender=a.patient.gender if a.patient else "Unknown",
-                    age=35,
-                    phone=a.patient.phone if a.patient else None,
-                    city=a.patient.city if a.patient else "Colombo",
+                    patient_id=a.patient_id,
+                    uhid=pat.uhid if pat else "",
+                    patient_name=pat.full_name if pat else "",
+                    gender=pat.gender if pat else None,
+                    age=age,
+                    phone=pat.phone if pat else None,
+                    city=pat.city if pat else None,
                     distance_km=dist,
-                    risk_score=p_risk,
-                    risk_category=cat,
+                    risk_score=p,
+                    risk_category=a.prediction.risk_category if a.prediction else "Unscored",
                     status=a.status,
                     sms_received=a.sms_received,
                     factors=factors,
                 ))
-
-            slot_booked = len(matched)
-            slot_exp_no_show = round(sum(p_list), 2)
-            
-            # Slot recommendation: overbook +1 if slot risk sum >= 0.70 and slot <= 2 booked
-            rec_slot_overbook = 0
-            if slot_exp_no_show >= 0.70 and slot_booked <= 2:
-                rec_slot_overbook = 1
-            doc_rec_overbook += rec_slot_overbook
-
-            # Heat color
-            if slot_booked == 0:
+            if not matched:
                 heat = "grey"
-            elif rec_slot_overbook > 0:
+            elif exp >= HEAT_RED_EXPECTED_NO_SHOWS:
                 heat = "red"
-            elif slot_exp_no_show >= 0.40:
+            elif exp >= HEAT_AMBER_EXPECTED_NO_SHOWS:
                 heat = "amber"
             else:
                 heat = "green"
-
-            slots_out.append(schemas.SlotDetailOut(
-                slot_time=st,
-                booked_count=slot_booked,
-                expected_no_shows=slot_exp_no_show,
-                recommended_overbook=rec_slot_overbook,
-                heat_color=heat,
-                simulated_wait_mins=round(rec_slot_overbook * 3.5, 1),
-                patients=slot_patients,
+            slots.append(schemas.SlotDetailOut(
+                slot_time=st, booked_count=len(matched), expected_no_shows=round(exp, 2),
+                recommended_overbook=0, heat_color=heat, simulated_wait_mins=0.0, patients=patients,
             ))
-
-        doc_slots_list.append(schemas.DoctorSlotsOut(
-            doctor_id=doc.id,
-            doctor_name=doc.full_name,
-            specialty=doc.department.name if doc.department else "General Medicine",
-            room_number=room,
-            delay_minutes=delay_mins,
-            delay_status="delayed" if delay_mins > 0 else "on_time",
-            total_booked=len(doc_appts),
-            total_recommended_overbook=doc_rec_overbook,
-            slots=slots_out,
+        delay = g.session.delay_minutes if g.session else 0
+        rows.append(schemas.DoctorSlotsOut(
+            doctor_id=g.doctor.id if g.doctor else None,
+            clinic_session_id=g.session.id if g.session else None,
+            session_label=g.session.label if g.session else None,
+            doctor_name=g.doctor.full_name if g.doctor else (g.appts[0].doctor_name or "Unassigned"),
+            specialty=g.doctor.department.name if g.doctor and g.doctor.department else "Unassigned",
+            room_number=clean_room_name((g.session.room if g.session else None) or (g.doctor.default_room if g.doctor else None)),
+            delay_minutes=delay,
+            delay_status="delayed" if delay > 0 else "on_time",
+            total_booked=len(g.appts),
+            total_recommended_overbook=over,  # the recommendation is per session, not per slot
+            slots=slots,
         ))
-
-    return schemas.CapacitySlotsResponse(
-        date=target_date,
-        doctors=doc_slots_list,
-    )
+    return schemas.CapacitySlotsResponse(date=target_date, doctors=rows)
 
 
-def evaluate_what_if_scenario(db: Session, req: schemas.WhatIfRequest) -> schemas.WhatIfResponse:
-    """Non-persisting simulation endpoint comparing current vs what-if policies (Feature B)."""
-    target_date = req.target_date or pd.to_datetime("today").date()
+# ---------------------------------------------------------------------------
+# What-if
+# ---------------------------------------------------------------------------
+def evaluate_what_if_scenario(db: Session, req: schemas.WhatIfRequest, hospital_id: Optional[uuid.UUID] = None) -> schemas.WhatIfResponse:
+    """Current saved policy vs. a different fee / wait cost / overbooking limit, on the real sessions of a date."""
+    target = req.target_date or date.today()
+    groups, _ = _load_groups(db, target, hospital_id, req.doctor_id, req.department_id)
+    base_rate = _model_base_rate()
 
-    # Baseline current policy
-    cur_overview = get_capacity_overview(
-        db,
-        session_date=target_date,
-        target_doctor_id=req.doctor_id,
-        persist_run=False,
-    )
-
-    cur_overbook = cur_overview.total_recommended_overbooks
-    cur_rev = cur_overview.estimated_revenue_recovery_lkr
-    cur_wait = cur_overview.sessions[0].expected_wait_time_mins if cur_overview.sessions else 6.8
-    cur_crowd = cur_overview.sessions[0].p_overcrowding if cur_overview.sessions else 0.021
-
-    # What-if modified evaluation
-    delay = req.assume_doctor_delay_mins
-    eff_tol = calculate_effective_tolerance(req.max_wait_time_tolerance_mins, delay)
-    fee = req.consultation_fee_lkr
-
-    # Gather all booked probabilities for target session
-    probs = [0.25] * max(1, cur_overview.total_booked)
-    
-    # Run optimizer with what-if parameters
-    whatif_k, whatif_sim, trade_off_curve = optimize_overbook_count(
-        scheduled_no_show_probs=probs,
-        max_capacity=cur_overview.total_capacity or 25,
-        booked_count=cur_overview.total_booked or 20,
-        safety_factor=req.safety_factor,
-        max_overbook_cap=min(6, req.max_overbook_per_slot * 3),
-        effective_tolerance_mins=eff_tol,
-        doctor_delay_mins=delay,
-        sim_runs=2000,
-        seed=42,
-    )
-
-    whatif_wait = whatif_sim.get("mean_added_wait_mins", 11.4)
-    whatif_crowd = whatif_sim.get("p_overcrowding", 0.048)
-    whatif_gaps = whatif_sim.get("expected_filled_gaps", float(whatif_k) * 0.9)
-    whatif_rev = calculate_expected_revenue(whatif_gaps, fee)
-
-    return schemas.WhatIfResponse(
-        current_policy=schemas.WhatIfPolicyStats(
-            recommended_overbook=cur_overbook,
-            expected_wait_mins=cur_wait,
-            p_overcrowding=cur_crowd,
-            expected_filled_gaps=round(cur_overbook * 0.85, 2),
-            expected_revenue_lkr=cur_rev,
-        ),
-        what_if_policy=schemas.WhatIfPolicyStats(
-            recommended_overbook=whatif_k,
-            expected_wait_mins=whatif_wait,
-            p_overcrowding=whatif_crowd,
-            expected_filled_gaps=whatif_gaps,
-            expected_revenue_lkr=whatif_rev,
-        ),
-        delta_overbook=whatif_k - cur_overbook,
-        delta_wait_mins=round(whatif_wait - cur_wait, 1),
-        delta_revenue_lkr=round(whatif_rev - cur_rev, 2),
-        wait_histogram=whatif_sim.get("wait_histogram", [10, 25, 45, 15, 5, 0, 0, 0]),
-        trade_off_curve=trade_off_curve,
-    )
-
-
-def get_freed_slot_offers(db: Session) -> List[schemas.SlotOfferOut]:
-    """Retrieve and score candidates for opened slots (Feature C)."""
-    offers = db.query(models.SlotOffer).options(
-        joinedload(models.SlotOffer.doctor),
-        joinedload(models.SlotOffer.waitlist_entry),
-        joinedload(models.SlotOffer.clinic_session),
-    ).filter(models.SlotOffer.status.in_(["proposed", "approved"])).all()
-
-    # Seed demo slot offers if table empty
-    if not offers:
-        doc = db.query(models.Doctor).first()
-        waitlist = db.query(models.WaitlistEntry).filter(models.WaitlistEntry.status == "waiting").all()
-        if doc and waitlist:
-            w = waitlist[0]
-            score_data = score_waitlist_candidate(
-                target_specialty="Cardiology",
-                target_doctor_name=doc.full_name,
-                candidate_specialty=w.specialty,
-                candidate_doctor_name=w.doctor_name,
-                predicted_no_show_prob=0.08,
-                created_at=w.created_at,
-                urgency_level=w.urgency_level,
-                distance_km=4.2,
+    def run(wait_cost_o, max_ob_o, fee_o):
+        total = {"over": 0, "wait": 0.0, "p": 0.0, "gaps": 0.0, "rev": 0.0, "overflow": 0.0, "net": 0.0}
+        curve: Dict[int, Dict[str, float]] = {}
+        for g in groups:
+            settings = get_effective_settings(
+                db, department_id=g.doctor.department_id if g.doctor else None,
+                doctor_id=g.doctor.id if g.doctor else None, hospital_id=hospital_id,
             )
-            demo_offer = models.SlotOffer(
-                doctor_id=doc.id,
-                slot_time=time(17, 15),
-                slot_date=pd.to_datetime("today").date(),
-                freed_reason="Patient UHID-88219 Cancelled via WhatsApp",
-                waitlist_entry_id=w.id,
-                match_score=score_data["total_score"],
-                score_breakdown=score_data["breakdown"],
-                status="proposed",
-                expires_at=datetime.now(timezone.utc) + timedelta(minutes=45),
+            ev = _evaluate_group(
+                g, base_rate=base_rate,
+                wait_cost=wait_cost_o if wait_cost_o is not None else settings.wait_cost_lkr,
+                max_overbook=max_ob_o if max_ob_o is not None else settings.max_overbook_per_session,
+                fee_override=fee_o,
             )
-            db.add(demo_offer)
-            db.commit()
-            db.refresh(demo_offer)
-            offers = [demo_offer]
+            rec = ev["rec"]
+            if not rec:
+                continue
+            k = rec["recommended_extra_bookings"]
+            slot_mins = float(g.session.slot_minutes) if g.session else 0.0
+            total["over"] += rec["recommended_overbook"] if rec["free_seats"] == 0 else 0
+            total["wait"] += rec["expected_overflow"] * slot_mins
+            total["p"] = max(total["p"], rec["p_overflow"])
+            total["gaps"] += rec["curve"][k]["expected_seen"] - rec["curve"][0]["expected_seen"]
+            total["rev"] += ev["fee"] * (rec["curve"][k]["expected_seen"] - rec["curve"][0]["expected_seen"])
+            total["overflow"] += rec["expected_overflow"]
+            total["net"] += rec["value_gain_lkr"]
+            for row in rec["curve"]:
+                c = curve.setdefault(row["extra_bookings"], {"extra_bookings": row["extra_bookings"], "value_lkr": 0.0,
+                                                           "expected_overflow": 0.0, "p_overflow_max": 0.0})
+                c["value_lkr"] += row["value_lkr"]
+                c["expected_overflow"] += row["expected_overflow"]
+                c["p_overflow_max"] = max(c["p_overflow_max"], row["p_overflow"])
+        return total, [curve[k] for k in sorted(curve)]
 
-    result: List[schemas.SlotOfferOut] = []
-    for o in offers:
-        doc_name = o.doctor.full_name if o.doctor else "Dr. Consultant"
-        spec = o.waitlist_entry.specialty if o.waitlist_entry else "Cardiology"
-        p_name = o.waitlist_entry.patient_name if o.waitlist_entry else "Waitlist Candidate"
-        p_phone = o.waitlist_entry.patient_phone if o.waitlist_entry else "+94770000000"
+    cur, _ = run(None, None, None)
+    new, curve = run(req.wait_cost_lkr, req.max_overbook_per_session, req.consultation_fee_lkr)
 
-        bd = o.score_breakdown or {}
-        breakdown_out = schemas.CandidateScoreBreakdown(
-            specialty_doctor_match=bd.get("specialty_doctor_match", 35.0),
-            attendance_reliability=bd.get("attendance_reliability", 23.0),
-            waiting_time_priority=bd.get("waiting_time_priority", 12.0),
-            clinical_urgency=bd.get("clinical_urgency", 15.0),
-            travel_proximity=bd.get("travel_proximity", 9.0),
-            days_waiting=bd.get("days_waiting", 14.0),
-            predicted_no_show_prob=bd.get("predicted_no_show_prob", 0.08),
+    def stats(t):
+        return schemas.WhatIfPolicyStats(
+            recommended_overbook=t["over"], expected_wait_mins=round(t["wait"], 1), p_overcrowding=round(t["p"], 4),
+            expected_filled_gaps=round(t["gaps"], 2), expected_revenue_lkr=round(t["rev"], 2),
+            expected_overflow=round(t["overflow"], 3), net_value_gain_lkr=round(t["net"], 2),
         )
 
-        result.append(schemas.SlotOfferOut(
-            id=o.id,
-            doctor_id=o.doctor_id,
-            doctor_name=doc_name,
-            specialty=spec,
-            room="Room 204",
-            slot_time=o.slot_time.strftime("%H:%M") if o.slot_time else "17:15",
-            slot_date=o.slot_date,
-            freed_reason=o.freed_reason,
-            waitlist_entry_id=o.waitlist_entry_id,
-            candidate_patient_name=p_name,
-            candidate_patient_phone=p_phone,
-            candidate_uhid="SH-44021",
-            match_score=o.match_score,
-            score_breakdown=breakdown_out,
-            status=o.status,
-            acted_by=o.acted_by,
-            acted_at=o.acted_at,
-            created_at=o.created_at,
-        ))
+    return schemas.WhatIfResponse(
+        current_policy=stats(cur),
+        what_if_policy=stats(new),
+        delta_overbook=new["over"] - cur["over"],
+        delta_wait_mins=round(new["wait"] - cur["wait"], 1),
+        delta_revenue_lkr=round(new["rev"] - cur["rev"], 2),
+        trade_off_curve=curve,
+    )
 
-    return result
+
+# ---------------------------------------------------------------------------
+# Slot offers (freed slots offered to the waitlist)
+# ---------------------------------------------------------------------------
+def get_freed_slot_offers(db: Session, hospital_id: Optional[uuid.UUID] = None) -> List[schemas.SlotOfferOut]:
+    q = db.query(models.SlotOffer).options(
+        joinedload(models.SlotOffer.doctor).joinedload(models.Doctor.department),
+        joinedload(models.SlotOffer.waitlist_entry),
+        joinedload(models.SlotOffer.clinic_session),
+    ).filter(models.SlotOffer.status.in_(["proposed", "approved"]))
+    if hospital_id:
+        q = q.filter(models.SlotOffer.hospital_id == hospital_id)
+    return [_offer_out(o) for o in q.order_by(models.SlotOffer.created_at.desc()).all()]
+
+
+def _offer_out(o: models.SlotOffer) -> schemas.SlotOfferOut:
+    w = o.waitlist_entry
+    bd = o.score_breakdown or {}
+    breakdown = schemas.CandidateScoreBreakdown(
+        specialty_doctor_match=bd.get("specialty_doctor_match", 0.0),
+        attendance_reliability=bd.get("attendance_reliability", 0.0),
+        waiting_time_priority=bd.get("waiting_time_priority", 0.0),
+        clinical_urgency=bd.get("clinical_urgency", 0.0),
+        travel_proximity=bd.get("travel_proximity", 0.0),
+        days_waiting=bd.get("days_waiting", 0.0),
+        predicted_no_show_prob=bd.get("predicted_no_show_prob", 0.0),
+    )
+    return schemas.SlotOfferOut(
+        id=o.id,
+        doctor_id=o.doctor_id,
+        doctor_name=o.doctor.full_name if o.doctor else "",
+        specialty=o.doctor.department.name if o.doctor and o.doctor.department else (w.specialty if w else ""),
+        room=clean_room_name(o.clinic_session.room if o.clinic_session else (o.doctor.default_room if o.doctor else None)),
+        slot_time=o.slot_time.strftime("%H:%M") if o.slot_time else "",
+        slot_date=o.slot_date,
+        freed_reason=o.freed_reason,
+        waitlist_entry_id=o.waitlist_entry_id,
+        candidate_patient_name=w.patient_name if w else "",
+        candidate_patient_phone=w.patient_phone if w else "",
+        candidate_uhid=None,
+        match_score=o.match_score,
+        score_breakdown=breakdown,
+        status=o.status,
+        acted_by=o.acted_by,
+        acted_at=o.acted_at,
+        created_at=o.created_at,
+    )
 
 
 def act_on_slot_offer(
@@ -649,17 +588,16 @@ def act_on_slot_offer(
     offer_id: uuid.UUID,
     action: str,
     acted_by: str = "Front Desk Staff",
+    hospital_id: Optional[uuid.UUID] = None,
 ) -> schemas.SlotOfferOut:
-    """Approve, decline, or undo a slot offer."""
     offer = db.get(models.SlotOffer, offer_id)
-    if not offer:
+    if not offer or (hospital_id and offer.hospital_id and offer.hospital_id != hospital_id):
         raise ValueError("Slot offer not found")
 
     if action == "approve":
         offer.status = "approved"
         offer.acted_by = acted_by
         offer.acted_at = datetime.now(timezone.utc)
-        # Update corresponding waitlist status
         if offer.waitlist_entry:
             offer.waitlist_entry.status = "offered"
     elif action == "decline":
@@ -667,7 +605,6 @@ def act_on_slot_offer(
         offer.acted_by = acted_by
         offer.acted_at = datetime.now(timezone.utc)
     elif action == "undo":
-        # Undo within time window
         offer.status = "proposed"
         offer.acted_by = None
         offer.acted_at = None
@@ -676,90 +613,67 @@ def act_on_slot_offer(
 
     db.commit()
     db.refresh(offer)
-    offers = get_freed_slot_offers(db)
-    for o in offers:
-        if o.id == offer_id:
-            return o
-    return offers[0]
+    return _offer_out(offer)
 
 
-def get_capacity_forecast(db: Session, horizon_days: int = 7) -> schemas.ForecastResponse:
-    """Next 7 / 14 / 30 days forecast with Poisson-binomial interval (Feature D)."""
-    today = pd.to_datetime("today").date()
+# ---------------------------------------------------------------------------
+# Forecast
+# ---------------------------------------------------------------------------
+def get_capacity_forecast(db: Session, horizon_days: int = 7, hospital_id: Optional[uuid.UUID] = None) -> schemas.ForecastResponse:
+    """Forward view over days that already have bookings: expected no-shows and revenue at risk from stored risk and fees."""
+    today = date.today()
+    base_rate = _model_base_rate()
     days_out: List[schemas.ForecastDayOut] = []
-
-    total_proj = 0
-    total_no_shows = 0.0
-    total_bufferable = 0
-    total_rev_risk = 0.0
-    total_rev_rec = 0.0
+    dept_acc: Dict[str, float] = {}
+    tot_booked = 0
+    tot_ns = tot_rev = tot_rec = 0.0
+    tot_buffer = 0
 
     for d in range(horizon_days):
-        cur_d = today + timedelta(days=d)
-        
-        # Check booked count in db for day cur_d
-        appts = db.query(models.Appointment).options(
-            joinedload(models.Appointment.prediction)
-        ).filter(
-            models.Appointment.appointment_day == cur_d,
-            models.Appointment.status != "cancelled",
-        ).all()
-
-        if appts:
-            b_count = len(appts)
-            probs = [float(a.prediction.risk_score) if a.prediction else 0.16 for a in appts]
-        else:
-            # Empirical weekday baseline (higher on Mondays/Fridays/Poya)
-            weekday = cur_d.weekday()
-            b_count = 110 + (weekday % 3) * 15
-            baseline_p = 0.18 if weekday in (0, 4) else 0.14
-            probs = [baseline_p] * b_count
-
-        exp_ns, var_ns, low_ns, high_ns = calculate_poisson_binomial_stats(probs, confidence_level=0.80)
-        bufferable = max(0, int(round(exp_ns * 0.70)))
-        rev_risk = round(exp_ns * 4500.0, 2)
-        rev_rec = round(bufferable * 4500.0 * 0.85, 2)
-
+        cur = today + timedelta(days=d)
+        groups, _ = _load_groups(db, cur, hospital_id)
+        probs, rev_risk, overbooks = [], 0.0, 0
+        for g in groups:
+            p, _unscored = _group_probs(g, base_rate)
+            probs.extend(p)
+            for a, pi in zip(g.appts, p):
+                fee = a.fee_lkr or (a.doctor.consultation_fee_lkr if a.doctor else 0.0) or 0.0
+                rev_risk += pi * fee
+                dept = a.doctor.department.name if a.doctor and a.doctor.department else (a.department or "Unassigned")
+                dept_acc[dept] = dept_acc.get(dept, 0.0) + pi
+            settings = get_effective_settings(
+                db, department_id=g.doctor.department_id if g.doctor else None,
+                doctor_id=g.doctor.id if g.doctor else None, hospital_id=hospital_id,
+            )
+            ev = _evaluate_group(g, base_rate=base_rate, wait_cost=settings.wait_cost_lkr,
+                                 max_overbook=settings.max_overbook_per_session)
+            if ev["rec"]:
+                overbooks += ev["rec"]["recommended_overbook"] if ev["rec"]["free_seats"] == 0 else 0
+        exp, _, lo, hi = calculate_poisson_binomial_stats(probs, confidence_level=0.80)
         days_out.append(schemas.ForecastDayOut(
-            date=cur_d,
-            total_projected_booked=b_count,
-            expected_no_shows=exp_ns,
-            interval_low=low_ns,
-            interval_high=high_ns,
-            bufferable_overbooks=bufferable,
-            revenue_at_risk_lkr=rev_risk,
-            recoverable_revenue_lkr=rev_rec,
+            date=cur, total_projected_booked=len(probs), expected_no_shows=exp, interval_low=lo, interval_high=hi,
+            bufferable_overbooks=overbooks, revenue_at_risk_lkr=round(rev_risk, 2),
+            recoverable_revenue_lkr=0.0,
         ))
-
-        total_proj += b_count
-        total_no_shows += exp_ns
-        total_bufferable += bufferable
-        total_rev_risk += rev_risk
-        total_rev_rec += rev_rec
+        tot_booked += len(probs)
+        tot_ns += exp
+        tot_rev += rev_risk
+        tot_buffer += overbooks
 
     summary = {
         "horizon_days": horizon_days,
-        "total_projected_appointments": total_proj,
-        "total_expected_no_shows": round(total_no_shows, 1),
-        "total_bufferable_overbooks": total_bufferable,
-        "total_revenue_at_risk_lkr": round(total_rev_risk, 2),
-        "total_recoverable_revenue_lkr": round(total_rev_rec, 2),
+        "total_projected_appointments": tot_booked,
+        "total_expected_no_shows": round(tot_ns, 1),
+        "total_bufferable_overbooks": tot_buffer,
+        "total_revenue_at_risk_lkr": round(tot_rev, 2),
+        "total_recoverable_revenue_lkr": 0.0,
+        "basis": "bookings already in the system; days further out simply have fewer bookings",
     }
-
-    dept_breakdown = [
-        {"department": "Cardiology", "share_pct": 32, "expected_no_shows": round(total_no_shows * 0.32, 1)},
-        {"department": "Neurology", "share_pct": 24, "expected_no_shows": round(total_no_shows * 0.24, 1)},
-        {"department": "Orthopedics", "share_pct": 22, "expected_no_shows": round(total_no_shows * 0.22, 1)},
-        {"department": "ENT", "share_pct": 14, "expected_no_shows": round(total_no_shows * 0.14, 1)},
-        {"department": "Pediatrics", "share_pct": 8, "expected_no_shows": round(total_no_shows * 0.08, 1)},
+    departments = [
+        {"department": name, "share_pct": round(100 * v / tot_ns, 1) if tot_ns else 0.0, "expected_no_shows": round(v, 1)}
+        for name, v in sorted(dept_acc.items(), key=lambda kv: -kv[1])
     ]
-
-    return schemas.ForecastResponse(
-        horizon_days=horizon_days,
-        summary=summary,
-        days=days_out,
-        departments=dept_breakdown,
-    )
+    return schemas.ForecastResponse(horizon_days=horizon_days, summary=summary, days=days_out, departments=departments)
 
 
 def get_capacity_accuracy(db: Session, hospital_id=None, days: int = 30, department: str | None = None) -> dict:
@@ -769,117 +683,30 @@ def get_capacity_accuracy(db: Session, hospital_id=None, days: int = 30, departm
     return model_eval.accuracy_report(db, hospital_id=hospital_id, days=days, department=department)
 
 
-def get_nav_live_counts(db: Session) -> schemas.NavCountsOut:
-    """Drive sidebar badges with real counts (G10)."""
-    # Open waitlist entries
-    waitlist_count = db.query(models.WaitlistEntry).filter(
-        models.WaitlistEntry.status == "waiting"
-    ).count()
+def get_nav_live_counts(db: Session, hospital_id: Optional[uuid.UUID] = None) -> schemas.NavCountsOut:
+    """Sidebar badges (real counts, scoped to the hospital)."""
+    wq = db.query(models.WaitlistEntry).filter(models.WaitlistEntry.status == "waiting")
+    if hospital_id:
+        wq = wq.filter(models.WaitlistEntry.hospital_id == hospital_id)
 
-    # High risk appointments today
-    today = pd.to_datetime("today").date()
-    high_risk_open = db.query(models.Appointment).join(
+    today = date.today()
+    hq = db.query(models.Appointment).join(
         models.Prediction, models.Appointment.id == models.Prediction.appointment_id
     ).filter(
         models.Appointment.appointment_day == today,
         models.Prediction.risk_category == "High",
         models.Appointment.status == "scheduled",
-    ).count()
-
-    # Outreach replies awaiting response
-    unread_outreach = db.query(models.Intervention).filter(
+    )
+    iq = db.query(models.Intervention).filter(
         models.Intervention.patient_reply.isnot(None),
         models.Intervention.status != "confirmed",
-    ).count()
+    )
+    if hospital_id:
+        hq = hq.filter(models.Appointment.hospital_id == hospital_id)
+        iq = iq.filter(models.Intervention.hospital_id == hospital_id)
 
     return schemas.NavCountsOut(
-        waitlist_waiting=waitlist_count,
-        high_risk_open=high_risk_open,
-        unscored_today=unread_outreach,
-    )
-
-
-def _fallback_legacy_overview(
-    db: Session,
-    legacy_sessions: List[models.DoctorSession],
-    target_date: date,
-    max_wait_tolerance: Optional[int],
-) -> schemas.CapacityOptimizeResponse:
-    """Labelled fallback for legacy DoctorSession records when reference Doctor table is empty."""
-    session_details = []
-    tot_cap = 0
-    tot_booked = 0
-    tot_pred = 0
-    tot_rec = 0
-    tot_rev = 0.0
-
-    for sess in legacy_sessions:
-        max_cap = sess.max_capacity or 25
-        delay = sess.delay_minutes or 0
-        base_tol = max_wait_tolerance or 15
-        eff_tol = calculate_effective_tolerance(base_tol, delay)
-
-        # Baseline appointment query
-        booked = 18
-        probs = [0.22] * booked
-        exp_ns, var_ns, ci_low, ci_high = calculate_poisson_binomial_stats(probs)
-
-        optimal_k, sim, _ = optimize_overbook_count(
-            scheduled_no_show_probs=probs,
-            max_capacity=max_cap,
-            booked_count=booked,
-            effective_tolerance_mins=eff_tol,
-            doctor_delay_mins=delay,
-        )
-
-        sim_wait = sim["mean_added_wait_mins"]
-        rev = calculate_expected_revenue(optimal_k, 4500.0)
-        b_util, e_att = calculate_utilisation_metrics(booked, max_cap, exp_ns)
-
-        detail = schemas.SessionOptimizationDetail(
-            doctor_id=None,
-            doctor_name=sess.doctor_name,
-            specialty=sess.specialty,
-            room_number=clean_room_name(sess.room_number),
-            max_capacity=max_cap,
-            total_booked=booked,
-            predicted_no_shows=int(round(exp_ns)),
-            expected_no_shows_float=exp_ns,
-            interval_low=ci_low,
-            interval_high=ci_high,
-            high_risk_slots=3,
-            recommended_overbook_count=optimal_k,
-            expected_revenue_gain_lkr=rev,
-            expected_wait_time_mins=sim_wait,
-            linear_fallback_wait_mins=linear_wait_estimate_fallback(optimal_k, sess.avg_consultation_mins),
-            booked_utilisation_pct=b_util,
-            expected_attendance_pct=e_att,
-            consultation_fee_lkr=4500.0,
-            delay_minutes=delay,
-            effective_tolerance_mins=eff_tol,
-            p_overcrowding=sim["p_overcrowding"],
-            risk_level="Safe" if sim_wait <= 8 else "Moderate",
-            status_advice=f"Overbook +{optimal_k} slots safely.",
-        )
-        session_details.append(detail)
-        tot_cap += max_cap
-        tot_booked += booked
-        tot_pred += int(round(exp_ns))
-        tot_rec += optimal_k
-        tot_rev += rev
-
-    return schemas.CapacityOptimizeResponse(
-        session_date=target_date,
-        total_capacity=tot_cap,
-        total_booked=tot_booked,
-        total_predicted_no_shows=tot_pred,
-        expected_no_shows_total=float(tot_pred),
-        expected_no_shows_interval_low=float(max(0, tot_pred - 3)),
-        expected_no_shows_interval_high=float(tot_pred + 3),
-        total_recommended_overbooks=tot_rec,
-        estimated_revenue_recovery_lkr=tot_rev,
-        booked_utilisation_pct=round((tot_booked / max(1, tot_cap)) * 100, 1),
-        expected_attendance_pct=round(((tot_booked - tot_pred) / max(1, tot_cap)) * 100, 1),
-        sessions=session_details,
-        departments=[],
+        waitlist_waiting=wq.count(),
+        high_risk_open=hq.count(),
+        unscored_today=iq.count(),  # field name kept for the API: it counts unanswered outreach replies
     )

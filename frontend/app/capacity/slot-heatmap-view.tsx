@@ -21,6 +21,9 @@ interface SlotHeatmapViewProps {
   onRefresh?: (date?: string, doctorId?: string) => void;
 }
 
+const rowKey = (d: { clinic_session_id?: string | null; doctor_id?: string | null; doctor_name: string }) =>
+  d.clinic_session_id ?? d.doctor_id ?? d.doctor_name;
+
 export function SlotHeatmapView({ initialSlots }: SlotHeatmapViewProps) {
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>("all");
   const [activeSlot, setActiveSlot] = useState<{
@@ -55,7 +58,7 @@ export function SlotHeatmapView({ initialSlots }: SlotHeatmapViewProps) {
   const filteredDoctors =
     selectedDoctorId === "all"
       ? doctors
-      : doctors.filter((d) => d.doctor_id === selectedDoctorId);
+      : doctors.filter((d) => rowKey(d) === selectedDoctorId);
 
   return (
     <div className="flex flex-col gap-6 animate-in fade-in duration-300">
@@ -82,23 +85,23 @@ export function SlotHeatmapView({ initialSlots }: SlotHeatmapViewProps) {
           >
             <option value="all">All Consultants ({doctors.length})</option>
             {doctors.map((d) => (
-              <option key={d.doctor_id} value={d.doctor_id}>
-                {d.doctor_name} ({d.specialty})
+              <option key={rowKey(d)} value={rowKey(d)}>
+                {d.doctor_name}{d.session_label ? ` · ${d.session_label}` : ""} ({d.specialty})
               </option>
             ))}
           </select>
 
           {/* Legend */}
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground bg-muted/30 px-3 py-1.5 rounded-xl border border-border/40">
-            <span className="font-semibold text-foreground">Risk & Overbook:</span>
+            <span className="font-semibold text-foreground">Expected no-shows in the slot:</span>
             <span className="inline-flex items-center gap-1">
-              <span className="size-2 rounded-full bg-emerald-500" /> Safe (+0)
+              <span className="size-2 rounded-full bg-emerald-500" /> &lt; 0.5
             </span>
             <span className="inline-flex items-center gap-1">
-              <span className="size-2 rounded-full bg-amber-500" /> Moderate (+1)
+              <span className="size-2 rounded-full bg-amber-500" /> 0.5 – 1
             </span>
             <span className="inline-flex items-center gap-1">
-              <span className="size-2 rounded-full bg-primary" /> High (+2+)
+              <span className="size-2 rounded-full bg-primary" /> ≥ 1
             </span>
           </div>
         </div>
@@ -122,7 +125,7 @@ export function SlotHeatmapView({ initialSlots }: SlotHeatmapViewProps) {
             </thead>
             <tbody className="divide-y divide-border/30">
               {filteredDoctors.map((doc) => (
-                <tr key={doc.doctor_id} className="hover:bg-muted/10 transition-colors">
+                <tr key={rowKey(doc)} className="hover:bg-muted/10 transition-colors">
                   {/* Doctor Info Sticky Column */}
                   <td className="py-3 px-4 sticky left-0 bg-card z-10 shadow-xs">
                     <div className="flex flex-col">
@@ -260,9 +263,9 @@ export function SlotHeatmapView({ initialSlots }: SlotHeatmapViewProps) {
                   </span>
                 </div>
                 <div className="flex flex-col rounded-xl bg-primary/15 p-3 text-center border border-primary/30">
-                  <span className="text-[10px] text-primary font-medium">Rec. Overbook</span>
+                  <span className="text-[10px] text-primary font-medium">Session overbook</span>
                   <span className="text-lg font-bold text-primary tabular-nums">
-                    +{activeSlot.slot.recommended_overbook}
+                    +{activeSlot.doctor.total_recommended_overbook}
                   </span>
                 </div>
               </div>
@@ -271,11 +274,12 @@ export function SlotHeatmapView({ initialSlots }: SlotHeatmapViewProps) {
               <div className="rounded-2xl bg-muted/20 border border-border/40 p-4 flex flex-col gap-2">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-foreground">
                   <Info className="size-3.5 text-primary" />
-                  <span>Prescriptive Slot Logic</span>
+                  <span>How to read this slot</span>
                 </div>
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Slot risk is calculated by summing individual calibrated no-show probabilities \( \sum p_i \), adjusted for session position (buffer allowance for mid-session queues). With effective delay tolerance, we safely recommend{" "}
-                  <strong className="text-foreground">+{activeSlot.slot.recommended_overbook} extra patient(s)</strong> for this 15-minute window without violating queue delay bounds.
+                  Slot risk is the sum of the booked patients&apos; calibrated no-show probabilities. Overbooking is decided per
+                  session (see Overview), not per slot: this session&apos;s exact optimum is{" "}
+                  <strong className="text-foreground">+{activeSlot.doctor.total_recommended_overbook} patient(s)</strong> beyond its capacity.
                 </p>
               </div>
 

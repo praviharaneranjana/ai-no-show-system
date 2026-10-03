@@ -54,15 +54,24 @@ When a consultant is delayed by more than $\tau_{\text{base}}$, $\tau_{\text{eff
 - **Expected Attendance Rate:**
   $$\text{Attend}_{\text{exp}} = \max\left(0\%, \min\left(100\%, \frac{\text{total\_booked} - \mu}{\text{capacity}} \times 100\right)\right)$$
 
-### 3.4 Single-Server Monte Carlo Queue Simulation
-The simulation runs 2,000 independent trials with deterministic seeding:
-1. Patient attendance is sampled: $A_i \sim \text{Bernoulli}(1 - p_i)$.
-2. Consultation times are sampled from log-normal or Gaussian distribution per doctor $(\mu_{\text{consult}}, \sigma_{\text{consult}})$.
-3. Patient waiting times $W_i$ are simulated:
-   $$W_{i} = \max(0, W_{i-1} + S_{i-1} - (T_i - T_{i-1}))$$
-4. Overcrowding probability:
-   $$P(\text{overcrowding}) = P(W_{\text{max}} > \tau_{\text{eff}})$$
-5. The optimal overbook count $k^*$ is the maximum integer $k \le k_{\text{max}}$ such that $P(\text{overcrowding}) \le \alpha_{\text{risk}}$ and simulated mean wait $\le \tau_{\text{eff}}$.
+### 3.4 Exact overbooking recommendation (Poisson-binomial, no simulation)
+Replaces the earlier Monte-Carlo queue simulation (removed). Per clinic session, with $q_i = 1 - p_i$ the show-up
+probability of each booked patient and $N$ the number of arrivals (Poisson-binomial, computed exactly by dynamic-programming
+convolution in `services/overbooking.py`):
+
+- For $k$ extra bookings (each showing with the average booked patient's probability):
+  $E[\text{seen}] = E[\min(N_k, C)]$, $\quad E[\text{overflow}] = E[\max(N_k - C, 0)]$, $\quad P(\text{overflow}) = P(N_k > C)$
+- $\text{value}(k) = \text{fee} \cdot E[\text{seen}] - \text{wait\_cost} \cdot E[\text{overflow}]$, with `wait_cost` editable in Settings
+  (`capacity_settings.wait_cost_lkr`).
+- The recommendation is $k^* = \arg\max_{0 \le k \le F + K_{\max}} \text{value}(k)$ where $F = \max(C - \text{booked}, 0)$ is the number of free seats and
+  $K_{\max}$ the per-session overbooking limit. $k^* - F$ is the overbooking proper; it is only advised once the session is full
+  (before that the advice is "keep booking" and the optimum if the session fills is shown as `overbook_if_full`).
+- Marginal rule: another booking is worth taking while $P(\text{overflow}) < \text{fee} / (\text{fee} + \text{wait\_cost})$.
+- Unit tests compare every quantity with brute-force enumeration of all show/no-show outcomes (`tests/test_overbooking.py`).
+
+Capacity is the `max_patients` of the clinic sessions that run on the target date (weekly timetable for that weekday **and** at least
+one booking); timetable sessions without bookings are reported as `idle_sessions` and are not counted. Expected no-shows are the sum of the
+stored calibrated probabilities; the 80% interval is the exact Poisson-binomial 10th / 90th percentile.
 
 ---
 

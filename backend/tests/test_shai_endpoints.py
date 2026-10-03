@@ -73,30 +73,14 @@ def test_update_delay_for_unknown_session_404s(client):
 # Capacity & Overbooking
 # ===================================
 
-def test_optimize_capacity_returns_non_negative_recommendations(client):
+def test_optimize_capacity_empty_day_is_honest(client):
     resp = client.post("/capacity/optimize", json={})
     assert resp.status_code == 200, resp.text
     body = resp.json()
-
-    assert body["total_capacity"] >= 0
-    assert body["total_booked"] >= 0
-    assert body["total_predicted_no_shows"] >= 0
-    assert body["total_recommended_overbooks"] >= 0
-    assert body["estimated_revenue_recovery_lkr"] >= 0
-    assert len(body["sessions"]) >= 1
-
-    for session in body["sessions"]:
-        assert session["recommended_overbook_count"] >= 0
-        assert session["expected_revenue_gain_lkr"] >= 0
-        assert session["expected_wait_time_mins"] >= 0
-        assert session["risk_level"] in {"Safe", "Moderate", "Caution"}
-
-
-def test_optimize_capacity_respects_wait_time_tolerance(client):
-    # A very tight tolerance should never recommend more overbooking than a loose one.
-    tight = client.post("/capacity/optimize", json={"max_wait_time_tolerance_mins": 1}).json()
-    loose = client.post("/capacity/optimize", json={"max_wait_time_tolerance_mins": 60}).json()
-    assert tight["total_recommended_overbooks"] <= loose["total_recommended_overbooks"]
+    assert body["total_capacity"] == 0  # no booked sessions -> no invented capacity
+    assert body["total_booked"] == 0
+    assert body["sessions"] == []
+    assert body["total_recommended_overbooks"] == 0
 
 
 # ===================================

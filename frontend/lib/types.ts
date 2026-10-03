@@ -191,31 +191,34 @@ export type WaitlistEntry = {
 
 export type SessionOptimizationDetail = {
   doctor_id?: string | null;
-  session_id?: string;
+  clinic_session_id?: string | null;
+  session_label?: string | null;
+  session_start?: string | null;
   doctor_name: string;
   specialty: string;
   room_number: string;
-  max_capacity?: number;
-  capacity?: number;
+  max_capacity: number | null;
   total_booked: number;
+  free_seats: number;
   predicted_no_shows: number;
-  expected_no_shows_float?: number;
-  interval_low?: number;
-  interval_high?: number;
-  expected_no_shows_range?: [number, number];
+  expected_no_shows_float: number;
+  interval_low: number;
+  interval_high: number;
   high_risk_slots: number;
+  unscored_bookings: number;
+  recommended_extra_bookings: number;
   recommended_overbook_count: number;
+  overbook_if_full: number;
   expected_revenue_gain_lkr: number;
+  value_gain_lkr: number;
+  expected_overflow: number;
   expected_wait_time_mins: number;
-  linear_fallback_wait_mins?: number;
-  booked_utilisation_pct?: number;
-  utilization_pct?: number;
-  expected_attendance_pct?: number;
-  consultation_fee_lkr?: number;
-  delay_minutes?: number;
-  effective_tolerance_mins?: number;
-  effective_wait_tolerance_mins?: number;
-  p_overcrowding?: number;
+  p_overcrowding: number;
+  booked_utilisation_pct: number;
+  expected_attendance_pct: number;
+  consultation_fee_lkr: number;
+  wait_cost_lkr: number;
+  delay_minutes: number;
   risk_level: "Safe" | "Moderate" | "Caution";
   status_advice: string;
 };
@@ -236,23 +239,21 @@ export type DepartmentCapacitySummary = {
 };
 
 export type CapacityOptimizeResult = {
-  date?: string;
-  session_date?: string;
+  session_date: string;
   total_capacity: number;
   total_booked: number;
   total_predicted_no_shows: number;
-  expected_no_shows_total?: number;
-  expected_no_shows_interval_low?: number;
-  expected_no_shows_interval_high?: number;
-  expected_no_shows_range?: [number, number];
+  expected_no_shows_total: number;
+  expected_no_shows_interval_low: number;
+  expected_no_shows_interval_high: number;
   total_recommended_overbooks: number;
   estimated_revenue_recovery_lkr: number;
-  booked_utilisation_pct?: number;
-  overall_utilization_pct?: number;
-  expected_attendance_pct?: number;
+  booked_utilisation_pct: number;
+  expected_attendance_pct: number;
+  sessions_running: number;
+  idle_sessions: number;
   sessions: SessionOptimizationDetail[];
-  departments?: DepartmentCapacitySummary[];
-  department_breakdown?: DepartmentCapacitySummary[];
+  departments: DepartmentCapacitySummary[];
 };
 
 export type SlotPatient = {
@@ -287,7 +288,9 @@ export type SlotDetail = {
 };
 
 export type DoctorSlots = {
-  doctor_id: string;
+  doctor_id?: string | null;
+  clinic_session_id?: string | null;
+  session_label?: string | null;
   doctor_name: string;
   specialty: string;
   room_number: string;
@@ -308,53 +311,35 @@ export type CapacitySlotsResponse = {
 };
 
 export type WhatIfPolicyStats = {
-  total_overbooks?: number;
-  recommended_overbook?: number;
+  recommended_overbook: number;
   expected_wait_mins: number;
-  p_overcrowding?: number;
-  risk_of_overcrowding_pct?: number;
-  expected_filled_gaps?: number;
+  p_overcrowding: number;
+  expected_filled_gaps: number;
   expected_revenue_lkr: number;
+  expected_overflow: number;
+  net_value_gain_lkr: number;
 };
 
-export type WhatIfMetrics = WhatIfPolicyStats;
-
 export type WhatIfRequest = {
-  date?: string;
-  department?: string;
+  target_date?: string;
   doctor_id?: string;
-  wait_tolerance_mins?: number;
-  safety_factor?: number;
-  max_overbook_per_slot?: number;
+  department_id?: number;
   consultation_fee_lkr?: number;
-  assumed_delay_mins?: number;
+  wait_cost_lkr?: number;
+  max_overbook_per_session?: number;
 };
 
 export type WhatIfResponse = {
-  baseline?: WhatIfMetrics;
-  scenario?: WhatIfMetrics;
-  current_policy?: WhatIfPolicyStats;
-  what_if_policy?: WhatIfPolicyStats;
-  delta_overbook?: number;
-  delta_wait_mins?: number;
-  delta_revenue_lkr?: number;
-  delta?: {
-    extra_patients: number;
-    expected_wait_mins_diff: number;
-    expected_revenue_lkr_diff: number;
-    risk_of_overcrowding_pct_diff: number;
-  };
-  wait_histogram?: number[];
-  simulated_wait_distribution?: Array<{ wait_bin: string; frequency: number }>;
+  current_policy: WhatIfPolicyStats;
+  what_if_policy: WhatIfPolicyStats;
+  delta_overbook: number;
+  delta_wait_mins: number;
+  delta_revenue_lkr: number;
   trade_off_curve: Array<{
-    overbook?: number;
-    overbook_count?: number;
-    mean_wait?: number;
-    expected_wait_mins?: number;
-    p_overcrowd?: number;
-    overcrowding_risk_pct?: number;
-    filled_gaps?: number;
-    expected_revenue_lkr?: number;
+    extra_bookings: number;
+    value_lkr: number;
+    expected_overflow: number;
+    p_overflow_max: number;
   }>;
 };
 
@@ -524,18 +509,12 @@ export type CapacitySetting = {
   scope: string;
   department_id?: number | null;
   doctor_id?: string | null;
-  safety_factor: number;
-  max_overbook_per_slot: number;
   max_overbook_per_session: number;
-  wait_tolerance_mins: number;
+  wait_cost_lkr: number;
   consultation_fee_lkr: number;
   badge_safe_mins?: number;
-  badge_safe_wait_mins?: number;
   badge_moderate_mins?: number;
-  badge_moderate_wait_mins?: number;
   auto_assign_waitlist: boolean;
-  auto_assign_time_window_mins?: number;
-  sim_runs?: number;
   created_at?: string;
   updated_at?: string;
 };

@@ -45,8 +45,6 @@ function CardLink({ href, label }: { href: string; label: string }) {
   );
 }
 
-// Revenue per predicted no-show: standard consultation fee + ancillary revenue (same
-// assumptions as the ROI simulator, see lib/roi.ts).
 const DAY_MS = 86_400_000;
 
 // Local calendar date as YYYY-MM-DD (en-CA formats that way), offset by whole days.

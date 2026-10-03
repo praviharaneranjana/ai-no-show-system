@@ -1,0 +1,6 @@
+model,ROC_AUC,PR_AUC,Brier,Recall_top20,Precision_top20,Lift_top20
+Logistic Regression,0.664,0.267,0.219,0.36,0.278,1.798
+Decision Tree,0.643,0.237,0.222,0.343,0.265,1.715
+Random Forest,0.659,0.268,0.192,0.371,0.286,1.853
+XGBoost (plain),0.668,0.275,0.124,0.373,0.288,1.867
+XGBoost (scale_pos_weight),0.668,0.274,0.214,0.375,0.29,1.877

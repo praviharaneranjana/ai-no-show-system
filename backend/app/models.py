@@ -585,7 +585,8 @@ class CapacitySetting(Base):
     badge_safe_mins: Mapped[int] = mapped_column(Integer, nullable=False, default=8)
     badge_moderate_mins: Mapped[int] = mapped_column(Integer, nullable=False, default=15)
     auto_assign_waitlist: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    sim_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=2000)
+    sim_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=2000)  # legacy, unused by the exact method
+    wait_cost_lkr: Mapped[float] = mapped_column(Float, nullable=False, default=10000.0, server_default="10000")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

@@ -129,7 +129,7 @@ export function CapacityClient({
 
         <div className="inline-flex items-center gap-2 self-start md:self-auto px-3.5 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-semibold">
           <Sparkles className="size-3.5" />
-          <span>Live AI Queue Simulation · Updates in Real Time</span>
+          <span>Exact Poisson-binomial overbooking · per-session capacity</span>
         </div>
       </div>
 

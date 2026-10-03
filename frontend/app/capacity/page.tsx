@@ -64,14 +64,7 @@ export default async function CapacityPage() {
 
   // Collect unique department names
   const departments = Array.from(
-    new Set([
-      ...sessions.map((s) => s.specialty),
-      ...(optimization.department_breakdown?.map((d) => d.department) ?? []),
-      "General Medicine",
-      "Cardiology",
-      "Orthopaedics",
-      "Neurology",
-    ])
+    new Set([...sessions.map((s) => s.specialty), ...optimization.departments.map((d) => d.department)])
   ).filter(Boolean);
 
   return (

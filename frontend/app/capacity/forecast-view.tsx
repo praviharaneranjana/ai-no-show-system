@@ -174,7 +174,7 @@ export function ForecastView({ initialForecast, departments }: ForecastViewProps
           value={`+${total_recommended_overbooks}`}
           icon={TrendingUp}
           delta={{ value: "Safe recovery slots", isPositive: true }}
-          subvalue="Within delay tolerance"
+          subvalue="Sessions that are already full"
         />
         <SharedKpiCard
           title="Revenue at Risk"

@@ -1,7 +1,7 @@
 """Capacity & Smart Overbooking v2: Mathematical utilities.
 
 Covers:
-- 4.A Poisson-binomial expected no-shows and confidence interval (exact DP for n < 10, normal approximation for n >= 10).
+- 4.A Poisson-binomial expected no-shows and confidence interval (exact DP for every n).
 - 4.C Effective queue delay tolerance scaled by doctor lateness: max(0, base_tolerance - delay_minutes).
 - 4.E Expected filled gaps and revenue calculation: expected revenue = expected filled gaps * fee.
 - G5 Utilisation and expected attendance rates.
@@ -33,48 +33,32 @@ def calculate_poisson_binomial_stats(
 
     expected = sum(p_clamped)
     variance = sum(p * (1.0 - p) for p in p_clamped)
-    std_dev = math.sqrt(max(0.0, variance))
 
-    if n < 10:
-        # Exact distribution via Dynamic Programming
-        # dp[k] = P(exactly k no-shows)
-        dp = [1.0]
-        for p in p_clamped:
-            new_dp = [0.0] * (len(dp) + 1)
-            for k, prob_k in enumerate(dp):
-                new_dp[k] += prob_k * (1.0 - p)
-                new_dp[k + 1] += prob_k * p
-            dp = new_dp
+    # Exact distribution via dynamic programming (dp[k] = P(exactly k no-shows)); fast enough for any session size.
+    from app.services.overbooking import poisson_binomial
 
-        # Find 80% interval bounds [alpha/2, 1 - alpha/2]
-        alpha = 1.0 - confidence_level
-        tail_prob = alpha / 2.0
+    dp = poisson_binomial(p_clamped)
+    alpha = 1.0 - confidence_level
+    tail_prob = alpha / 2.0
 
-        cum = 0.0
-        low = 0
-        for k, prob in enumerate(dp):
-            cum += prob
-            if cum >= tail_prob:
-                low = k
-                break
+    cum = 0.0
+    low = 0
+    for k, prob in enumerate(dp):
+        cum += prob
+        if cum >= tail_prob:
+            low = k
+            break
 
-        cum = 0.0
-        high = n
-        for k, prob in enumerate(dp):
-            cum += prob
-            if cum >= (1.0 - tail_prob):
-                high = k
-                break
+    cum = 0.0
+    high = n
+    for k, prob in enumerate(dp):
+        cum += prob
+        if cum >= (1.0 - tail_prob):
+            high = k
+            break
 
-        interval_low = float(max(0, low))
-        interval_high = float(min(n, max(low, high)))
-    else:
-        # Normal approximation for n >= 10
-        # z for 80% two-tailed is ~ 1.2815515655
-        z = 1.28155
-        margin = z * std_dev
-        interval_low = max(0.0, expected - margin)
-        interval_high = min(float(n), expected + margin)
+    interval_low = float(max(0, low))
+    interval_high = float(min(n, max(low, high)))
 
     return round(expected, 2), round(variance, 2), round(interval_low, 1), round(interval_high, 1)
 

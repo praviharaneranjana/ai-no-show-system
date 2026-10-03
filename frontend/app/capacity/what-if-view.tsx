@@ -1,33 +1,8 @@
 "use client";
 
-import React, { useState, useEffect, useTransition } from "react";
-import {
-  Sliders,
-  Sparkles,
-  ArrowRight,
-  ArrowLeft,
-  TrendingUp,
-  AlertTriangle,
-  Wallet,
-  Clock,
-  BookmarkPlus,
-  Trash2,
-  RefreshCw,
-  FolderOpen,
-} from "lucide-react";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  ReferenceLine,
-  CartesianGrid,
-  ComposedChart,
-  Line,
-  Legend,
-} from "recharts";
+import { useState, useEffect, useTransition } from "react";
+import { Sliders, BookmarkPlus, Trash2, FolderOpen } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
 import {
   evaluateWhatIfAction,
@@ -35,526 +10,205 @@ import {
   saveCapacityScenarioAction,
   deleteCapacityScenarioAction,
 } from "@/app/capacity/actions";
-import { formatLkr, cn } from "@/lib/utils";
-import type {
-  WhatIfRequest,
-  WhatIfResponse,
-  CapacityScenario,
-  DoctorSession,
-} from "@/lib/types";
+import { formatLkr } from "@/lib/utils";
+import type { WhatIfRequest, WhatIfResponse, CapacityScenario, DoctorSession } from "@/lib/types";
 
 interface WhatIfViewProps {
   sessions: DoctorSession[];
   onBack?: () => void;
 }
 
-export function WhatIfView({ sessions, onBack }: WhatIfViewProps) {
+function Field({ label, hint, children }: { label: string; hint: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label className="text-xs font-semibold text-foreground">{label}</label>
+      {children}
+      <span className="text-[10px] text-muted-foreground">{hint}</span>
+    </div>
+  );
+}
 
-  // Input parameters
-  const [department, setDepartment] = useState<string>("all");
-  const [doctorId, setDoctorId] = useState<string>("all");
-  const [waitTolerance, setWaitTolerance] = useState<number>(20);
-  const [safetyFactor, setSafetyFactor] = useState<number>(0.75);
-  const [maxOverbook, setMaxOverbook] = useState<number>(3);
-  const [consultationFee, setConsultationFee] = useState<number>(4500);
-  const [doctorDelay, setDoctorDelay] = useState<number>(0);
+const inputCls = "h-10 rounded-xl border border-border bg-background px-3 text-xs font-semibold text-foreground";
 
-  // Results & Scenarios
+export function WhatIfView({ onBack }: WhatIfViewProps) {
+  const [targetDate, setTargetDate] = useState<string>("");
+  const [waitCost, setWaitCost] = useState<string>("");
+  const [maxOverbook, setMaxOverbook] = useState<string>("");
+  const [fee, setFee] = useState<string>("");
+
   const [result, setResult] = useState<WhatIfResponse | null>(null);
-  const [savedScenarios, setSavedScenarios] = useState<CapacityScenario[]>([]);
-  const [scenarioName, setScenarioName] = useState<string>("");
-  const [showSaveModal, setShowSaveModal] = useState<boolean>(false);
-  const [isPending, startTransition] = useTransition();
+  const [scenarios, setScenarios] = useState<CapacityScenario[]>([]);
+  const [scenarioName, setScenarioName] = useState("");
+  const [, startTransition] = useTransition();
 
-  // Load scenarios on mount
   useEffect(() => {
-    getCapacityScenariosAction().then((sc) => setSavedScenarios(sc));
+    getCapacityScenariosAction().then(setScenarios);
   }, []);
 
-  // Debounced evaluate function
   useEffect(() => {
     const timer = setTimeout(() => {
       startTransition(async () => {
         const payload: WhatIfRequest = {
-          department: department === "all" ? undefined : department,
-          doctor_id: doctorId === "all" ? undefined : doctorId,
-          wait_tolerance_mins: waitTolerance,
-          safety_factor: safetyFactor,
-          max_overbook_per_slot: maxOverbook,
-          consultation_fee_lkr: consultationFee,
-          assumed_delay_mins: doctorDelay,
+          target_date: targetDate || undefined,
+          wait_cost_lkr: waitCost === "" ? undefined : Number(waitCost),
+          max_overbook_per_session: maxOverbook === "" ? undefined : Number(maxOverbook),
+          consultation_fee_lkr: fee === "" ? undefined : Number(fee),
         };
         const res = await evaluateWhatIfAction(payload);
         if (res) setResult(res);
       });
-    }, 250);
-
+    }, 300);
     return () => clearTimeout(timer);
-  }, [department, doctorId, waitTolerance, safetyFactor, maxOverbook, consultationFee, doctorDelay]);
+  }, [targetDate, waitCost, maxOverbook, fee]);
 
-  // Unique departments from sessions
-  const departments = Array.from(new Set(sessions.map((s) => s.specialty)));
-
-  async function handleSaveScenario() {
+  async function saveScenario() {
     if (!scenarioName.trim() || !result) return;
-    const baseline = result.baseline ?? result.current_policy;
-    const scenario = result.scenario ?? result.what_if_policy;
-    const newSc = await saveCapacityScenarioAction({
+    const sc = await saveCapacityScenarioAction({
       name: scenarioName.trim(),
-      department: department === "all" ? "Hospital Wide" : department,
-      params: {
-        wait_tolerance_mins: waitTolerance,
-        safety_factor: safetyFactor,
-        max_overbook_per_slot: maxOverbook,
-        consultation_fee_lkr: consultationFee,
-        assumed_delay_mins: doctorDelay,
-      },
-      results: {
-        baseline: baseline ?? {},
-        scenario: scenario ?? {},
-        delta: result.delta ?? {},
-      },
+      params: { target_date: targetDate, wait_cost_lkr: waitCost, max_overbook_per_session: maxOverbook, consultation_fee_lkr: fee },
+      results: { current_policy: result.current_policy, what_if_policy: result.what_if_policy },
     });
-    if (newSc) {
-      setSavedScenarios((prev) => [newSc, ...prev]);
+    if (sc) {
+      setScenarios((prev) => [sc, ...prev]);
       setScenarioName("");
-      setShowSaveModal(false);
     }
   }
 
-  async function handleDeleteScenario(id: string) {
-    const ok = await deleteCapacityScenarioAction(id);
-    if (ok) {
-      setSavedScenarios((prev) => prev.filter((s) => s.id !== id));
-    }
+  function loadScenario(sc: CapacityScenario) {
+    const p = sc.params as Record<string, string | undefined>;
+    setTargetDate(p.target_date ?? "");
+    setWaitCost(p.wait_cost_lkr ?? "");
+    setMaxOverbook(p.max_overbook_per_session ?? "");
+    setFee(p.consultation_fee_lkr ?? "");
   }
 
-  function handleLoadScenario(sc: CapacityScenario) {
-    const p = sc.params;
-    if (p.wait_tolerance_mins !== undefined) setWaitTolerance(Number(p.wait_tolerance_mins));
-    if (p.safety_factor !== undefined) setSafetyFactor(Number(p.safety_factor));
-    if (p.max_overbook_per_slot !== undefined) setMaxOverbook(Number(p.max_overbook_per_slot));
-    if (p.consultation_fee_lkr !== undefined) setConsultationFee(Number(p.consultation_fee_lkr));
-    if (p.assumed_delay_mins !== undefined) setDoctorDelay(Number(p.assumed_delay_mins));
-  }
+  const rows: Array<[string, (p: WhatIfResponse["current_policy"]) => string]> = [
+    ["Overbook (full sessions)", (p) => `+${p.recommended_overbook}`],
+    ["Extra patients expected to be seen", (p) => p.expected_filled_gaps.toFixed(2)],
+    ["Expected overflow patients", (p) => p.expected_overflow.toFixed(2)],
+    ["Expected overrun (min)", (p) => p.expected_wait_mins.toFixed(1)],
+    ["Worst session P(overflow)", (p) => `${Math.round(p.p_overcrowding * 100)}%`],
+    ["Extra revenue", (p) => formatLkr(p.expected_revenue_lkr)],
+    ["Net value (revenue − overflow cost)", (p) => formatLkr(p.net_value_gain_lkr)],
+  ];
 
   return (
     <div className="flex flex-col gap-6 animate-in fade-in duration-300">
-      {/* Studio Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-[24px] bg-gradient-to-r from-primary/10 via-primary/5 to-transparent border border-primary/20">
-        <div className="flex items-center gap-3">
-          <div className="size-10 rounded-xl bg-primary text-white flex items-center justify-center shadow-md">
-            <Sliders className="size-5" />
-          </div>
-          <div>
-            <h2 className="text-base font-bold text-foreground">What-If Simulation Studio</h2>
-            <p className="text-xs text-muted-foreground">
-              Instantly see how your overbooking policy changes when you adjust wait times, doctor delays or safety buffers
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
+      <div className="flex flex-col gap-4 rounded-[24px] border border-border/60 bg-card p-5 shadow-xs sm:p-6">
+        <div className="flex items-center justify-between">
+          <h2 className="flex items-center gap-2 text-sm font-bold text-foreground">
+            <Sliders className="size-4 text-primary" /> What-if on the real sessions
+          </h2>
           {onBack && (
-            <button
-              type="button"
-              onClick={onBack}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-card border border-border/80 text-foreground text-xs font-semibold hover:bg-muted shadow-xs transition-colors"
-            >
-              <ArrowLeft className="size-3.5" /> Back to Capacity
+            <button type="button" onClick={onBack} className="text-xs font-semibold text-muted-foreground hover:text-foreground">
+              Back
             </button>
           )}
-          {isPending && (
-            <span className="flex items-center gap-1.5 text-xs text-primary font-medium animate-pulse">
-              <RefreshCw className="size-3 animate-spin" /> Simulating...
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => setShowSaveModal(true)}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-primary text-white text-xs font-semibold hover:bg-primary/90 shadow-xs transition-colors"
-          >
-            <BookmarkPlus className="size-3.5" /> Save Scenario
-          </button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Re-runs the exact overbooking maths on the sessions that have bookings on the chosen date. Leave a field empty to use the saved setting
+          (or each session&apos;s recorded fee).
+        </p>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Field label="Date" hint="Empty = today">
+            <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className={inputCls} />
+          </Field>
+          <Field label="Cost per overflow patient (LKR)" hint="Assumption">
+            <input type="number" min={0} step={500} value={waitCost} onChange={(e) => setWaitCost(e.target.value)} className={inputCls} placeholder="saved setting" />
+          </Field>
+          <Field label="Max overbooking per session" hint="Beyond capacity">
+            <input type="number" min={0} max={20} value={maxOverbook} onChange={(e) => setMaxOverbook(e.target.value)} className={inputCls} placeholder="saved setting" />
+          </Field>
+          <Field label="Fee per patient (LKR)" hint="Empty = recorded fees">
+            <input type="number" min={0} step={100} value={fee} onChange={(e) => setFee(e.target.value)} className={inputCls} placeholder="recorded" />
+          </Field>
         </div>
       </div>
 
-      {/* Main Grid: Controls on Left, Results on Right */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column: Interactive Parameters (5 cols) */}
-        <div className="lg:col-span-5 flex flex-col gap-4 rounded-[24px] bg-card p-5 sm:p-6 shadow-xs border border-border/60">
-          <h3 className="text-sm font-bold text-foreground border-b border-border/40 pb-2">
-            Simulation Parameters
-          </h3>
-
-          {/* Scope Selectors */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-muted-foreground">Department</label>
-              <select
-                value={department}
-                onChange={(e) => setDepartment(e.target.value)}
-                className="h-9 px-3 text-xs rounded-xl bg-background border border-border text-foreground font-medium"
-              >
-                <option value="all">All Departments</option>
-                {departments.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
+      {result && (
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <div className="rounded-[24px] border border-border/60 bg-card p-5 shadow-xs">
+            <h3 className="mb-3 text-sm font-bold text-foreground">Saved policy vs. what-if</h3>
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-border text-left text-muted-foreground">
+                  <th className="py-2 font-semibold" />
+                  <th className="font-semibold">Saved</th>
+                  <th className="font-semibold">What-if</th>
+                </tr>
+              </thead>
+              <tbody className="font-mono">
+                {rows.map(([label, fmt]) => (
+                  <tr key={label} className="border-b border-border/50 last:border-none">
+                    <td className="py-2 pr-2 font-sans text-foreground">{label}</td>
+                    <td>{fmt(result.current_policy)}</td>
+                    <td className="font-bold">{fmt(result.what_if_policy)}</td>
+                  </tr>
                 ))}
-              </select>
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-muted-foreground">Consultant</label>
-              <select
-                value={doctorId}
-                onChange={(e) => setDoctorId(e.target.value)}
-                className="h-9 px-3 text-xs rounded-xl bg-background border border-border text-foreground font-medium"
-              >
-                <option value="all">All Consultants</option>
-                {sessions.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.doctor_name}
-                  </option>
-                ))}
-              </select>
-            </div>
+              </tbody>
+            </table>
           </div>
 
-          {/* Slider 1: Max Wait Tolerance */}
-          <div className="flex flex-col gap-2 pt-2 border-t border-border/40">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-foreground">Max Patient Wait Time</span>
-              <span className="font-bold text-primary tabular-nums">{waitTolerance} mins</span>
-            </div>
-            <input
-              type="range"
-              min="5"
-              max="45"
-              step="5"
-              value={waitTolerance}
-              onChange={(e) => setWaitTolerance(Number(e.target.value))}
-              className="w-full accent-primary cursor-pointer"
-            />
-            <span className="text-[10px] text-muted-foreground">How long patients will comfortably wait before getting frustrated</span>
-          </div>
-
-          {/* Slider 2: Safety Factor Beta */}
-          <div className="flex flex-col gap-2 pt-2 border-t border-border/40">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-foreground">Safety Buffer Level</span>
-              <span className="font-bold text-primary tabular-nums">{(safetyFactor * 100).toFixed(0)}%</span>
-            </div>
-            <input
-              type="range"
-              min="0.2"
-              max="1.0"
-              step="0.05"
-              value={safetyFactor}
-              onChange={(e) => setSafetyFactor(Number(e.target.value))}
-              className="w-full accent-primary cursor-pointer"
-            />
-            <span className="text-[10px] text-muted-foreground">
-              How cautious to be when adding extra patients — higher is safer
-            </span>
-          </div>
-
-          {/* Slider 3: Doctor Delay */}
-          <div className="flex flex-col gap-2 pt-2 border-t border-border/40">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-foreground">Doctor Running Late</span>
-              <span className="font-bold text-amber-600 dark:text-amber-400 tabular-nums">+{doctorDelay} mins</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="60"
-              step="5"
-              value={doctorDelay}
-              onChange={(e) => setDoctorDelay(Number(e.target.value))}
-              className="w-full accent-amber-500 cursor-pointer"
-            />
-            <span className="text-[10px] text-muted-foreground">
-              Effective patient wait budget = {waitTolerance} − {doctorDelay} = {Math.max(0, waitTolerance - doctorDelay)} mins
-            </span>
-          </div>
-
-          {/* Input 4: Fee & Max Overbook */}
-          <div className="grid grid-cols-2 gap-3 pt-2 border-t border-border/40">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-foreground">Consultation Fee (LKR)</label>
-              <input
-                type="number"
-                min="500"
-                step="500"
-                value={consultationFee}
-                onChange={(e) => setConsultationFee(Number(e.target.value))}
-                className="h-9 px-3 text-xs rounded-xl bg-background border border-border text-foreground font-semibold"
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-foreground">Max Overbook / Slot</label>
-              <input
-                type="number"
-                min="1"
-                max="5"
-                value={maxOverbook}
-                onChange={(e) => setMaxOverbook(Number(e.target.value))}
-                className="h-9 px-3 text-xs rounded-xl bg-background border border-border text-foreground font-semibold"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column: Comparison & Charts (7 cols) */}
-        <div className="lg:col-span-7 flex flex-col gap-4">
-          {/* Side-by-Side Comparison Bento */}
-          {(() => {
-            const baseline = result?.baseline ?? result?.current_policy;
-            const scenario = result?.scenario ?? result?.what_if_policy;
-            const baseOver = baseline?.total_overbooks ?? baseline?.recommended_overbook ?? 0;
-            const scenOver = scenario?.total_overbooks ?? scenario?.recommended_overbook ?? 0;
-            const baseWait = baseline?.expected_wait_mins ?? 0;
-            const scenWait = scenario?.expected_wait_mins ?? 0;
-            const baseRev = baseline?.expected_revenue_lkr ?? 0;
-            const scenRev = scenario?.expected_revenue_lkr ?? 0;
-            const baseRisk = baseline?.risk_of_overcrowding_pct ?? Math.round((baseline?.p_overcrowding ?? 0) * 100);
-            const scenRisk = scenario?.risk_of_overcrowding_pct ?? Math.round((scenario?.p_overcrowding ?? 0) * 100);
-
-            return (
-              <div className="grid grid-cols-2 gap-3.5">
-                {/* Baseline Card */}
-                <div className="rounded-[24px] bg-card p-5 shadow-xs border border-border/60 flex flex-col gap-3">
-                  <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                    Current Settings (Baseline)
-                  </span>
-                  <div className="grid grid-cols-2 gap-2 text-center">
-                    <div className="p-2 rounded-xl bg-muted/30">
-                      <span className="text-[10px] text-muted-foreground">Extra Patients</span>
-                      <p className="text-base font-bold text-foreground">
-                        +{baseOver}
-                      </p>
-                    </div>
-                    <div className="p-2 rounded-xl bg-muted/30">
-                      <span className="text-[10px] text-muted-foreground">Expected Wait</span>
-                      <p className="text-base font-bold text-foreground">
-                        {baseWait}m
-                      </p>
-                    </div>
-                    <div className="p-2 rounded-xl bg-muted/30">
-                      <span className="text-[10px] text-muted-foreground">Expected Upside</span>
-                      <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                        +{formatLkr(baseRev)}
-                      </p>
-                    </div>
-                    <div className="p-2 rounded-xl bg-muted/30">
-                      <span className="text-[10px] text-muted-foreground">Overcrowd Risk</span>
-                      <p className="text-base font-bold text-foreground">
-                        {baseRisk}%
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* What-If Card */}
-                <div className="rounded-[24px] bg-primary/5 p-5 shadow-xs border border-primary/30 flex flex-col gap-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-primary uppercase tracking-wider">
-                      What-If Scenario
-                    </span>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/20 text-primary font-bold">
-                      Simulated
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 text-center">
-                    <div className="p-2 rounded-xl bg-background border border-primary/20">
-                      <span className="text-[10px] text-muted-foreground">Extra Patients</span>
-                      <p className="text-base font-bold text-primary">
-                        +{scenOver}
-                      </p>
-                    </div>
-                    <div className="p-2 rounded-xl bg-background border border-primary/20">
-                      <span className="text-[10px] text-muted-foreground">Expected Wait</span>
-                      <p className="text-base font-bold text-foreground">
-                        {scenWait}m
-                      </p>
-                    </div>
-                    <div className="p-2 rounded-xl bg-background border border-primary/20">
-                      <span className="text-[10px] text-muted-foreground">Expected Upside</span>
-                      <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                        +{formatLkr(scenRev)}
-                      </p>
-                    </div>
-                    <div className="p-2 rounded-xl bg-background border border-primary/20">
-                      <span className="text-[10px] text-muted-foreground">Overcrowd Risk</span>
-                      <p
-                        className={cn(
-                          "text-base font-bold",
-                          scenRisk > 15
-                            ? "text-rose-600 dark:text-rose-400"
-                            : "text-foreground"
-                        )}
-                      >
-                        {scenRisk}%
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* Trade-off Curve Chart */}
-          <div className="rounded-[24px] bg-card p-5 shadow-xs border border-border/60 flex flex-col gap-3">
-            <div>
-              <h4 className="text-xs font-bold text-foreground">
-                Extra Revenue vs Overcrowding Risk
-              </h4>
-              <p className="text-[11px] text-muted-foreground">
-                How revenue and waiting-room risk change as you add more extra patient bookings
-              </p>
-            </div>
-            {result?.trade_off_curve && result.trade_off_curve.length > 0 ? (
-              <div className="h-56 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart
-                    data={result.trade_off_curve}
-                    margin={{ top: 10, right: 10, left: -10, bottom: 5 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                    <XAxis dataKey="overbook_count" tick={{ fontSize: 11 }} label={{ value: "+Overbook Count", position: "insideBottom", offset: -2, fontSize: 10 }} />
-                    <YAxis yAxisId="left" tick={{ fontSize: 10 }} />
-                    <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} unit="%" />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: "var(--card)",
-                        borderColor: "var(--border)",
-                        borderRadius: "12px",
-                        fontSize: "12px",
-                      }}
-                    />
-                    <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "4px" }} />
-                    <Bar
-                      yAxisId="left"
-                      dataKey="expected_revenue_lkr"
-                      name="Exp. Revenue (LKR)"
-                      fill="#8B7CF6"
-                      radius={[4, 4, 0, 0]}
-                    />
-                    <Line
-                      yAxisId="right"
-                      type="monotone"
-                      dataKey="overcrowding_risk_pct"
-                      name="P(Overcrowding) %"
-                      stroke="#EF4444"
-                      strokeWidth={2}
-                      dot={{ r: 3 }}
-                    />
-                  </ComposedChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <div className="h-56 flex items-center justify-center text-xs text-muted-foreground">
-                Simulating trade-off curve...
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Saved Scenarios Manager */}
-      <div className="rounded-[24px] bg-card p-5 sm:p-6 shadow-xs border border-border/60 flex flex-col gap-4">
-        <div className="flex items-center justify-between pb-2 border-b border-border/40">
-          <div className="flex items-center gap-2.5">
-            <FolderOpen className="size-4 text-primary" />
-            <h3 className="text-sm font-bold text-foreground">Saved Capacity Scenarios</h3>
-          </div>
-          <span className="text-xs text-muted-foreground">
-            {savedScenarios.length} Scenarios Stored
-          </span>
-        </div>
-
-        {savedScenarios.length === 0 ? (
-          <p className="text-xs text-muted-foreground py-4 text-center">
-            No saved scenarios yet. Configure parameters above and click &quot;Save Scenario&quot;.
-          </p>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {savedScenarios.map((sc) => (
-              <div
-                key={sc.id}
-                className="p-3.5 rounded-2xl bg-muted/20 border border-border/60 flex flex-col justify-between gap-3 hover:border-primary/40 transition-colors"
-              >
-                <div className="flex flex-col gap-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-foreground">{sc.name}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteScenario(sc.id)}
-                      className="text-muted-foreground hover:text-rose-500 p-1"
-                    >
-                      <Trash2 className="size-3" />
-                    </button>
-                  </div>
-                  <span className="text-[10px] text-muted-foreground">
-                    {sc.department || "Hospital Wide"} · {new Date(sc.created_at).toLocaleDateString()}
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between text-[11px] pt-2 border-t border-border/40">
-                  <span className="text-muted-foreground">
-                    Tol: {String(sc.params?.wait_tolerance_mins ?? 20)}m | &beta;: {String(sc.params?.safety_factor ?? 0.75)}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => handleLoadScenario(sc)}
-                    className="text-primary font-bold text-xs hover:underline"
-                  >
-                    Load &rarr;
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Save Scenario Modal */}
-      {showSaveModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs animate-in fade-in duration-200">
-          <div className="w-full max-w-sm rounded-[24px] bg-card p-6 border border-border shadow-2xl flex flex-col gap-4">
-            <h3 className="text-base font-bold text-foreground">Save What-If Scenario</h3>
-            <p className="text-xs text-muted-foreground">
-              Save the current simulation parameters and outcomes for later review and side-by-side comparison.
-            </p>
-            <input
-              type="text"
-              placeholder="e.g. Peak Season High Demand Strategy"
-              value={scenarioName}
-              onChange={(e) => setScenarioName(e.target.value)}
-              className="h-10 px-3 text-xs rounded-xl bg-background border border-border text-foreground font-medium"
-            />
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowSaveModal(false)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-muted-foreground hover:bg-muted"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveScenario}
-                disabled={!scenarioName.trim()}
-                className="px-4 py-2 rounded-xl bg-primary text-white text-xs font-semibold hover:bg-primary/90 disabled:opacity-50"
-              >
-                Save
-              </button>
+          <div className="rounded-[24px] border border-border/60 bg-card p-5 shadow-xs">
+            <h3 className="text-sm font-bold text-foreground">Value by number of extra bookings</h3>
+            <p className="mb-2 text-xs text-muted-foreground">Summed over the sessions of the date (fee × seen − cost × overflow).</p>
+            <div className="h-64 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={result.trade_off_curve} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                  <XAxis dataKey="extra_bookings" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
+                  <Tooltip
+                    formatter={(v: unknown) => formatLkr(Number(v))}
+                    contentStyle={{ backgroundColor: "var(--card)", borderColor: "var(--border)", borderRadius: "12px", fontSize: "12px" }}
+                  />
+                  <Bar dataKey="value_lkr" name="Value" fill="#8B7CF6" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
           </div>
         </div>
       )}
+
+      <div className="rounded-[24px] border border-border/60 bg-card p-5 shadow-xs">
+        <h3 className="mb-3 text-sm font-bold text-foreground">Saved scenarios</h3>
+        <div className="mb-3 flex gap-2">
+          <input value={scenarioName} onChange={(e) => setScenarioName(e.target.value)} placeholder="Scenario name" className={`${inputCls} flex-1`} />
+          <button
+            type="button"
+            onClick={saveScenario}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 text-xs font-bold text-white"
+          >
+            <BookmarkPlus className="size-3.5" /> Save
+          </button>
+        </div>
+        {scenarios.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No saved scenarios.</p>
+        ) : (
+          <ul className="divide-y divide-border/50">
+            {scenarios.map((sc) => (
+              <li key={sc.id} className="flex items-center justify-between py-2 text-xs">
+                <span className="font-semibold text-foreground">{sc.name}</span>
+                <span className="flex items-center gap-3">
+                  <button type="button" onClick={() => loadScenario(sc)} aria-label="Load scenario" className="text-primary">
+                    <FolderOpen className="size-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Delete scenario"
+                    className="text-rose-600"
+                    onClick={async () => {
+                      if (await deleteCapacityScenarioAction(sc.id)) setScenarios((prev) => prev.filter((s) => s.id !== sc.id));
+                    }}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }

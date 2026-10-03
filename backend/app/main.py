@@ -193,6 +193,11 @@ def get_risk_category(score: float) -> str:
 def get_recommendation(score: float) -> str:
     return shai.recommendation(shai.category(score))
 
+def _hospital_id(request: Request | None) -> uuid.UUID | None:
+    """Hospital of the authenticated user (None for platform owners, who see every hospital)."""
+    return getattr(request.state, "hospital_id", None) if request is not None else None
+
+
 def _patient_history(db: Session, appointment: models.Appointment) -> tuple[int, int]:
     """(prior attended-or-no-show visits, prior no-shows) finished before this appointment was booked."""
     prior = (
@@ -1646,21 +1651,21 @@ def update_doctor_delay(
 # ===================================
 
 @app.post("/capacity/optimize", response_model=schemas.CapacityOptimizeResponse, dependencies=[Depends(auth.require_role("manager"))])
-def optimize_capacity(req: schemas.CapacityOptimizeRequest, db: Session = Depends(get_db)):
-    """Optimizes session capacity using calibrated probabilities, Poisson-binomial bounds, and queue simulation."""
+def optimize_capacity(req: schemas.CapacityOptimizeRequest, request: Request, db: Session = Depends(get_db)):
+    """Per-session capacity, expected no-shows and the exact Poisson-binomial overbooking recommendation (persisted)."""
     return capacity_service.get_capacity_overview(
         db=db,
         session_date=req.session_date,
-        max_wait_tolerance=req.max_wait_time_tolerance_mins,
         persist_run=True,
+        hospital_id=_hospital_id(request),
     )
 
 
 @app.get("/capacity/overview", response_model=schemas.CapacityOptimizeResponse, dependencies=[Depends(auth.require_role("manager"))])
 def get_capacity_overview_endpoint(
+    request: Request,
     date: Optional[date] = None,
     doctor_id: Optional[uuid.UUID] = None,
-    max_wait_tolerance: Optional[int] = None,
     db: Session = Depends(get_db),
 ):
     """Retrieve full capacity overview, session recommendations, and department mix."""
@@ -1668,44 +1673,52 @@ def get_capacity_overview_endpoint(
         db=db,
         session_date=date,
         target_doctor_id=doctor_id,
-        max_wait_tolerance=max_wait_tolerance,
         persist_run=False,
+        hospital_id=_hospital_id(request),
     )
 
 
 @app.get("/capacity/slots", response_model=schemas.CapacitySlotsResponse, dependencies=[Depends(auth.require_role("manager"))])
 def get_capacity_slots_endpoint(
+    request: Request,
     date: Optional[date] = None,
     db: Session = Depends(get_db),
 ):
     """Feature A: Slot-level overbooking heatmap grid with booked patient details."""
     target_date = date or pd.to_datetime("today").date()
-    return capacity_service.get_capacity_slots(db=db, target_date=target_date)
+    return capacity_service.get_capacity_slots(db=db, target_date=target_date, hospital_id=_hospital_id(request))
 
 
 @app.post("/capacity/what-if", response_model=schemas.WhatIfResponse, dependencies=[Depends(auth.require_role("manager"))])
 def evaluate_what_if_endpoint(
     req: schemas.WhatIfRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-    """Feature B: Non-persisting live debounced simulation comparing baseline vs what-if policy."""
-    return capacity_service.evaluate_what_if_scenario(db=db, req=req)
+    """Feature B: exact (non-simulated) comparison of the saved policy vs a different fee / wait cost / limit."""
+    return capacity_service.evaluate_what_if_scenario(db=db, req=req, hospital_id=_hospital_id(request))
 
 
 @app.get("/capacity/scenarios", response_model=List[schemas.CapacityScenarioOut], dependencies=[Depends(auth.require_role("manager"))])
-def list_capacity_scenarios(db: Session = Depends(get_db)):
+def list_capacity_scenarios(request: Request, db: Session = Depends(get_db)):
     """Feature B: List stored manager what-if scenarios."""
-    return db.query(models.CapacityScenario).order_by(models.CapacityScenario.created_at.desc()).limit(10).all()
+    q = db.query(models.CapacityScenario)
+    hid = _hospital_id(request)
+    if hid and hasattr(models.CapacityScenario, "hospital_id"):
+        q = q.filter(models.CapacityScenario.hospital_id == hid)
+    return q.order_by(models.CapacityScenario.created_at.desc()).limit(10).all()
 
 
 @app.post("/capacity/scenarios", response_model=schemas.CapacityScenarioOut, dependencies=[Depends(auth.require_role("manager"))])
 def create_capacity_scenario(
     req: schemas.CapacityScenarioCreate,
+    request: Request,
     current_user: models.User = Depends(auth.require_user),
     db: Session = Depends(get_db),
 ):
     """Feature B: Save a what-if experiment scenario."""
     scen = models.CapacityScenario(
+        hospital_id=_hospital_id(request),
         name=req.name,
         params=req.params,
         results=req.results,
@@ -1730,23 +1743,25 @@ def delete_capacity_scenario(scenario_id: uuid.UUID, db: Session = Depends(get_d
 
 @app.get("/capacity/settings", response_model=schemas.CapacitySettingOut, dependencies=[Depends(auth.require_role("manager"))])
 def get_capacity_settings_endpoint(
+    request: Request,
     department_id: Optional[int] = None,
     doctor_id: Optional[uuid.UUID] = None,
     db: Session = Depends(get_db),
 ):
     """Retrieve active capacity settings for hospital, department, or doctor scope."""
-    return capacity_service.get_effective_settings(db, department_id, doctor_id)
+    return capacity_service.get_effective_settings(db, department_id, doctor_id, _hospital_id(request))
 
 
 @app.put("/capacity/settings", response_model=schemas.CapacitySettingOut, dependencies=[Depends(auth.require_role("manager"))])
 def update_capacity_settings_endpoint(
     req: schemas.CapacitySettingUpdate,
+    request: Request,
     department_id: Optional[int] = None,
     doctor_id: Optional[uuid.UUID] = None,
     db: Session = Depends(get_db),
 ):
     """Update capacity settings."""
-    setting = capacity_service.get_effective_settings(db, department_id, doctor_id)
+    setting = capacity_service.get_effective_settings(db, department_id, doctor_id, _hospital_id(request))
     update_data = req.model_dump(exclude_unset=True)
     for field, val in update_data.items():
         setattr(setting, field, val)
@@ -1757,11 +1772,12 @@ def update_capacity_settings_endpoint(
 
 @app.get("/capacity/forecast", response_model=schemas.ForecastResponse, dependencies=[Depends(auth.require_role("manager"))])
 def get_capacity_forecast_endpoint(
+    request: Request,
     horizon: int = Query(7, ge=7, le=30),
     db: Session = Depends(get_db),
 ):
-    """Feature D: Next 7 / 14 / 30 day forward projections with Poisson-binomial confidence intervals."""
-    return capacity_service.get_capacity_forecast(db=db, horizon_days=horizon)
+    """Feature D: Next 7 / 14 / 30 day view of bookings already in the system, with exact Poisson-binomial intervals."""
+    return capacity_service.get_capacity_forecast(db=db, horizon_days=horizon, hospital_id=_hospital_id(request))
 
 
 @app.get("/capacity/accuracy", dependencies=[Depends(auth.require_role("manager"))])
@@ -1778,15 +1794,16 @@ def get_capacity_accuracy_endpoint(
 
 
 @app.get("/capacity/slot-offers", response_model=List[schemas.SlotOfferOut], dependencies=[Depends(auth.require_role("front_desk"))])
-def get_slot_offers_endpoint(db: Session = Depends(get_db)):
+def get_slot_offers_endpoint(request: Request, db: Session = Depends(get_db)):
     """Feature C: List open freed slot offers with ranked candidate recommendations."""
-    return capacity_service.get_freed_slot_offers(db=db)
+    return capacity_service.get_freed_slot_offers(db=db, hospital_id=_hospital_id(request))
 
 
 @app.post("/capacity/slot-offers/{offer_id}/act", response_model=schemas.SlotOfferOut, dependencies=[Depends(auth.require_role("front_desk"))])
 def act_on_slot_offer_endpoint(
     offer_id: uuid.UUID,
     req: schemas.SlotOfferActionRequest,
+    request: Request,
     current_user: models.User = Depends(auth.require_user),
     db: Session = Depends(get_db),
 ):
@@ -1797,15 +1814,16 @@ def act_on_slot_offer_endpoint(
             offer_id=offer_id,
             action=req.action,
             acted_by=current_user.full_name,
+            hospital_id=_hospital_id(request),
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
 
 @app.get("/capacity/nav-counts", response_model=schemas.NavCountsOut)
-def get_capacity_nav_counts(db: Session = Depends(get_db)):
+def get_capacity_nav_counts(request: Request, db: Session = Depends(get_db)):
     """G10: Drive sidebar badges with real live counts."""
-    return capacity_service.get_nav_live_counts(db=db)
+    return capacity_service.get_nav_live_counts(db=db, hospital_id=_hospital_id(request))
 
 
 # ===================================

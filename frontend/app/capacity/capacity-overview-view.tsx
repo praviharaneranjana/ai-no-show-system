@@ -42,23 +42,20 @@ interface CapacityOverviewViewProps {
 }
 
 export function CapacityOverviewView({ optimization, sessions }: CapacityOverviewViewProps) {
-  const range = optimization.expected_no_shows_range ?? [
-    Math.max(0, optimization.total_predicted_no_shows - 1),
-    optimization.total_predicted_no_shows + 1,
-  ];
+  const range = [optimization.expected_no_shows_interval_low, optimization.expected_no_shows_interval_high];
 
   // Prepare chart data for department breakdown
-  const deptChartData = (optimization.department_breakdown ?? []).map((d) => ({
+  const deptChartData = optimization.departments.map((d) => ({
     name: d.department,
-    Booked: d.booked,
-    Overbook: d.recommended_overbooks,
+    Booked: d.total_booked,
+    Overbook: d.recommended_overbook,
     "Exp. No-Shows": d.expected_no_shows,
   }));
 
   // Prepare doctor session breakdown
   const doctorChartData = optimization.sessions.map((s) => ({
-    name: s.doctor_name.replace("Dr. ", ""),
-    Capacity: s.capacity ?? 20,
+    name: `${s.doctor_name.replace("Dr. ", "")}${s.session_label ? ` · ${s.session_label}` : ""}`,
+    Capacity: s.max_capacity ?? 0,
     Booked: s.total_booked,
     "Expected Attendance": Math.max(0, s.total_booked - s.predicted_no_shows),
     Overbook: s.recommended_overbook_count,
@@ -72,13 +69,13 @@ export function CapacityOverviewView({ optimization, sessions }: CapacityOvervie
           title="Total Capacity"
           value={optimization.total_capacity}
           icon={Layers}
-          subvalue={`${optimization.sessions.length} sessions active`}
+          subvalue={`${optimization.sessions_running} sessions running${optimization.idle_sessions ? ` · ${optimization.idle_sessions} on the timetable with no bookings` : ""}`}
         />
         <SharedKpiCard
           title="Total Booked"
           value={optimization.total_booked}
           icon={CalendarDays}
-          subvalue={`${optimization.overall_utilization_pct != null ? optimization.overall_utilization_pct : (optimization.total_capacity > 0 ? Math.round((optimization.total_booked / optimization.total_capacity) * 100) : 0)}% booked capacity`}
+          subvalue={`${optimization.booked_utilisation_pct}% of running capacity`}
         />
         <SharedKpiCard
           title="Expected No-Shows"
@@ -91,21 +88,21 @@ export function CapacityOverviewView({ optimization, sessions }: CapacityOvervie
           subvalue="AI probability estimate"
         />
         <SharedKpiCard
-          title="Safe Extra Bookings"
+          title="Overbook now"
           value={`+${optimization.total_recommended_overbooks}`}
           icon={TrendingUp}
           delta={{
-            value: `${optimization.expected_attendance_pct ?? 0}% expected to attend`,
+            value: `${optimization.expected_attendance_pct}% expected to attend`,
             isPositive: true,
           }}
-          subvalue="Within patient wait limits"
+          subvalue="Only sessions that are already full"
         />
         <SharedKpiCard
           title="Est. Extra Revenue"
           value={formatLkr(optimization.estimated_revenue_recovery_lkr)}
           icon={Wallet}
-          delta={{ value: "From recovered no-show slots", isPositive: true }}
-          subvalue="Annual gain at current clinic volume"
+          delta={{ value: "Fee x extra patients expected to be seen", isPositive: true }}
+          subvalue="For this date, if the advice is followed"
         />
       </div>
 
@@ -229,14 +226,14 @@ export function CapacityOverviewView({ optimization, sessions }: CapacityOvervie
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4">
             {optimization.sessions.map((s, idx) => {
-              const cap = s.capacity ?? 20;
-              const bookedPct = Math.round((s.total_booked / cap) * 100);
-              const attendPct = s.expected_attendance_pct ?? Math.round(((s.total_booked - s.predicted_no_shows) / cap) * 100);
+              const cap = s.max_capacity;
+              const bookedPct = cap ? Math.round((s.total_booked / cap) * 100) : 0;
+              const attendPct = s.expected_attendance_pct;
               const roomClean = s.room_number.replace(/^Room\s+/i, "");
 
               return (
                 <div
-                  key={s.session_id || idx}
+                  key={s.clinic_session_id || idx}
                   className="rounded-[24px] bg-card p-5 shadow-xs border border-border/60 hover:shadow-md hover:border-border transition-all flex flex-col justify-between gap-4"
                 >
                   <div className="flex flex-col gap-3">
@@ -244,7 +241,7 @@ export function CapacityOverviewView({ optimization, sessions }: CapacityOvervie
                       <div className="flex flex-col">
                         <span className="font-bold text-foreground text-base">{s.doctor_name}</span>
                         <span className="text-xs text-muted-foreground">
-                          {s.specialty} · Room {roomClean}
+                          {s.specialty}{s.session_label ? ` · ${s.session_label} ${s.session_start ?? ""}` : ""}{roomClean ? ` · Room ${roomClean}` : ""}
                         </span>
                       </div>
                       <span
@@ -271,35 +268,33 @@ export function CapacityOverviewView({ optimization, sessions }: CapacityOvervie
                         <div className="flex flex-col rounded-xl bg-muted/30 p-2">
                           <span className="text-[11px] text-muted-foreground font-medium">Booked</span>
                           <span className="text-sm font-bold tabular-nums text-foreground">
-                            {s.total_booked} / {cap}
+                            {s.total_booked} / {cap ?? "—"}
                           </span>
                         </div>
                         <div className="flex flex-col rounded-xl bg-muted/30 p-2">
                           <span className="text-[11px] text-muted-foreground font-medium">Exp. No-Shows</span>
                           <span className="text-sm font-bold tabular-nums text-rose-600 dark:text-rose-400">
-                            {s.predicted_no_shows}
-                            {s.expected_no_shows_range && (
-                              <span className="text-[10px] text-muted-foreground font-normal ml-1">
-                                [{s.expected_no_shows_range[0]}-{s.expected_no_shows_range[1]}]
-                              </span>
-                            )}
+                            {s.expected_no_shows_float.toFixed(1)}
+                            <span className="text-[10px] text-muted-foreground font-normal ml-1">
+                              [{s.interval_low}-{s.interval_high}]
+                            </span>
                           </span>
                         </div>
                         <div className="flex flex-col rounded-xl bg-primary/10 p-2 border border-primary/20">
-                          <span className="text-[11px] text-primary font-medium">Safe Overbook</span>
+                          <span className="text-[11px] text-primary font-medium">
+                            {s.free_seats > 0 ? "Overbook if full" : "Overbook"}
+                          </span>
                           <span className="text-sm font-bold tabular-nums text-primary">
-                            +{s.recommended_overbook_count}
+                            +{s.free_seats > 0 ? s.overbook_if_full : s.recommended_overbook_count}
                           </span>
                         </div>
                         <div className="flex flex-col rounded-xl bg-muted/30 p-2">
-                          <span className="text-[11px] text-muted-foreground font-medium">Est. Wait</span>
+                          <span className="text-[11px] text-muted-foreground font-medium">P(overflow)</span>
                           <span className="text-sm font-bold tabular-nums text-foreground">
-                            {s.expected_wait_time_mins}m
-                            {s.effective_wait_tolerance_mins !== undefined && (
-                              <span className="text-[10px] text-muted-foreground font-normal ml-1">
-                                / {s.effective_wait_tolerance_mins}m tol
-                              </span>
-                            )}
+                            {Math.round(s.p_overcrowding * 100)}%
+                            <span className="text-[10px] text-muted-foreground font-normal ml-1">
+                              ~{s.expected_wait_time_mins}m overrun
+                            </span>
                           </span>
                         </div>
                       </div>
