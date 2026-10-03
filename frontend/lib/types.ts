@@ -1154,3 +1154,50 @@ export type RegisterStaffPayload = {
 };
 
 
+
+
+export type ModelComparisonRow = {
+  model: string;
+  ROC_AUC?: number;
+  PR_AUC?: number;
+  Brier?: number;
+  Recall_top20?: number;
+  Precision_top20?: number;
+  Lift_top20?: number;
+};
+
+export type ModelInfo = {
+  version: string;
+  thresholds: { high: number; medium: number; rule: string | null };
+  metrics: {
+    roc_auc: number | null;
+    pr_auc: number | null;
+    brier: number | null;
+    lift_top20: number | null;
+    recall_top20: number | null;
+    precision_top20: number | null;
+  };
+  recommendations: Record<"High" | "Medium" | "Low", string>;
+  confidence_intervals: Record<string, unknown>;
+  comparison_table: ModelComparisonRow[];
+  oracle_auc: number | null;
+  base_rate: number | null;
+  split: { train: number; val: number; test: number } | null;
+  top_shap: Record<string, number>;
+  optuna_best: Record<string, number> | null;
+  features: { numeric: string[]; categorical: Record<string, string[]> };
+  data_source: string | null;
+  n_rows: number | null;
+  date_range: { start?: string; end?: string };
+  created_at: string | null;
+  limitation: string;
+  data_sources?: Record<string, number>;
+};
+
+export type DataSourceInfo = {
+  counts: Record<string, number>;
+  total: number;
+  synthetic: number;
+  is_synthetic: boolean;
+  synthetic_share: number;
+};

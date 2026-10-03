@@ -1,239 +1,193 @@
-import Link from "next/link";
-import {
-  ArrowLeft,
-  Sparkles,
-  ShieldCheck,
-  TrendingUp,
-  Cpu,
-  BarChart3,
-  Layers,
-  Database,
-  CheckCircle2,
-  AlertTriangle,
-  Info,
-} from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Cpu, Layers, BarChart3, Database, TriangleAlert } from "lucide-react";
 
-export default function ModelPage() {
-  const modelMetrics = [
-    { label: "Prediction Skill", value: "0.672", sub: "How well the AI ranks patients by no-show risk (1.0 = perfect, 0.5 = random guess)", status: "good" },
-    { label: "High-Risk Detection", value: "0.266", sub: "Accuracy at identifying high-risk patients vs. random chance baseline (0.159)", status: "good" },
-    { label: "Prediction Accuracy", value: "0.124", sub: "Average error in the AI's probability estimates — lower is better", status: "optimal" },
-    { label: "Baseline No-Show Rate", value: "15.9%", sub: "Observed non-attendance rate before AI intervention", status: "neutral" },
-  ];
+import { getModelInfo } from "@/lib/api";
+import { BackendUnreachable } from "@/components/backend-unreachable";
+import { PageHeader, Panel } from "@/components/page-header";
+import { SyntheticBadge } from "@/components/synthetic-badge";
+import type { ModelComparisonRow, ModelInfo } from "@/lib/types";
 
-  const thresholds = [
-    {
-      tier: "High Risk",
-      range: "> 0.23 estimated risk score",
-      cohort: "Top ~10% of bookings",
-      action: "Mandatory phone outreach + smart overbooking candidate",
-      color: "text-rose-400 bg-rose-500/10 border-rose-500/30",
-    },
-    {
-      tier: "Medium Risk",
-      range: "0.13 – 0.23 estimated risk score",
-      cohort: "Next ~20% of bookings",
-      action: "Proactive multilingual WhatsApp / SMS reminder",
-      color: "text-amber-400 bg-amber-500/10 border-amber-500/30",
-    },
-    {
-      tier: "Low Risk",
-      range: "< 0.13 estimated risk score",
-      cohort: "Remaining ~70% of bookings",
-      action: "Standard digital confirmation (no staff intervention)",
-      color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30",
-    },
-  ];
+const num = (v: number | null | undefined, digits = 3) => (v == null ? "—" : v.toFixed(digits));
+const pct = (v: number | null | undefined, digits = 1) => (v == null ? "—" : `${(v * 100).toFixed(digits)}%`);
+const int = (v: number | null | undefined) => (v == null ? "—" : v.toLocaleString("en-US"));
 
-  const shapDrivers = [
-    { feature: "Days Before Appointment", impact: "Strong ↑ No-Show", desc: "Patients booked more than 21 days out are much more likely to forget", pct: 85 },
-    { feature: "Past No-Show History", impact: "Strong ↑ No-Show", desc: "Patients who have missed appointments before are more likely to miss again", pct: 78 },
-    { feature: "Distance to Hospital", impact: "Moderate ↑ No-Show", desc: "Patients travelling more than 20 km are at higher risk of not attending", pct: 55 },
-    { feature: "Heavy Rain / Monsoon", impact: "Moderate ↑ No-Show", desc: "Severe Colombo rainfall correlates with travel disruptions and missed appointments", pct: 40 },
-    { feature: "Elderly Patient (60+)", impact: "↓ Risk (Good sign)", desc: "Senior patients tend to attend more reliably than younger age groups", pct: 35, positive: true },
-    { feature: "SMS Reminder Sent", impact: "↓ Risk (Good sign)", desc: "Sending an SMS reminder significantly reduces the chance of a no-show", pct: 28, positive: true },
+function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="rounded-2xl border border-border bg-card p-4">
+      <div className="text-[11px] font-semibold text-muted-foreground">{label}</div>
+      <div className="mt-1 font-mono text-2xl font-extrabold text-foreground">{value}</div>
+      {sub && <div className="mt-0.5 text-[11px] text-muted-foreground">{sub}</div>}
+    </div>
+  );
+}
+
+const TIER_STYLE: Record<string, string> = {
+  High: "text-rose-500 bg-rose-500/10 border-rose-500/30",
+  Medium: "text-amber-500 bg-amber-500/10 border-amber-500/30",
+  Low: "text-emerald-500 bg-emerald-500/10 border-emerald-500/30",
+};
+
+function ciText(ci: Record<string, unknown>, key: string): string | null {
+  const hit = Object.entries(ci).find(([k]) => k.toLowerCase().startsWith(key.toLowerCase()));
+  if (!hit) return null;
+  const v = hit[1];
+  if (Array.isArray(v) && v.length === 2) return `95% CI ${num(Number(v[0]))} – ${num(Number(v[1]))}`;
+  return null;
+}
+
+export default async function ModelPage() {
+  let info: ModelInfo;
+  try {
+    info = await getModelInfo();
+  } catch (err) {
+    return <BackendUnreachable error={err} />;
+  }
+
+  const shap = Object.entries(info.top_shap).sort((a, b) => b[1] - a[1]);
+  const shapMax = Math.max(...shap.map(([, v]) => v), 1e-9);
+  const best = (col: keyof ModelComparisonRow, lower = false) => {
+    const vals = info.comparison_table.map((r) => r[col]).filter((v): v is number => typeof v === "number");
+    return vals.length ? (lower ? Math.min(...vals) : Math.max(...vals)) : null;
+  };
+  const synthetic = (info.data_sources?.synthetic ?? 0) > 0;
+  const ci = info.confidence_intervals ?? {};
+
+  const tiers = [
+    { tier: "High" as const, range: `risk ≥ ${num(info.thresholds.high)}` },
+    { tier: "Medium" as const, range: `${num(info.thresholds.medium)} ≤ risk < ${num(info.thresholds.high)}` },
+    { tier: "Low" as const, range: `risk < ${num(info.thresholds.medium)}` },
   ];
 
   return (
-    <div className="flex w-full flex-col gap-6 p-6 lg:p-8 max-w-6xl mx-auto">
-      {/* Back link & Title */}
-      <div className="flex flex-col gap-2">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors w-fit"
-        >
-          <ArrowLeft className="size-3.5" />
-          <span>Back to dashboard</span>
-        </Link>
-
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/80 pb-5">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-              <Cpu className="size-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-2xl font-bold tracking-tight text-foreground">
-                  SHAI Model Hub & Architecture
-                </h1>
-                <Badge variant="outline" className="text-xs bg-emerald-500/10 text-emerald-400 border-emerald-500/30">
-                  Production v1.0
-                </Badge>
-              </div>
-              <p className="text-xs sm:text-sm text-muted-foreground">
-                XGBoost attendance classifier with isotonic calibration and Sri Lankan contextual layer.
-              </p>
-            </div>
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-4 md:p-6 lg:p-8">
+      <PageHeader
+        back={{ href: "/", label: "Dashboard" }}
+        title="Model Hub"
+        subtitle={`Active bundle ${info.version} — XGBoost with isotonic calibration and SHAP explanations`}
+        actions={
+          <div className="flex items-center gap-2">
+            {synthetic && <SyntheticBadge />}
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 font-mono text-xs text-muted-foreground">
+              <Cpu className="size-3.5" /> {info.version}
+            </span>
           </div>
+        }
+      />
 
-          <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground bg-card border border-border/80 rounded-lg px-3 py-1.5">
-            <ShieldCheck className="size-4 text-emerald-400" />
-            <span>Fairness & Guardrails Active</span>
-          </div>
+      <div role="note" className="flex items-start gap-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-900 dark:text-amber-200">
+        <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+        <div>
+          <div className="font-bold">Limitation</div>
+          <p>{info.limitation}</p>
         </div>
       </div>
 
-      {/* 1. Core Model Performance Metrics */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {modelMetrics.map((m, idx) => (
-          <Card key={idx} className="border-border/80 bg-card shadow-xs">
-            <CardContent className="p-5 flex flex-col justify-between h-full">
-              <span className="text-xs font-medium text-muted-foreground">{m.label}</span>
-              <div className="my-2">
-                <span className="text-3xl font-extrabold tracking-tight text-foreground font-mono">
-                  {m.value}
-                </span>
-              </div>
-              <p className="text-[11px] text-muted-foreground leading-normal">{m.sub}</p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Stat label="Training rows" value={int(info.n_rows)} sub={info.date_range.start ? `${info.date_range.start} → ${info.date_range.end}` : undefined} />
+        <Stat label="Base no-show rate" value={pct(info.base_rate)} sub="share of no-shows in the training data" />
+        <Stat
+          label="Split (train / val / test)"
+          value={info.split ? `${int(info.split.train)} / ${int(info.split.val)} / ${int(info.split.test)}` : "—"}
+          sub="chronological"
+        />
+        <Stat label="Oracle AUC" value={num(info.oracle_auc)} sub="ceiling given the generator’s true probabilities" />
+      </section>
 
-      {/* 2. Decision Thresholds & Clinical Routing Policy */}
-      <Card className="border-border/80 bg-card shadow-xs">
-        <CardHeader className="border-b border-border/60 pb-3">
-          <div className="flex items-center gap-2">
-            <Layers className="size-4 text-primary" />
-            <CardTitle className="text-base">Decision Thresholds & Action Routing</CardTitle>
-          </div>
-          <CardDescription className="text-xs">
-            How model predictions are mapped to concrete hospital clinical actions and staff workflows.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="p-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {thresholds.map((t, idx) => (
-              <div
-                key={idx}
-                className={`rounded-xl border p-4 flex flex-col justify-between ${t.color}`}
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-bold text-sm">{t.tier}</span>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-background/50">
-                      {t.cohort}
-                    </span>
-                  </div>
-                  <div className="text-xs font-mono font-semibold mb-2">{t.range}</div>
-                  <p className="text-xs opacity-90 leading-relaxed">{t.action}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+      <Panel title="Test-set metrics" subtitle="Held-out test split, from metrics.json">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+          <Stat label="ROC-AUC" value={num(info.metrics.roc_auc)} sub={ciText(ci, "roc") ?? undefined} />
+          <Stat label="PR-AUC" value={num(info.metrics.pr_auc)} sub={ciText(ci, "pr") ?? undefined} />
+          <Stat label="Brier" value={num(info.metrics.brier)} sub={ciText(ci, "brier") ?? "lower is better"} />
+          <Stat label="Recall @ top 20%" value={pct(info.metrics.recall_top20)} sub={`precision ${pct(info.metrics.precision_top20)}`} />
+          <Stat label="Lift @ top 20%" value={info.metrics.lift_top20 == null ? "—" : `${info.metrics.lift_top20.toFixed(2)}×`} />
+        </div>
+        {Object.keys(ci).length === 0 && (
+          <p className="mt-3 text-[11px] text-muted-foreground">No confidence intervals are stored in this bundle’s metrics.json.</p>
+        )}
+      </Panel>
 
-      {/* 3. Global SHAP Feature Importance */}
-      <Card className="border-border/80 bg-card shadow-xs">
-        <CardHeader className="border-b border-border/60 pb-3">
-          <div className="flex items-center gap-2">
-            <BarChart3 className="size-4 text-primary" />
-            <CardTitle className="text-base">Global Feature Drivers (SHAP Value Attribution)</CardTitle>
-          </div>
-          <CardDescription className="text-xs">
-            Attribution of factors driving attendance probability calculated across 110,527 outpatient records.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="p-6 flex flex-col gap-4">
-          {shapDrivers.map((driver, idx) => (
-            <div key={idx} className="flex flex-col gap-1.5 border-b border-border/40 pb-3 last:border-none">
-              <div className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono font-bold text-foreground">{driver.feature}</span>
-                  <span className="text-[11px] text-muted-foreground">{driver.desc}</span>
-                </div>
-                <span
-                  className={`font-mono font-bold ${
-                    driver.positive ? "text-emerald-400" : "text-rose-400"
-                  }`}
-                >
-                  {driver.impact}
-                </span>
-              </div>
-              <div className="w-full bg-muted/40 rounded-full h-1.5 overflow-hidden">
-                <div
-                  className={`h-1.5 rounded-full ${
-                    driver.positive ? "bg-emerald-500" : "bg-rose-500"
-                  }`}
-                  style={{ width: `${driver.pct}%` }}
-                />
-              </div>
+      <Panel title="Model comparison" subtitle="Same split, same features; test set">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="border-b border-border text-muted-foreground">
+                <th className="py-2 pr-4 font-semibold">Model</th>
+                <th className="px-2 font-semibold">ROC-AUC</th>
+                <th className="px-2 font-semibold">PR-AUC</th>
+                <th className="px-2 font-semibold">Brier</th>
+                <th className="px-2 font-semibold">Recall@20%</th>
+                <th className="px-2 font-semibold">Lift@20%</th>
+              </tr>
+            </thead>
+            <tbody className="font-mono">
+              {info.comparison_table.map((r) => (
+                <tr key={r.model} className="border-b border-border/50 last:border-none">
+                  <td className="py-2 pr-4 font-sans font-semibold text-foreground">{r.model}</td>
+                  <td className={`px-2 ${r.ROC_AUC === best("ROC_AUC") ? "font-bold text-foreground" : ""}`}>{num(r.ROC_AUC)}</td>
+                  <td className={`px-2 ${r.PR_AUC === best("PR_AUC") ? "font-bold text-foreground" : ""}`}>{num(r.PR_AUC)}</td>
+                  <td className={`px-2 ${r.Brier === best("Brier", true) ? "font-bold text-foreground" : ""}`}>{num(r.Brier)}</td>
+                  <td className="px-2">{num(r.Recall_top20)}</td>
+                  <td className="px-2">{num(r.Lift_top20, 2)}</td>
+                </tr>
+              ))}
+              {info.comparison_table.length === 0 && (
+                <tr><td colSpan={6} className="py-3 font-sans text-muted-foreground">No comparison table in this bundle.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+
+      <Panel
+        title="Risk tiers"
+        subtitle={info.thresholds.rule ?? "Cut-offs from thresholds.json"}
+        action={<Layers className="size-4 text-primary" />}
+      >
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          {tiers.map((t) => (
+            <div key={t.tier} className={`rounded-xl border p-4 ${TIER_STYLE[t.tier]}`}>
+              <div className="text-sm font-bold">{t.tier}</div>
+              <div className="my-1 font-mono text-xs font-semibold">{t.range}</div>
+              <p className="text-xs opacity-90">{info.recommendations[t.tier]}</p>
             </div>
           ))}
-        </CardContent>
-      </Card>
+        </div>
+      </Panel>
 
-      {/* 4. Model Provenance & Pipeline */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card className="border-border/80 bg-card shadow-xs">
-          <CardHeader className="border-b border-border/60 pb-3">
-            <div className="flex items-center gap-2">
-              <Database className="size-4 text-primary" />
-              <CardTitle className="text-sm">Training Dataset & Provenance</CardTitle>
+      <Panel
+        title="Top features by mean |SHAP|"
+        subtitle="Global importance on the log-odds scale, from metrics.json"
+        action={<BarChart3 className="size-4 text-primary" />}
+      >
+        <div className="flex flex-col gap-2.5">
+          {shap.map(([feature, value]) => (
+            <div key={feature} className="flex items-center gap-3 text-xs">
+              <span className="w-56 shrink-0 truncate font-mono text-foreground">{feature}</span>
+              <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted/50">
+                <div className="h-2 rounded-full bg-primary" style={{ width: `${(value / shapMax) * 100}%` }} />
+              </div>
+              <span className="w-14 text-right font-mono text-muted-foreground">{value.toFixed(3)}</span>
             </div>
-          </CardHeader>
-          <CardContent className="p-5 text-xs text-muted-foreground flex flex-col gap-2.5 leading-relaxed">
-            <div>
-              <strong className="text-foreground">Cohort:</strong> 110,527 outpatient appointments from Colombo General Hospital.
-            </div>
-            <div>
-              <strong className="text-foreground">Time Split:</strong> Out-of-time chronological validation split (80% train, 20% holdout).
-            </div>
-            <div>
-              <strong className="text-foreground">Calibration:</strong> Isotonic regression fitted strictly on validation fold to preserve empirical probabilities.
-            </div>
-            <div>
-              <strong className="text-foreground">Protected Attributes:</strong> Ethnicity, religion, and caste are strictly excluded from the feature space.
-            </div>
-          </CardContent>
-        </Card>
+          ))}
+          {shap.length === 0 && <p className="text-xs text-muted-foreground">No SHAP summary in this bundle.</p>}
+        </div>
+      </Panel>
 
-        <Card className="border-border/80 bg-card shadow-xs">
-          <CardHeader className="border-b border-border/60 pb-3">
-            <div className="flex items-center gap-2">
-              <TrendingUp className="size-4 text-primary" />
-              <CardTitle className="text-sm">Contextual Multipliers Layer</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent className="p-5 text-xs text-muted-foreground flex flex-col gap-2.5 leading-relaxed">
-            <div>
-              <strong className="text-foreground">Distance Penalty:</strong> Real road transit distances derived from OSRM Sri Lanka network.
-            </div>
-            <div>
-              <strong className="text-foreground">Payment Multiplier:</strong> Unpaid cash bookings have 1.25x friction vs prepaid online (0.75x).
-            </div>
-            <div>
-              <strong className="text-foreground">Monsoon Adjustment:</strong> Severe rain alerts scale transit risk by 1.15x for patients commuting &gt;10km.
-            </div>
-            <div>
-              <strong className="text-foreground">Clinical Guardrails:</strong> Orthopedics & surgical clinics are flagged as teleconsultation-ineligible.
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <Panel title="Provenance" action={<Database className="size-4 text-primary" />}>
+        <dl className="grid grid-cols-1 gap-x-8 gap-y-2 text-xs sm:grid-cols-2">
+          <div><dt className="text-muted-foreground">Data source</dt><dd className="font-mono text-foreground">{info.data_source ?? "not recorded in bundle"}</dd></div>
+          <div><dt className="text-muted-foreground">Trained</dt><dd className="font-mono text-foreground">{info.created_at ?? "not recorded in bundle"}</dd></div>
+          <div><dt className="text-muted-foreground">Numeric features</dt><dd className="font-mono text-foreground">{info.features.numeric.length}</dd></div>
+          <div><dt className="text-muted-foreground">Categorical features</dt><dd className="font-mono text-foreground">{Object.keys(info.features.categorical).join(", ")}</dd></div>
+          <div className="sm:col-span-2">
+            <dt className="text-muted-foreground">Appointments in this system by data source</dt>
+            <dd className="font-mono text-foreground">
+              {info.data_sources && Object.keys(info.data_sources).length
+                ? Object.entries(info.data_sources).map(([k, v]) => `${k}: ${int(v)}`).join(" · ")
+                : "none"}
+            </dd>
+          </div>
+        </dl>
+      </Panel>
     </div>
   );
 }

@@ -1036,7 +1036,7 @@ export function NewAppointmentForm() {
                   <div>
                     <span className="text-xs font-semibold text-foreground">Heavy Rain / Monsoon Warning</span>
                     <p className="text-[10px] text-muted-foreground">
-                      Applies monsoon contextual attendance penalty for Colombo transit
+                      Model input: 1 if heavy rain is expected on the appointment day (manual toggle, no weather feed)
                     </p>
                   </div>
                 </div>
@@ -1155,7 +1155,7 @@ export function NewAppointmentForm() {
                 </div>
 
                 <div className="text-[11px] text-muted-foreground leading-relaxed">
-                  Calculated using calibrated XGBoost model and Sri Lankan contextual multipliers.
+                  Calculated by the calibrated XGBoost model from the booking and the patient's visit history.
                   No record is written to the database until booking confirmation.
                 </div>
               </div>

@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 
 import { getAppointmentsWithPredictions } from "@/lib/appointments-with-predictions";
-import { isRedirectError, listConversations, getHospitalProfile } from "@/lib/api";
+import { isRedirectError, listConversations, getHospitalProfile, getModelInfo } from "@/lib/api";
 import { BackendUnreachable } from "@/components/backend-unreachable";
 import { RiskDistributionChart } from "@/components/charts/risk-distribution-chart";
 import { DepartmentBreakdown } from "@/components/charts/department-breakdown";
@@ -29,19 +29,23 @@ import { PriorityWorklist } from "@/components/priority-worklist";
 import { SharedKpiCard } from "@/components/shared-kpi-card";
 import { Button } from "@/components/ui/button";
 import { getColomboToday } from "@/lib/date-colombo";
-import type { RiskCategory, Intervention, HospitalDetail } from "@/lib/types";
+import { SyntheticBadge } from "@/components/synthetic-badge";
+import type { RiskCategory, Intervention, HospitalDetail, ModelInfo } from "@/lib/types";
 
 export default async function AnalyticsPage() {
   let records;
   let conversations: Intervention[] = [];
   let hospital: HospitalDetail | null = null;
+  let modelInfo: ModelInfo | null = null;
 
   try {
-    const [fetchedRecords, fetchedConversations, fetchedHospital] = await Promise.all([
+    const [fetchedRecords, fetchedConversations, fetchedHospital, fetchedModel] = await Promise.all([
       getAppointmentsWithPredictions(),
       listConversations().catch(() => []),
       getHospitalProfile().catch(() => null),
+      getModelInfo().catch(() => null),
     ]);
+    modelInfo = fetchedModel;
     records = fetchedRecords;
     conversations = fetchedConversations;
     hospital = fetchedHospital;
@@ -323,75 +327,41 @@ export default async function AnalyticsPage() {
         <PriorityWorklist records={records} conversations={conversations} />
       </div>
 
-      {/* Model Quality & Validation Bento Card (Moved to BOTTOM in Plain Language, Phase 5: P5-2) */}
-      <div className="rounded-[24px] bg-gradient-to-r from-card to-muted/20 p-5 sm:p-6 shadow-xs border border-border/60 flex flex-col gap-4">
-        <div className="flex items-center justify-between pb-2 border-b border-border/40">
-          <div className="flex items-center gap-2.5">
-            <div className="size-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-              <Award className="size-4" />
+      {/* Model quality: every figure is read from the active bundle (Model Hub shows the full detail) */}
+      {modelInfo && (
+        <div className="rounded-[24px] bg-gradient-to-r from-card to-muted/20 p-5 sm:p-6 shadow-xs border border-border/60 flex flex-col gap-4">
+          <div className="flex items-center justify-between pb-2 border-b border-border/40">
+            <div className="flex items-center gap-2.5">
+              <div className="size-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                <Award className="size-4" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-foreground">Model benchmarks</h2>
+                <p className="text-xs text-muted-foreground">Held-out test split from the training run. {modelInfo.limitation}</p>
+              </div>
             </div>
-            <div>
-              <h2 className="text-base font-semibold text-foreground">Model Calibration &amp; Decision Benchmarks</h2>
-              <p className="text-xs text-muted-foreground">
-                Verified evaluation metrics on held-out clinic test samples. Plain-language operational definitions.
-              </p>
-            </div>
-          </div>
-          <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-muted text-muted-foreground">
-            SHAI XGBoost v1.4
-          </span>
-        </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-6 gap-3">
-          <div className="flex flex-col p-3 rounded-2xl bg-card border border-border/40">
-            <span className="text-[11px] font-semibold text-muted-foreground">Discriminative Power</span>
-            <span className="text-xl font-bold font-mono text-foreground mt-0.5">0.672 AUC</span>
-            <span className="text-[10px] text-muted-foreground mt-0.5">
-              Distinguishes attenders from no-shows (vs 0.50 random guess)
+            <span className="text-[11px] font-mono font-semibold px-2.5 py-1 rounded-full bg-muted text-muted-foreground">
+              {modelInfo.version}
             </span>
           </div>
 
-          <div className="flex flex-col p-3 rounded-2xl bg-card border border-border/40">
-            <span className="text-[11px] font-semibold text-muted-foreground">Targeted Precision</span>
-            <span className="text-xl font-bold font-mono text-foreground mt-0.5">0.266 PR</span>
-            <span className="text-[10px] text-muted-foreground mt-0.5">
-              High risk alert precision without generating excessive alerts
-            </span>
-          </div>
-
-          <div className="flex flex-col p-3 rounded-2xl bg-card border border-primary/20 bg-primary/[0.03]">
-            <span className="text-[11px] font-semibold text-primary">Risk Capture Ratio</span>
-            <span className="text-xl font-bold font-mono text-primary mt-0.5">1.8× Lift</span>
-            <span className="text-[10px] text-primary/80 mt-0.5">
-              Focusing on top 20% risk captures 1.8× more missed slots
-            </span>
-          </div>
-
-          <div className="flex flex-col p-3 rounded-2xl bg-card border border-border/40">
-            <span className="text-[11px] font-semibold text-muted-foreground">Calibration Confidence</span>
-            <span className="text-xl font-bold font-mono text-foreground mt-0.5">0.124 Brier</span>
-            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-0.5">
-              Well-calibrated probabilities matching real world attendance
-            </span>
-          </div>
-
-          <div className="flex flex-col p-3 rounded-2xl bg-card border border-border/40">
-            <span className="text-[11px] font-semibold text-muted-foreground">Baseline No-Show</span>
-            <span className="text-xl font-bold font-mono text-foreground mt-0.5">15.9%</span>
-            <span className="text-[10px] text-muted-foreground mt-0.5">
-              Hospital historical clinic no-show prevalence
-            </span>
-          </div>
-
-          <div className="flex flex-col p-3 rounded-2xl bg-card border border-border/40">
-            <span className="text-[11px] font-semibold text-muted-foreground">Accuracy Ceiling</span>
-            <span className="text-xl font-bold font-mono text-foreground mt-0.5">0.77 Max</span>
-            <span className="text-[10px] text-muted-foreground mt-0.5">
-              Theoretical upper bound given unrecorded human factors
-            </span>
+          <div className="grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-6 gap-3">
+            {[
+              ["ROC-AUC", modelInfo.metrics.roc_auc?.toFixed(3)],
+              ["PR-AUC", modelInfo.metrics.pr_auc?.toFixed(3)],
+              ["Brier", modelInfo.metrics.brier?.toFixed(3)],
+              ["Lift @ top 20%", modelInfo.metrics.lift_top20 == null ? undefined : `${modelInfo.metrics.lift_top20.toFixed(2)}×`],
+              ["Base no-show rate", modelInfo.base_rate == null ? undefined : `${(modelInfo.base_rate * 100).toFixed(1)}%`],
+              ["Oracle AUC", modelInfo.oracle_auc?.toFixed(3)],
+            ].map(([label, value]) => (
+              <div key={label} className="flex flex-col p-3 rounded-2xl bg-card border border-border/40">
+                <span className="text-[11px] font-semibold text-muted-foreground">{label}</span>
+                <span className="text-xl font-bold font-mono text-foreground mt-0.5">{value ?? "—"}</span>
+              </div>
+            ))}
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

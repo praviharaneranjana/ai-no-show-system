@@ -17,6 +17,7 @@ import {
   getPatient,
   getPrediction,
   listAppointmentInterventions,
+  getModelInfo,
 } from "@/lib/api";
 import { OutcomeActions } from "@/app/appointments/[id]/outcome-actions";
 import { ShapTornadoChart } from "@/components/shap-tornado-chart";
@@ -54,6 +55,8 @@ export default async function AppointmentDetailPage({
     if (err instanceof ApiError && err.status === 404) return null;
     throw err;
   });
+
+  const modelInfo = await getModelInfo().catch(() => null);
 
   // Outreach history is supplementary: never let it take the page down.
   const interventions = await listAppointmentInterventions(id).catch(() => []);
@@ -95,7 +98,7 @@ export default async function AppointmentDetailPage({
               Calibrated Risk Model
             </span>
             <span className="font-mono text-[10px] text-muted-foreground">
-              shai-lk-synth-v1
+              {modelInfo?.version ?? ""}
             </span>
           </div>
 
@@ -125,8 +128,8 @@ export default async function AppointmentDetailPage({
           </div>
 
           <div className="w-full pt-3 border-t border-border/60 text-[10px] text-muted-foreground flex justify-between">
-            <span>ROC-AUC: 0.672</span>
-            <span>1.8× Lift on Top 20%</span>
+            <span>{modelInfo?.metrics.roc_auc != null ? `ROC-AUC: ${modelInfo.metrics.roc_auc.toFixed(3)}` : ""}</span>
+            <span>{modelInfo?.metrics.lift_top20 != null ? `${modelInfo.metrics.lift_top20.toFixed(1)}× Lift on Top 20%` : ""}</span>
           </div>
         </div>
 

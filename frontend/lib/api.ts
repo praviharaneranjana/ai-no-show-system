@@ -48,6 +48,8 @@ import type {
   PredictionRunResponse,
   PredictionTodayResponse,
   HISStatusResponse,
+  ModelInfo,
+  DataSourceInfo,
   HospitalBasic,
   HospitalDetail,
   HospitalUpdateInput,
@@ -579,6 +581,14 @@ export function triggerBatchRun(
 
 export function getPredictionRun(runId: string) {
   return apiFetch<PredictionRunResponse>(`/predictions/runs/${runId}`);
+}
+
+export function getModelInfo() {
+  return apiFetch<ModelInfo>("/model/info");
+}
+
+export function getDataSourceInfo() {
+  return apiFetch<DataSourceInfo>("/meta/data-source");
 }
 
 export function getHisStatus() {

@@ -627,7 +627,6 @@ export function PredictionHubClient({
             <span className="text-2xl font-bold tracking-tight text-foreground">
               {(kpis.average_no_show_risk * 100).toFixed(1)}%
             </span>
-            <span className="text-[10px] text-muted-foreground font-mono">baseline 15.9%</span>
           </div>
         </div>
       </div>

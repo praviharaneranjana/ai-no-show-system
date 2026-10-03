@@ -343,33 +343,17 @@ export default function LoginPage() {
                   </span>
                 </div>
                 <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-md bg-[#6C5CE7]/30 text-[#A29BFE] border border-[#6C5CE7]/40">
-                  v4.2 PROD
+                  SYNTHETIC
                 </span>
               </div>
 
               <p className="text-[11px] text-slate-300 leading-snug mb-2.5">
-                Calibrated ensemble predicting patient no-show probabilities from clinical history, appointment lead days, distance indices, and clinic loads.
+                Calibrated XGBoost model predicting patient no-show probability from booking and visit-history features.
               </p>
 
-              {/* Key Metrics 4-Column Grid */}
-              <div className="grid grid-cols-4 gap-1.5 text-center">
-                <div className="rounded-lg bg-white/[0.05] p-1.5 border border-white/10">
-                  <div className="text-[9px] text-slate-400 uppercase font-mono">ROC-AUC</div>
-                  <div className="text-xs font-bold text-white font-mono">0.672</div>
-                </div>
-                <div className="rounded-lg bg-white/[0.05] p-1.5 border border-white/10">
-                  <div className="text-[9px] text-slate-400 uppercase font-mono">Top-20% Lift</div>
-                  <div className="text-xs font-bold text-[#A29BFE] font-mono">1.8×</div>
-                </div>
-                <div className="rounded-lg bg-white/[0.05] p-1.5 border border-white/10">
-                  <div className="text-[9px] text-slate-400 uppercase font-mono">PR-AUC</div>
-                  <div className="text-xs font-bold text-white font-mono">0.266</div>
-                </div>
-                <div className="rounded-lg bg-white/[0.05] p-1.5 border border-white/10">
-                  <div className="text-[9px] text-slate-400 uppercase font-mono">Brier Score</div>
-                  <div className="text-xs font-bold text-emerald-400 font-mono">0.124</div>
-                </div>
-              </div>
+              <p className="text-[10px] text-amber-300/90 leading-snug">
+                Trained and evaluated on synthetic data only. See Model Hub after sign-in for metrics.
+              </p>
             </div>
 
             {/* Card 2: Trilingual NLP & Simulation Disclosure */}

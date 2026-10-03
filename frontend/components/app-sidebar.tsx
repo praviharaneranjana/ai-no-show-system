@@ -24,7 +24,7 @@ import { hasRole, type SessionRole } from "@/lib/session-token";
 import { ShaiLogo } from "@/components/shai-logo";
 import { ThemePill } from "@/components/theme-pill";
 import { getCapacityNavCountsAction } from "@/app/capacity/actions";
-import type { CapacityNavCounts } from "@/lib/types";
+import type { CapacityNavCounts, ModelInfo } from "@/lib/types";
 
 interface AppSidebarProps {
   onItemClick?: () => void;
@@ -50,6 +50,20 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
     },
     () => "|||"
   );
+
+  const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/model/info", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: ModelInfo | null) => {
+        if (!cancelled) setModelInfo(d);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const [storedName, storedRole, storedHospitalName, storedHospitalCode] = userKey.split("|");
   const userName = storedName || "Staff Member";
@@ -295,7 +309,7 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
         >
           <div className="flex items-center justify-between mb-1">
             <span className="text-[10px] font-bold uppercase tracking-wider text-[#8B7CF6] dark:text-[#C4B5FD] group-hover:underline">
-              Risk Model · v1.0
+              Risk Model
             </span>
             <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400">
               <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -304,7 +318,11 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
           </div>
 
           <div className="text-[13px] font-extrabold text-[#171725] dark:text-white flex items-center justify-between">
-            <span>ROC-AUC 0.672 · 1.8× Lift</span>
+            <span>
+              {modelInfo?.metrics.roc_auc != null
+                ? `ROC-AUC ${modelInfo.metrics.roc_auc.toFixed(3)}${modelInfo.metrics.lift_top20 != null ? ` · ${modelInfo.metrics.lift_top20.toFixed(1)}× Lift` : ""}`
+                : "Model metrics"}
+            </span>
             <ChevronRight className="size-3.5 text-[#8B7CF6] transition-transform group-hover:translate-x-0.5" />
           </div>
           <p className="mt-0.5 text-[10px] text-[#78788C] dark:text-[#A0A0B8] leading-tight">
@@ -316,7 +334,7 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
               <Sparkles className="size-2.5 text-[#8B7CF6]" />
               Synthetic data · simulation
             </span>
-            <span className="font-mono text-[9px]">15.9% base</span>
+            <span className="font-mono text-[9px]">{modelInfo?.base_rate != null ? `${(modelInfo.base_rate * 100).toFixed(1)}% base` : ""}</span>
           </div>
         </Link>
 

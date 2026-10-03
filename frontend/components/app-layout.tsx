@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 
 import { AppSidebar } from "@/components/app-sidebar";
 import { ShaiLogo } from "@/components/shai-logo";
+import { SyntheticDataStrip } from "@/components/synthetic-data-strip";
 import { TopBar } from "@/components/top-bar";
 import { Button } from "@/components/ui/button";
 
@@ -81,6 +82,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
         {/* Desktop action bar */}
         <TopBar className="hidden shrink-0 border-b border-border/60 px-6 py-3 lg:flex lg:px-8" />
+
+        <SyntheticDataStrip />
 
         {/* The only scrolling region */}
         <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>

@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 
 from app import auth, geo, hospital, insights, models, outreach_drafter, schemas, shai_model
 from app.his import get_his_connector, connector as his_connector
-from app.services import capacity_service, geo_service, his_sync, prediction_runner, scoring
+from app.services import capacity_service, geo_service, his_sync, model_eval, prediction_runner, scoring
 from app.services.uhid import LK_TZ
 from app.database import get_db
 
@@ -235,9 +235,21 @@ def health(db: Session = Depends(get_db)):
 
 
 @app.get("/model/info")
-def get_model_info():
-    """Active model metadata, version, capacity thresholds, and benchmark test metrics."""
-    return shai.info()
+def get_model_info(request: Request, db: Session = Depends(get_db)):
+    """Active model bundle (from its JSON files) plus the data-source mix of this hospital's appointments."""
+    info = shai.info()
+    info["data_sources"] = model_eval.data_source_mix(db, getattr(request.state, "hospital_id", None))
+    return info
+
+
+@app.get("/meta/data-source")
+def get_data_source(request: Request, db: Session = Depends(get_db)):
+    """How much of this hospital's data is synthetic - drives the SYNTHETIC DATA badge."""
+    mix = model_eval.data_source_mix(db, getattr(request.state, "hospital_id", None))
+    total = sum(mix.values())
+    synthetic = mix.get("synthetic", 0)
+    return {"counts": mix, "total": total, "synthetic": synthetic, "is_synthetic": synthetic > 0,
+            "synthetic_share": (synthetic / total) if total else 0.0}
  
 @app.post("/predict", response_model=PredictionResponse)
 def predict_no_show(data: AppointmentRequest, db: Session = Depends(get_db)):

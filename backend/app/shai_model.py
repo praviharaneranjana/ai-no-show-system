@@ -80,6 +80,7 @@ class ShaiModel:
         self.cal_y = np.asarray(cal["y"], dtype=float)
         self.high_threshold: float = thr["high"]
         self.medium_threshold: float = thr["medium"]
+        self.threshold_rule: str | None = thr.get("rule")
 
         self.model = xgb.XGBClassifier()
         self.model.load_model(os.path.join(self.bundle_dir, "model.json"))
@@ -137,28 +138,46 @@ class ShaiModel:
         return out
 
     def info(self) -> dict:
-        """Metadata for the active model bundle (version, thresholds, benchmark metrics)."""
-        metrics = self.metrics.get("test_metrics_tuned") or self.metrics.get("test_metrics", {})
+        """Everything the Model Hub shows. Read from the bundle files only (metrics / thresholds / feature_schema)."""
+        m = self.metrics
+        tm = m.get("test_metrics_tuned") or m.get("test_metrics") or {}
+        cis = {k: v for k, v in {**m, **tm}.items() if "ci" in k.lower().split("_") or k.lower().endswith("_ci")}
         return {
             "version": self.version,
-            "bundle_dir": self.bundle_dir,
             "thresholds": {
                 "high": self.high_threshold,
                 "medium": self.medium_threshold,
-                "rule": "High = top 10% / Medium = next 20% of validation-set calibrated risk",
+                "rule": self.threshold_rule,
             },
             "metrics": {
-                "roc_auc": metrics.get("ROC_AUC"),
-                "pr_auc": metrics.get("PR_AUC"),
-                "brier": metrics.get("Brier"),
-                "lift_top20": metrics.get("Lift_top20"),
-                "recall_top20": metrics.get("Recall_top20"),
-                "precision_top20": metrics.get("Precision_top20"),
+                "roc_auc": tm.get("ROC_AUC"),
+                "pr_auc": tm.get("PR_AUC"),
+                "brier": tm.get("Brier"),
+                "lift_top20": tm.get("Lift_top20"),
+                "recall_top20": tm.get("Recall_top20"),
+                "precision_top20": tm.get("Precision_top20"),
             },
-            "data_source": self.metrics.get("data_source", "appointments_synthetic.csv"),
-            "n_rows": self.metrics.get("n_rows", len(self.columns)),
-            "date_range": self.metrics.get("date_range", {}),
+            "recommendations": {t: self.recommendation(t) for t in ("High", "Medium", "Low")},
+            "confidence_intervals": cis,
+            "comparison_table": m.get("comparison_table", []),
+            "oracle_auc": m.get("oracle_auc"),
+            "base_rate": m.get("base_rate"),
+            "split": m.get("split"),
+            "top_shap": m.get("top_shap") or m.get("top_features") or {},
+            "optuna_best": m.get("optuna_best"),
+            "features": {"numeric": self.numeric, "categorical": self.categorical},
+            "data_source": m.get("data_source"),
+            "n_rows": m.get("n_rows"),
+            "date_range": m.get("date_range") or {},
+            "created_at": m.get("created_at"),
+            "limitation": LIMITATION,
         }
+
+
+LIMITATION = (
+    "Trained on synthetic Sri Lankan data generated from documented assumptions. "
+    "Not validated on real hospital outcomes."
+)
 
 
 # ---- feature engineering ------------------------------------------------
