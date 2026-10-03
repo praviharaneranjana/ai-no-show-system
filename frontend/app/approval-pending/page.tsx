@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -20,18 +20,24 @@ import { logoutAction } from "@/app/login/actions";
 
 export default function ApprovalPendingPage() {
   const router = useRouter();
-  const [hospitalName, setHospitalName] = useState("Hospital");
-  const [userName, setUserName] = useState("Staff Member");
+  const stored = useSyncExternalStore(
+    (callback) => {
+      window.addEventListener("storage", callback);
+      return () => window.removeEventListener("storage", callback);
+    },
+    () => {
+      try {
+        return `${localStorage.getItem("shai_hospital_name") ?? ""}|${localStorage.getItem("shai_user_name") ?? ""}`;
+      } catch {
+        return "|";
+      }
+    },
+    () => "|"
+  );
+  const [storedHospital, storedUser] = stored.split("|");
+  const hospitalName = storedHospital || "Hospital";
+  const userName = storedUser || "Staff Member";
   const [checking, setChecking] = useState(false);
-
-  useEffect(() => {
-    try {
-      const h = localStorage.getItem("shai_hospital_name");
-      const u = localStorage.getItem("shai_user_name");
-      if (h) setHospitalName(h);
-      if (u) setUserName(u);
-    } catch {}
-  }, []);
 
   async function handleCheckStatus() {
     setChecking(true);

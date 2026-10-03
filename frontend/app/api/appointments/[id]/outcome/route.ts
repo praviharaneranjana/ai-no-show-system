@@ -15,7 +15,8 @@ export async function PATCH(
       body.cancelled
     );
     return NextResponse.json(data);
-  } catch (error: any) {
+  } catch (err: unknown) {
+    const error = err as { message?: string; status?: number };
     return NextResponse.json(
       { detail: error?.message || "Failed to record outcome" },
       { status: error?.status || 500 }

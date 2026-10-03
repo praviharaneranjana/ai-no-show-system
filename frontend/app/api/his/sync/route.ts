@@ -6,7 +6,8 @@ export async function POST(request: NextRequest) {
     const date = request.nextUrl.searchParams.get("date") || undefined;
     const data = await triggerHisSync(date);
     return NextResponse.json(data);
-  } catch (error: any) {
+  } catch (err: unknown) {
+    const error = err as { message?: string; status?: number };
     return NextResponse.json(
       { detail: error?.message || "Failed to trigger HIS sync" },
       { status: error?.status || 500 }

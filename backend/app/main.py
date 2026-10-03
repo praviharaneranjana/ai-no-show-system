@@ -37,6 +37,15 @@ shai = shai_model.ShaiModel()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     auth.bootstrap_admin()
+    from app.database import SessionLocal
+
+    with SessionLocal() as startup_db:
+        try:
+            reaped = prediction_runner.reap_stale_runs(startup_db)
+            if reaped:
+                logger.warning("Marked %d interrupted prediction run(s) as failed", reaped)
+        except Exception:  # never block start-up on housekeeping
+            logger.exception("Could not reap stale prediction runs")
     yield
 
 
@@ -181,7 +190,6 @@ class PredictionResponse(BaseModel):
     risk_score: float
     risk_category: str
     explanation: List[FeatureContribution]
-    contextual_adjustment: Optional[schemas.ContextualAdjustment] = None
     recommendation: str
 
 # ======================
@@ -698,7 +706,6 @@ def create_appointment_intake(
             risk_score=float(appointment.prediction.risk_score),
             risk_category=appointment.prediction.risk_category,
             explanation=explanation_list,
-            contextual_adjustment=None,
             recommendation=appointment.prediction.recommendation,
             created_at=appointment.prediction.created_at,
         )
@@ -870,13 +877,10 @@ def _prediction_out(prediction: models.Prediction) -> schemas.PredictionOut:
     explanation_raw = prediction.explanation or {}
     if isinstance(explanation_raw, dict):
         contributions = explanation_raw.get("contributions", [])
-        contextual_adj = explanation_raw.get("contextual_adjustment")
     elif isinstance(explanation_raw, list):
         contributions = explanation_raw
-        contextual_adj = None
     else:
         contributions = []
-        contextual_adj = None
 
     return schemas.PredictionOut(
         id=prediction.id,
@@ -884,7 +888,6 @@ def _prediction_out(prediction: models.Prediction) -> schemas.PredictionOut:
         risk_score=float(prediction.risk_score),
         risk_category=prediction.risk_category,
         explanation=contributions,
-        contextual_adjustment=contextual_adj,
         recommendation=prediction.recommendation,
         created_at=prediction.created_at,
     )

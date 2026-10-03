@@ -249,7 +249,7 @@ def test_simulator_evaluate_rejects_out_of_range_params(client):
 # /predict (SHAI model: features derived server-side)
 # ===================================
 
-def test_predict_is_model_native_without_contextual_layer(client):
+def test_predict_is_model_native(client):
     patient = make_patient(client, distance_km=62.5, city="Kandy")
     appointment = make_appointment(client, patient["id"], booking_channel="Hospital Counter", payment_mode="Cash")
 
@@ -257,14 +257,14 @@ def test_predict_is_model_native_without_contextual_layer(client):
     assert resp.status_code == 200, resp.text
     body = resp.json()
 
-    assert body["contextual_adjustment"] is None
+    assert "contextual_adjustment" not in body
     assert 0.0 <= body["risk_score"] <= 1.0
     # SHAP features come from the SHAI schema, not the legacy Kaggle columns.
     assert {c["feature"] for c in body["explanation"]} <= set(shai_model_columns())
 
     stored = client.get(f"/appointments/{appointment['id']}/prediction").json()
     assert stored["risk_score"] == body["risk_score"]
-    assert stored["contextual_adjustment"] is None
+    assert "contextual_adjustment" not in stored
 
 
 def test_predict_uses_visit_history_and_heavy_rain(client):

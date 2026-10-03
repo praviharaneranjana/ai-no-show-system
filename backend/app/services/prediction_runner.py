@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import uuid
 import zoneinfo
-from datetime import date, datetime, timezone
+from datetime import timedelta, date, datetime, timezone
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -243,3 +243,25 @@ def run_predictions(
         db.commit()
         db.refresh(run)
         return run
+
+
+def reap_stale_runs(db: Session, older_than_minutes: int = 30) -> int:
+    """Mark runs still 'running' after ``older_than_minutes`` as failed.
+
+    A background task killed by a restart leaves its row 'running' forever; the Prediction Hub would then
+    show a run that never finishes. Called at API start-up.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=older_than_minutes)
+    stale = (
+        db.query(models.PredictionRun)
+        .filter(models.PredictionRun.status == "running", models.PredictionRun.started_at < cutoff)
+        .all()
+    )
+    for run in stale:
+        run.status = "failed"
+        run.stage = "failed"
+        run.error = "Interrupted: the server restarted or the run timed out before it finished"
+        run.finished_at = datetime.now(timezone.utc)
+    if stale:
+        db.commit()
+    return len(stale)

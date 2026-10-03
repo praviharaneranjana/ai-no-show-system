@@ -187,8 +187,11 @@ export function NewAppointmentForm() {
         const res = await fetch(`/api/doctors/${selectedDoctorId}/availability?days=30`);
         if (res.ok) {
           const avail = await res.json();
-          const matchingDay = avail.days?.find((d: any) => d.date === appointmentDay);
-          const mapped = (matchingDay?.sessions ?? []).map((s: any) => ({
+          type AvailSession = { session_id: string; label: string; start_time: string; end_time: string; room: string; remaining: number };
+          const matchingDay = (avail.days as Array<{ date: string; sessions?: AvailSession[] }> | undefined)?.find(
+            (d) => d.date === appointmentDay
+          );
+          const mapped = (matchingDay?.sessions ?? []).map((s) => ({
             id: s.session_id,
             name: s.label,
             start: s.start_time,
@@ -208,10 +211,7 @@ export function NewAppointmentForm() {
 
   // 3. Search patients for lookup
   useEffect(() => {
-    if (patientSearchQ.length < 2) {
-      setPatientMatches([]);
-      return;
-    }
+    if (patientSearchQ.length < 2) return; // matches are hidden below two characters (see render)
     const timer = setTimeout(async () => {
       try {
         const res = await fetch(`/api/patients/search?q=${encodeURIComponent(patientSearchQ)}`);
@@ -446,8 +446,8 @@ export function NewAppointmentForm() {
       if (redirectAfter) {
         router.push(`/predictions?focus_appointment_id=${result.appointment.id}`);
       }
-    } catch (e: any) {
-      setSubmissionError(e.message || "An unexpected error occurred during intake");
+    } catch (e: unknown) {
+      setSubmissionError((e instanceof Error && e.message) || "An unexpected error occurred during intake");
     } finally {
       setIsSubmitting(false);
     }
@@ -609,7 +609,7 @@ export function NewAppointmentForm() {
                   />
                 </div>
 
-                {patientMatches.length > 0 && (
+                {patientSearchQ.length >= 2 && patientMatches.length > 0 && (
                   <div className="absolute top-16 left-0 right-0 z-20 bg-popover border border-border rounded-lg shadow-lg max-h-48 overflow-y-auto p-1 divide-y divide-border/40">
                     {patientMatches.map((p) => (
                       <div
@@ -1155,7 +1155,7 @@ export function NewAppointmentForm() {
                 </div>
 
                 <div className="text-[11px] text-muted-foreground leading-relaxed">
-                  Calculated by the calibrated XGBoost model from the booking and the patient's visit history.
+                  Calculated by the calibrated XGBoost model from the booking and the patient&apos;s visit history.
                   No record is written to the database until booking confirmation.
                 </div>
               </div>

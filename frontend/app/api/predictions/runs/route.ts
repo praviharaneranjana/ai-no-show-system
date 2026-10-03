@@ -7,7 +7,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const data = await triggerBatchRun(body, runSync);
     return NextResponse.json(data);
-  } catch (error: any) {
+  } catch (err: unknown) {
+    const error = err as { message?: string; status?: number };
     return NextResponse.json(
       { detail: error?.message || "Failed to trigger prediction run" },
       { status: error?.status || 500 }

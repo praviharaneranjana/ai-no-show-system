@@ -7,7 +7,8 @@ export async function GET(request: NextRequest) {
     const parsedDeptId = deptId ? Number(deptId) : undefined;
     const data = await getDoctors(parsedDeptId);
     return NextResponse.json(data);
-  } catch (error: any) {
+  } catch (err: unknown) {
+    const error = err as { message?: string; status?: number };
     return NextResponse.json(
       { detail: error?.message || "Failed to fetch doctors" },
       { status: error?.status || 500 }

@@ -14,7 +14,7 @@ COPY alembic.ini ./
 COPY alembic ./alembic
 COPY app ./app
 COPY models ./models
-COPY seed.py seed_bulk.py fake_data_lk.py create_user.py ./
+COPY seed.py seed_reference.py seed_his.py seed_bulk.py fake_data_lk.py import_synthetic.py create_user.py ./
 
 RUN useradd --create-home --uid 10001 app && chown -R app:app /app
 USER app

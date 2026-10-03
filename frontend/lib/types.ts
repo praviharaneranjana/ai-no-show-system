@@ -87,25 +87,10 @@ export type PredictFeatures = {
   Month: number;
 };
 
-export type ContextualAdjustment = {
-  ml_risk_score: number;
-  distance_km: number | null;
-  distance_multiplier: number;
-  booking_channel: string | null;
-  channel_multiplier: number;
-  payment_mode: string | null;
-  payment_multiplier: number;
-  combined_multiplier: number;
-  final_risk_score: number;
-  method: string;
-  note: string;
-};
-
 export type PredictionResult = {
   risk_score: number;
   risk_category: RiskCategory;
   explanation: FeatureContribution[];
-  contextual_adjustment: ContextualAdjustment | null;
   recommendation: string;
 };
 
@@ -890,7 +875,6 @@ export type PredictPreviewResponse = {
   risk_score: number;
   risk_category: string;
   explanation: { feature: string; feature_label?: string; contribution: number; value: unknown }[];
-  contextual_adjustment?: unknown;
   recommendation: string;
 };
 

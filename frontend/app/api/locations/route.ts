@@ -7,7 +7,8 @@ export async function GET(request: NextRequest) {
     const limit = Number(request.nextUrl.searchParams.get("limit") || 8);
     const data = await searchLocations(q, limit);
     return NextResponse.json(data);
-  } catch (error: any) {
+  } catch (err: unknown) {
+    const error = err as { message?: string; status?: number };
     return NextResponse.json(
       { detail: error?.message || "Failed to search locations" },
       { status: error?.status || 500 }

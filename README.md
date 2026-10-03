@@ -19,7 +19,8 @@ docker compose up --build
 - Sign in with the bootstrap admin from `.env` (you must choose a new password at first login).
   Create more staff with `docker compose exec backend python create_user.py --email ... --name ... --role front_desk|manager|admin`.
 - Migrations run automatically on backend start.
-- Load demo data: `docker compose exec backend python seed_bulk.py`
+- Load the synthetic dataset (needs reference data first):
+  `docker compose exec backend python seed_reference.py && docker compose exec backend python seed.py && docker compose exec backend python import_synthetic.py`
 - Public server with HTTPS, backups and operations: [`deploy/DEPLOY.md`](deploy/DEPLOY.md).
 
 ## Local development (no Docker)
@@ -28,9 +29,12 @@ docker compose up --build
 cd backend
 python -m venv venv && source venv/bin/activate
 pip install -r requirements-dev.txt
-cp .env.example .env            # edit DATABASE_URL / API_KEY
+cp ../.env.example .env         # set DATABASE_URL and API_KEY (the API refuses to start without API_KEY)
 alembic upgrade head
-python seed.py
+python seed_reference.py        # departments, doctors, weekly clinic sessions, locations
+python seed.py                  # hospitals + staff accounts (SEED_STAFF_PASSWORD / SEED_OWNER_PASSWORD, or random and printed once)
+python seed_his.py              # simulated HIS appointments for the HIS-sync demo (optional)
+python import_synthetic.py      # appointments from data/appointments_synthetic.csv: history + 45 days ahead, scored with the model
 uvicorn app.main:app --reload
 
 # Frontend
@@ -38,6 +42,11 @@ cd frontend
 npm ci
 BACKEND_API_URL=http://localhost:8000 BACKEND_API_KEY=<your key> npm run dev
 ```
+
+### Data and model facts
+* `import_synthetic.py` replaces the appointments / predictions / interventions with the generator CSV (`data_source='synthetic'`), shifts the dates so the last ~45 days are future bookings, groups them into the doctors' real clinic sessions, re-scores everything with the active bundle and prints AUC, PR-AUC, Brier, recall@top-20% and observed no-show rate per tier. It is idempotent. `seed_bulk.py` is the older random generator and is not used for the model numbers.
+* The model is **XGBoost** (native JSON), calibrated with isotonic regression and explained with SHAP (TreeExplainer). `scikit-learn` is only used when training (`train_shai.py`, and for the comparison models in the notebook). Retrain: `python train_shai.py --input models/shai_bundle/appointments_synthetic.csv --version <name> --verify`.
+* Overbooking is the exact Poisson-binomial optimum (no simulation); ROI is a replay on recorded history. See [`docs/CAPACITY_V2.md`](docs/CAPACITY_V2.md), [`docs/ROLES.md`](docs/ROLES.md) and [`docs/KNOWN_GAPS.md`](docs/KNOWN_GAPS.md).
 
 ## Tests and CI
 ```bash

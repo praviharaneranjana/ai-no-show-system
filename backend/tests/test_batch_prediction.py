@@ -108,3 +108,20 @@ def test_predictions_today_composite(client: TestClient, db_session: Session):
     # Last run assertions
     assert hub["last_run"] is not None
     assert hub["last_run"]["status"] == "done"
+
+
+def test_reap_stale_runs_marks_interrupted_runs_failed(db_session: Session):
+    from datetime import timezone
+    from app.services.prediction_runner import reap_stale_runs
+
+    old = models.PredictionRun(id=uuid.uuid4(), run_date=date.today(), status="running", stage="scoring",
+                               started_at=datetime.now(timezone.utc) - timedelta(hours=3))
+    fresh = models.PredictionRun(id=uuid.uuid4(), run_date=date.today(), status="running", stage="scoring",
+                                 started_at=datetime.now(timezone.utc))
+    db_session.add_all([old, fresh])
+    db_session.flush()
+    assert reap_stale_runs(db_session) == 1
+    db_session.refresh(old)
+    db_session.refresh(fresh)
+    assert old.status == "failed" and "Interrupted" in old.error and old.finished_at is not None
+    assert fresh.status == "running"

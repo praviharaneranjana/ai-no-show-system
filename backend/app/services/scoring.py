@@ -25,7 +25,6 @@ def score_appointment(
         "risk_score": float,
         "risk_category": str,
         "explanation": list[dict],
-        "contextual_adjustment": None,
         "recommendation": str,
         "features": dict,
     }
@@ -93,7 +92,6 @@ def score_appointment(
         "risk_score": risk_score,
         "risk_category": category,
         "explanation": top_contributions,
-        "contextual_adjustment": None,
         "recommendation": recommendation,
         "features": features,
     }

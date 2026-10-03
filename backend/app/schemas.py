@@ -335,20 +335,6 @@ class FeatureContribution(BaseModel):
     value: float
 
 
-class ContextualAdjustment(BaseModel):
-    ml_risk_score: float
-    distance_km: float | None = None
-    distance_multiplier: float
-    booking_channel: str | None = None
-    channel_multiplier: float
-    payment_mode: str | None = None
-    payment_multiplier: float
-    combined_multiplier: float
-    final_risk_score: float
-    method: str
-    note: str
-
-
 class PredictionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -357,7 +343,6 @@ class PredictionOut(BaseModel):
     risk_score: float
     risk_category: str
     explanation: list[FeatureContribution]
-    contextual_adjustment: ContextualAdjustment | None = None
     recommendation: str
     created_at: datetime
 

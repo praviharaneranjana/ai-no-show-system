@@ -11,7 +11,8 @@ export async function GET(
     const days = daysParam ? Number(daysParam) : 14;
     const data = await getDoctorAvailability(id, days);
     return NextResponse.json(data);
-  } catch (error: any) {
+  } catch (err: unknown) {
+    const error = err as { message?: string; status?: number };
     return NextResponse.json(
       { detail: error?.message || "Failed to fetch doctor availability" },
       { status: error?.status || 500 }
