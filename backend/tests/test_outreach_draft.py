@@ -48,9 +48,52 @@ def test_draft_endpoint_uses_gemini_text_when_available(client, monkeypatch):
     assert body["source"] == "gemini" and body["message"].startswith("Hello!")
 
 
-def test_draft_prompt_contains_no_contact_details():
-    prompt = outreach_drafter._prompt("en", "Nimal", "Cardiology", "05 Oct 2026", "High", ["distance"])
-    assert "Nimal" in prompt and "@" not in prompt and "+94" not in prompt
+def test_draft_prompt_contains_no_names_phones_or_uhids():
+    prompt = outreach_drafter._prompt("en", "N.", outreach_drafter.age_band(52), "Cardiology", "05 Oct 2026", "High", ["distance"])
+    assert "N." in prompt and "45-59" in prompt and "05 Oct 2026" in prompt
+    assert "{NAME}" in prompt and "{TIME}" in prompt
+    assert "@" not in prompt and "+94" not in prompt and "SHAI-" not in prompt and ":" not in "05 Oct 2026"
+
+
+def test_the_prompt_sent_to_gemini_never_contains_the_real_name_phone_or_uhid(client, monkeypatch):
+    seen = {}
+
+    def fake_gemini(prompt, attempts=2):
+        seen["prompt"] = prompt
+        return "Hello {NAME}, your appointment is at {TIME}. Reply 1 to CONFIRM, 2 to RESCHEDULE."
+
+    monkeypatch.setattr(outreach_drafter, "_call_gemini", fake_gemini)
+    patient = make_patient(client, full_name="Chamindri Wickramasinghe", phone="+94771234567")
+    appt = make_appointment(client, patient["id"])
+    body = client.post("/outreach/draft", json={"appointment_id": appt["id"], "language": "en"}).json()
+    prompt = seen["prompt"]
+    for secret in ("Chamindri", "Wickramasinghe", "+94771234567", "771234567", patient["uhid"]):
+        assert secret not in prompt
+    assert "C." in prompt
+    assert body["source"] == "gemini"
+    assert body["message"].startswith("Hello Chamindri,")  # filled in locally, after the call
+
+
+def test_gemini_failure_falls_back_to_the_template(client, monkeypatch):
+    import sys
+    import types
+
+    class Boom:
+        def __init__(self, *a, **k):
+            raise RuntimeError("503 high demand")
+
+    fake_genai = types.ModuleType("google.genai")
+    fake_genai.Client = Boom
+    fake_genai.types = types.SimpleNamespace(HttpOptions=lambda **k: None)
+    google = types.ModuleType("google")
+    google.genai = fake_genai
+    monkeypatch.setitem(sys.modules, "google", google)
+    monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
+    monkeypatch.setenv("GEMINI_API_KEY", "dummy")
+    patient = make_patient(client)
+    appt = make_appointment(client, patient["id"])
+    body = client.post("/outreach/draft", json={"appointment_id": appt["id"], "language": "en"}).json()
+    assert body["source"] == "template" and body["message"]
 
 
 def test_draft_unknown_appointment_404s(client):

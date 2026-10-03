@@ -238,7 +238,7 @@ def run_predictions(
         db.rollback()
         run.status = "failed"
         run.stage = "failed"
-        run.error = str(err)
+        run.error = f"Run failed ({type(err).__name__}); see the server log"
         run.finished_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(run)

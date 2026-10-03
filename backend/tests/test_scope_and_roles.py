@@ -191,3 +191,47 @@ def test_assign_without_a_registered_patient_is_a_clear_422(client):
     }).json()
     r = client.post(f"/capacity/waitlist/{w['id']}/assign")
     assert r.status_code == 422 and "Register the patient" in r.json()["detail"]
+
+
+# ---- security basics ------------------------------------------------------
+def test_unhandled_errors_do_not_leak_exception_text(raw_client, db_session, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    _login_as(raw_client, db_session, "admin")
+
+    @app.get("/__boom", include_in_schema=False)
+    def boom():  # pragma: no cover - raising is the point
+        raise ValueError("SELECT * FROM users WHERE password = 'hunter2'")
+
+    try:
+        with TestClient(app, raise_server_exceptions=False) as c:
+            c.headers.update(raw_client.headers)
+            r = c.get("/__boom")
+    finally:
+        app.router.routes = [rt for rt in app.router.routes if getattr(rt, "path", "") != "/__boom"]
+    assert r.status_code == 500
+    assert "hunter2" not in r.text and "SELECT" not in r.text and "ValueError" not in r.text
+    assert r.json()["detail"] == "Internal server error" and r.json()["error_id"]
+
+
+def test_startup_fails_without_api_key(monkeypatch):
+    import importlib
+    import sys
+
+    monkeypatch.delenv("API_KEY", raising=False)
+    saved = sys.modules.pop("app.main", None)
+    try:
+        with pytest.raises(RuntimeError, match="API_KEY"):
+            importlib.import_module("app.main")
+    finally:
+        monkeypatch.setenv("API_KEY", "test-api-key")
+        if saved is not None:
+            sys.modules["app.main"] = saved
+
+
+def test_seed_script_has_no_hardcoded_passwords():
+    import pathlib
+
+    text = pathlib.Path(__file__).resolve().parents[1].joinpath("seed.py").read_text()
+    assert "HospitalStaff2026" not in text and "ShaiAdmin2026" not in text

@@ -5,9 +5,10 @@ Gemini writes a short reminder tuned to the *reasons* behind a patient's no-show
 failing (e.g. 503 high demand), a canned template is returned instead, so the feature
 never breaks. The output is a DRAFT for staff to review; nothing is sent.
 
-Privacy: only the patient's first name, department, appointment date/time, the risk tier
-and coarse reason categories are sent to Gemini. No phone, email, UHID, full name,
-conditions or exact distance.
+Privacy: the prompt contains only the first-name INITIAL, an age band, the department, the
+appointment DATE, the risk tier and coarse reason categories. Names, phone numbers, UHIDs,
+e-mail, times, conditions and exact distances never leave the server: the model is told to
+write the placeholders {NAME} and {TIME}, which are filled in locally afterwards.
 """
 import logging
 import os
@@ -125,7 +126,16 @@ def template_draft(language: str, first_name: str, department: str, when: str, r
     return msg + t["tail"]
 
 
-def _prompt(language: str, first_name: str, department: str, when: str, tier: str, reasons: list[str]) -> str:
+def age_band(age: int | None) -> str:
+    if age is None:
+        return "unknown"
+    for upper, label in ((17, "under 18"), (29, "18-29"), (44, "30-44"), (59, "45-59")):
+        if age <= upper:
+            return label
+    return "60+"
+
+
+def _prompt(language: str, name_initial: str, band: str, department: str, date_text: str, tier: str, reasons: list[str]) -> str:
     can_telehealth = is_telehealth_eligible(department) and bool(_TELEHEALTH_REASONS & set(reasons))
     adapted_guidance = []
     for r in reasons:
@@ -137,7 +147,9 @@ def _prompt(language: str, first_name: str, department: str, when: str, tier: st
     return (
         f"Write ONE short appointment-reminder message for a Sri Lankan private hospital to send by WhatsApp/SMS.\n"
         f"Language: {LANGUAGES[language]}.\n"
-        f"Patient first name: {first_name}. Department: {department}. Appointment: {when}.\n"
+        f"Patient: first-name initial {name_initial}, age band {band}. Department: {department}. Appointment date: {date_text}.\n"
+        "Write the patient's name as the literal placeholder {NAME} and the appointment time as the literal placeholder {TIME}; "
+        "never guess a real name or time.\n"
         f"Priority: {tier}. Tailor the message to this: {guidance}.\n"
         "Rules: at most 45 words; polite and warm; never scolding; do NOT mention risk scores, AI, "
         "predictions, the date being far away, or medical advice; do NOT invent phone numbers, links, prices or doctor names; "
@@ -158,7 +170,11 @@ def _call_gemini(prompt: str, attempts: int = 2) -> str | None:
         logger.warning("google-genai is not installed; using template drafts")
         return None
 
-    client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=12000))
+    try:
+        client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=12000))
+    except Exception as exc:  # bad key format, SDK/config errors: fall back to the template
+        logger.warning("Gemini client could not be created: %s", type(exc).__name__)
+        return None
     try:
         for attempt in range(attempts):
             try:
@@ -174,14 +190,30 @@ def _call_gemini(prompt: str, attempts: int = 2) -> str | None:
     return None
 
 
+def _fill_placeholders(text: str, first_name: str, time_text: str) -> str:
+    return text.replace("{NAME}", first_name).replace("{TIME}", time_text or "your appointment time")
+
+
 def draft_reminder(
-    *, language: str, first_name: str, department: str, when: str, tier: str, contributions: list[dict]
+    *,
+    language: str,
+    first_name: str,
+    department: str,
+    when: str,
+    tier: str,
+    contributions: list[dict],
+    age: int | None = None,
+    date_text: str | None = None,
+    time_text: str = "",
 ) -> Draft:
+    """``when`` (date and time) is only used for the local template; Gemini sees ``date_text`` (date only)."""
     language = language if language in LANGUAGES else "en"
     reasons = reasons_from_contributions(contributions)
-    text = _call_gemini(_prompt(language, first_name, department, when, tier, reasons))
+    initial = (first_name[:1].upper() + ".") if first_name else "?"
+    prompt = _prompt(language, initial, age_band(age), department, date_text or when, tier, reasons)
+    text = _call_gemini(prompt)
     if text:
-        return Draft(message=text, source="gemini", reasons=reasons, model=GEMINI_MODEL)
+        return Draft(message=_fill_placeholders(text, first_name, time_text), source="gemini", reasons=reasons, model=GEMINI_MODEL)
     return Draft(
         message=template_draft(language, first_name, department, when, reasons),
         source="template", reasons=reasons, model=None,

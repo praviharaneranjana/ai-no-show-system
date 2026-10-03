@@ -5,19 +5,16 @@ Hospitals seeded:
 1. Asiri Central Hospital (Colombo 10, domain: asiri.lk)
 2. National Hospital of Sri Lanka (NHSL) (Colombo 08, domain: nhsl.health.gov.lk)
 
-Staff accounts seeded:
-- Platform Owner: owner@shai.health / ShaiAdmin2026!
-- Asiri Central:
-    - Front Desk: kavindi@asiri.lk / HospitalStaff2026!
-    - Manager: asela@asiri.lk / HospitalStaff2026!
-    - Analyst: nipun@asiri.lk / HospitalStaff2026!
-    - Admin: dilani@asiri.lk / HospitalStaff2026!
-    - Pending: tharindu@asiri.lk / HospitalStaff2026!
-- NHSL:
-    - Front Desk: sarath@nhsl.health.gov.lk / HospitalStaff2026!
-    - Manager: chithra@nhsl.health.gov.lk / HospitalStaff2026!
-    - Admin: anura@nhsl.health.gov.lk / HospitalStaff2026!
+Staff accounts seeded (emails only; passwords are never stored in the repo):
+- Platform Owner: owner@shai.health
+- Asiri Central: kavindi (front desk), asela (manager), nipun (analyst), dilani (admin), tharindu (pending) @asiri.lk
+- NHSL: sarath (front desk), chithra (manager), anura (admin) @nhsl.health.gov.lk
+
+Passwords come from SEED_STAFF_PASSWORD / SEED_OWNER_PASSWORD (at least 10 characters). When a variable is
+not set a random password is generated and printed once at the end of the run.
 """
+import os
+import secrets
 import uuid
 from datetime import date, datetime, timedelta, timezone
 
@@ -27,8 +24,18 @@ from app import models, security
 ASIRI_ID = uuid.UUID("a0000000-0000-0000-0000-000000000001")
 NHSL_ID = uuid.UUID("a0000000-0000-0000-0000-000000000002")
 
-STAFF_PASSWORD = "HospitalStaff2026!"
-OWNER_PASSWORD = "ShaiAdmin2026!"
+def _password_from_env(name: str) -> tuple[str, bool]:
+    """(password, generated). Reads ``name`` from the environment or generates a strong random one."""
+    value = os.getenv(name, "")
+    if value:
+        if len(value) < 10:
+            raise SystemExit(f"{name} must be at least 10 characters")
+        return value, False
+    return secrets.token_urlsafe(12) + "aA1!", True
+
+
+STAFF_PASSWORD, STAFF_PASSWORD_GENERATED = _password_from_env("SEED_STAFF_PASSWORD")
+OWNER_PASSWORD, OWNER_PASSWORD_GENERATED = _password_from_env("SEED_OWNER_PASSWORD")
 
 
 def seed():
@@ -138,7 +145,7 @@ def seed():
                     role=base_role,
                     phone=phone,
                     password_hash=security.hash_password(STAFF_PASSWORD if base_role != "platform_owner" else OWNER_PASSWORD),
-                    must_change_password=False,
+                    must_change_password=True,
                     is_active=True,
                 )
                 db.add(u)
@@ -413,16 +420,13 @@ def seed():
         db.query(models.Prediction).filter(models.Prediction.hospital_id.is_(None)).update({"hospital_id": ASIRI_ID})
 
         db.commit()
-        print("Successfully seeded multi-hospital data & real user credentials:")
-        print("  - Asiri Admin: dilani@asiri.lk / HospitalStaff2026!")
-        print("  - Asiri Manager: asela@asiri.lk / HospitalStaff2026!")
-        print("  - Asiri Analyst: nipun@asiri.lk / HospitalStaff2026!")
-        print("  - Asiri Front Desk: kavindi@asiri.lk / HospitalStaff2026!")
-        print("  - Asiri Pending: tharindu@asiri.lk / HospitalStaff2026!")
-        print("  - NHSL Admin: anura@nhsl.health.gov.lk / HospitalStaff2026!")
-        print("  - NHSL Manager: chithra@nhsl.health.gov.lk / HospitalStaff2026!")
-        print("  - NHSL Front Desk: sarath@nhsl.health.gov.lk / HospitalStaff2026!")
-        print("  - Platform Owner: owner@shai.health / ShaiAdmin2026!")
+        print("Seeded hospitals, staff accounts and demo reference records.")
+        if STAFF_PASSWORD_GENERATED:
+            print(f"  Staff accounts password (shown once, change it at first login): {STAFF_PASSWORD}")
+        if OWNER_PASSWORD_GENERATED:
+            print(f"  owner@shai.health password (shown once): {OWNER_PASSWORD}")
+        if not (STAFF_PASSWORD_GENERATED or OWNER_PASSWORD_GENERATED):
+            print("  Passwords were taken from SEED_STAFF_PASSWORD / SEED_OWNER_PASSWORD.")
 
     finally:
         db.close()

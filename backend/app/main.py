@@ -63,9 +63,10 @@ app.add_middleware(
 # ======================
 API_KEY = os.getenv("API_KEY")
 if not API_KEY:
-    logger.warning(
-        "API_KEY is not set — the shared service key (X-API-Key) is not enforced; staff login still is. "
-        "Set API_KEY in the environment before deploying anywhere non-local."
+    # Fail closed: the shared service key is the first line of defence in front of the API. The test suite sets its own.
+    raise RuntimeError(
+        "API_KEY is not set. Set a long random value (openssl rand -hex 32) in the backend environment "
+        "and the same value as BACKEND_API_KEY for the frontend."
     )
 
 PUBLIC_PATHS = auth.PUBLIC_PATHS
@@ -142,11 +143,10 @@ async def auth_and_logging(request: Request, call_next):
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.exception("Unhandled server error processing %s %s: %s", request.method, request.url.path, exc)
-    return JSONResponse(
-        status_code=500,
-        content={"detail": f"{type(exc).__name__}: {str(exc)}"},
-    )
+    error_id = uuid.uuid4().hex[:8]
+    logger.exception("Unhandled server error [%s] processing %s %s", error_id, request.method, request.url.path)
+    # Never return exception text: it can contain SQL, file paths or patient data. The id lets staff quote the log line.
+    return JSONResponse(status_code=500, content={"detail": "Internal server error", "error_id": error_id})
 
 # ======================
 # Request & Response Models
@@ -1940,7 +1940,10 @@ def draft_outreach_message(req: schemas.OutreachDraftRequest, request: Request, 
     )
     explanation = prediction.explanation if prediction and isinstance(prediction.explanation, dict) else {}
     language = req.language if req.language in outreach_drafter.LANGUAGES else "en"
-    when = f"{appt.appointment_day:%d %b %Y}" + (f" at {appt.scheduled_time}" if appt.scheduled_time else "")
+    date_text = f"{appt.appointment_day:%d %b %Y}"
+    when = date_text + (f" at {appt.scheduled_time}" if appt.scheduled_time else "")
+    dob = appt.patient.date_of_birth
+    age = (appt.appointment_day.year - dob.year - ((appt.appointment_day.month, appt.appointment_day.day) < (dob.month, dob.day))) if dob else None
 
     draft = outreach_drafter.draft_reminder(
         language=language,
@@ -1949,6 +1952,9 @@ def draft_outreach_message(req: schemas.OutreachDraftRequest, request: Request, 
         when=when,
         tier=prediction.risk_category if prediction else "Medium",
         contributions=explanation.get("contributions", []),
+        age=age,
+        date_text=date_text,
+        time_text=appt.scheduled_time or "",
     )
     return schemas.OutreachDraftResponse(
         appointment_id=appt.id, language=language, message=draft.message,

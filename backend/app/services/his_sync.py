@@ -351,7 +351,7 @@ def sync_day(
         logger.exception("HIS sync failed for date %s: %s", target_date, err)
         db.rollback()
         sync_run.status = "failed"
-        sync_run.error = str(err)
+        sync_run.error = f"Sync failed ({type(err).__name__}); see the server log"
         sync_run.finished_at = datetime.now(timezone.utc)
         db.commit()
 
@@ -364,5 +364,5 @@ def sync_day(
             updated=updated,
             unchanged=unchanged,
             failed=failed,
-            error=str(err),
+            error=f"Sync failed ({type(err).__name__}); see the server log",
         )
