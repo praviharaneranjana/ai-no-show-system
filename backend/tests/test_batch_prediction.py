@@ -12,6 +12,8 @@ from seed_his import seed_his_appointments
 from app.services.his_sync import sync_day
 from app.services.prediction_runner import run_predictions
 
+ASIRI_ID = uuid.UUID("a0000000-0000-0000-0000-000000000001")  # the hospital the test client is signed in to
+
 
 @pytest.fixture(autouse=True)
 def setup_test_data(db_session: Session):
@@ -26,7 +28,7 @@ def test_batch_prediction_run_sync(client: TestClient, db_session: Session):
 
     # Seed HIS and sync into SHAI
     seed_his_appointments(db_session, target_date=today_lk)
-    sync_day(today_lk, db_session)
+    sync_day(today_lk, db_session, hospital_id=ASIRI_ID)
 
     # Trigger synchronous prediction run
     payload = {
@@ -60,7 +62,7 @@ def test_predictions_today_composite(client: TestClient, db_session: Session):
 
     # Seed and sync
     seed_his_appointments(db_session, target_date=today_lk)
-    sync_day(today_lk, db_session)
+    sync_day(today_lk, db_session, hospital_id=ASIRI_ID)
 
     # Run predictions
     client.post("/predictions/runs?run_sync=true", json={"run_date": today_lk.isoformat()})

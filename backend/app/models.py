@@ -417,6 +417,7 @@ class WaitlistEntry(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     hospital_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=True, index=True)
+    patient_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("patients.id", ondelete="SET NULL"), nullable=True)
     patient_name: Mapped[str] = mapped_column(String, nullable=False)
     patient_phone: Mapped[str] = mapped_column(String, nullable=False)
     specialty: Mapped[str] = mapped_column(String, nullable=False)

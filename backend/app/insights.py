@@ -14,6 +14,7 @@ from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app import auth, geo, models, schemas
+from app.services import sessions_view
 from app.database import get_db
 
 router = APIRouter()
@@ -26,6 +27,10 @@ RISK_ORDER = case(
     (models.Prediction.risk_category == "Medium", 1),
     else_=2,
 )
+
+
+def _hid(request: Request):
+    return getattr(request.state, "hospital_id", None)
 
 
 def _upcoming(q):
@@ -355,18 +360,21 @@ class ActivityResponse(BaseModel):
 
 
 @router.get("/outreach/activity", response_model=ActivityResponse)
-def outreach_activity(limit: int = Query(10, ge=1, le=100), db: Session = Depends(get_db)):
+def outreach_activity(request: Request, limit: int = Query(10, ge=1, le=100), db: Session = Depends(get_db)):
     I = models.Intervention
-    rows = (
+    hid = _hid(request)
+    rows_q = (
         db.query(I, models.Patient.full_name)
         .join(models.Appointment, I.appointment_id == models.Appointment.id)
         .join(models.Patient, models.Appointment.patient_id == models.Patient.id)
-        .order_by(I.created_at.desc())
-        .limit(limit)
-        .all()
     )
-    total = db.query(func.count(I.id)).scalar() or 0
-    resolved = db.query(func.count(I.id)).filter(I.status.in_(["confirmed", "rescheduled", "telehealth_requested"])).scalar() or 0
+    total_q = db.query(func.count(I.id))
+    if hid:
+        rows_q = rows_q.filter(I.hospital_id == hid)
+        total_q = total_q.filter(I.hospital_id == hid)
+    rows = rows_q.order_by(I.created_at.desc()).limit(limit).all()
+    total = total_q.scalar() or 0
+    resolved = total_q.filter(I.status.in_(["confirmed", "rescheduled", "telehealth_requested"])).scalar() or 0
     return ActivityResponse(
         items=[
             ActivityItem(id=i.id, appointment_id=i.appointment_id, patient_name=name, channel=i.channel,
@@ -396,20 +404,22 @@ class NotificationsResponse(BaseModel):
 
 
 @router.get("/notifications", response_model=NotificationsResponse)
-def notifications(limit: int = Query(50, ge=1, le=200), db: Session = Depends(get_db)):
+def notifications(request: Request, limit: int = Query(50, ge=1, le=200), db: Session = Depends(get_db)):
+    hid = _hid(request)
     today = date.today()
     now = datetime.now()
     items: list[NotificationItem] = []
 
-    high = (
+    high_q = (
         db.query(models.Appointment)
         .join(models.Prediction, models.Prediction.appointment_id == models.Appointment.id)
         .options(joinedload(models.Appointment.patient), joinedload(models.Appointment.prediction))
         .filter(models.Prediction.risk_category == "High", models.Appointment.appointment_day == today,
                 models.Appointment.no_show.is_(None))
-        .order_by(models.Prediction.risk_score.desc())
-        .limit(15).all()
     )
+    if hid:
+        high_q = high_q.filter(models.Appointment.hospital_id == hid)
+    high = high_q.order_by(models.Prediction.risk_score.desc()).limit(15).all()
     for a in high:
         pct = round(float(a.prediction.risk_score) * 100)
         items.append(NotificationItem(
@@ -418,22 +428,25 @@ def notifications(limit: int = Query(50, ge=1, le=200), db: Session = Depends(ge
             href=f"/appointments/{a.id}", at=now,
         ))
 
-    for s in db.query(models.DoctorSession).filter(models.DoctorSession.session_date == today,
-                                                   models.DoctorSession.delay_minutes > 0).all():
-        items.append(NotificationItem(
-            id=f"delay:{s.id}:{s.delay_minutes}", type="delay",
-            title=f"{s.doctor_name} running {s.delay_minutes} min late",
-            detail=f"{s.specialty} · scheduled {s.scheduled_start_time} · {s.room_number}",
-            href=f"/sessions/{s.id}", at=now,
-        ))
+    for cs in sessions_view.running_sessions(db, hid, today):
+        if cs.delay_minutes > 0:
+            so = sessions_view.session_out(cs, today)
+            items.append(NotificationItem(
+                id=f"delay:{cs.id}:{cs.delay_minutes}", type="delay",
+                title=f"{so.doctor_name} running {cs.delay_minutes} min late",
+                detail=f"{so.specialty} · scheduled {so.scheduled_start_time} · {cs.room}",
+                href=f"/sessions/{cs.id}", at=now,
+            ))
 
-    replies = (
+    replies_q = (
         db.query(models.Intervention, models.Patient.full_name)
         .join(models.Appointment, models.Intervention.appointment_id == models.Appointment.id)
         .join(models.Patient, models.Appointment.patient_id == models.Patient.id)
         .filter(models.Intervention.patient_reply.is_not(None))
-        .order_by(models.Intervention.created_at.desc()).limit(15).all()
     )
+    if hid:
+        replies_q = replies_q.filter(models.Intervention.hospital_id == hid)
+    replies = replies_q.order_by(models.Intervention.created_at.desc()).limit(15).all()
     for i, name in replies:
         items.append(NotificationItem(
             id=f"reply:{i.id}", type="reply", title=f"{name} replied via {i.channel}",
@@ -441,8 +454,10 @@ def notifications(limit: int = Query(50, ge=1, le=200), db: Session = Depends(ge
             at=i.created_at,
         ))
 
-    for w in db.query(models.WaitlistEntry).filter(models.WaitlistEntry.status == "waiting") \
-            .order_by(models.WaitlistEntry.created_at.desc()).limit(10).all():
+    wait_q = db.query(models.WaitlistEntry).filter(models.WaitlistEntry.status == "waiting")
+    if hid:
+        wait_q = wait_q.filter(models.WaitlistEntry.hospital_id == hid)
+    for w in wait_q.order_by(models.WaitlistEntry.created_at.desc()).limit(10).all():
         items.append(NotificationItem(
             id=f"wait:{w.id}", type="waitlist", title=f"{w.patient_name} is waiting for {w.doctor_name}",
             detail=f"{w.specialty} · {w.urgency_level} urgency", href="/capacity", at=w.created_at,
@@ -463,17 +478,18 @@ class SearchHit(BaseModel):
 
 
 @router.get("/search", response_model=list[SearchHit])
-def search(q: str = Query(..., min_length=2, max_length=80), db: Session = Depends(get_db)):
+def search(request: Request, q: str = Query(..., min_length=2, max_length=80), db: Session = Depends(get_db)):
     like = f"%{q.strip()}%"
     A, Pt = models.Appointment, models.Patient
-    rows = (
+    sq = (
         db.query(A)
         .join(Pt, A.patient_id == Pt.id)
         .options(joinedload(A.patient))
         .filter(or_(Pt.full_name.ilike(like), Pt.phone.ilike(like), Pt.uhid.ilike(like), Pt.city.ilike(like)))
-        .order_by(A.appointment_day.desc())
-        .limit(12).all()
     )
+    if _hid(request):
+        sq = sq.filter(A.hospital_id == _hid(request))
+    rows = sq.order_by(A.appointment_day.desc()).limit(12).all()
     return [
         SearchHit(kind="appointment", title=a.patient.full_name,
                   subtitle=f"{a.appointment_day:%d %b %Y} · {a.department or 'General'} · {a.patient.phone or ''}".strip(" ·"),
@@ -519,6 +535,7 @@ class GeoResponse(BaseModel):
 
 @router.get("/geo/patients", response_model=GeoResponse)
 def geo_patients(
+    request: Request,
     risk: Optional[Literal["High", "Medium", "Low"]] = None,
     department: Optional[str] = None,
     days_back: int = Query(45, ge=0, le=3650),
@@ -533,6 +550,9 @@ def geo_patients(
         .outerjoin(P, P.appointment_id == A.id)
         .filter(Pt.latitude.is_not(None), Pt.longitude.is_not(None), A.appointment_day >= since)
     )
+    hid = _hid(request)
+    if hid:
+        q = q.filter(A.hospital_id == hid)
     if risk:
         q = q.filter(P.risk_category == risk)
     if department:
@@ -553,23 +573,25 @@ def geo_patients(
     bins = []
     for lo, hi in edges:
         cond = and_(Pt.distance_km >= lo, Pt.distance_km < hi)
-        n = db.query(func.count(A.id)).join(Pt, A.patient_id == Pt.id).filter(cond).scalar() or 0
+        scope = (A.hospital_id == hid) if hid else (A.id == A.id)
+        n = db.query(func.count(A.id)).join(Pt, A.patient_id == Pt.id).filter(cond, scope).scalar() or 0
         known, ns = (
             db.query(func.count(A.id), func.sum(case((A.no_show.is_(True), 1), else_=0)))
-            .join(Pt, A.patient_id == Pt.id).filter(cond, A.no_show.is_not(None)).one()
+            .join(Pt, A.patient_id == Pt.id).filter(cond, scope, A.no_show.is_not(None)).one()
         )
         label = f"{lo}–{hi} km" if hi < 1e9 else f"{lo}+ km"
         bins.append(DistanceBin(label=label, patients=int(n), no_show_rate=round(100 * (ns or 0) / known, 1) if known else None))
 
     def avg_km(flag: bool):
-        v = db.query(func.avg(Pt.distance_km)).join(A, A.patient_id == Pt.id).filter(A.no_show.is_(flag)).scalar()
+        vq = db.query(func.avg(Pt.distance_km)).join(A, A.patient_id == Pt.id).filter(A.no_show.is_(flag))
+        v = (vq.filter(A.hospital_id == hid) if hid else vq).scalar()
         return round(float(v), 1) if v is not None else None
 
     return GeoResponse(
         hospital_name=geo.HOSPITAL_NAME, hospital_lat=geo.HOSPITAL_LAT, hospital_lng=geo.HOSPITAL_LNG,
         points=points, bins=bins, avg_km_no_show=avg_km(True), avg_km_attended=avg_km(False),
         truncated=total > limit,
-        departments=[r[0] for r in db.query(A.department).filter(A.department.is_not(None)).distinct().order_by(A.department)],
+        departments=[r[0] for r in (db.query(A.department).filter(A.department.is_not(None), A.hospital_id == hid) if hid else db.query(A.department).filter(A.department.is_not(None))).distinct().order_by(A.department)],
     )
 
 
@@ -595,15 +617,23 @@ class SessionDetail(BaseModel):
 
 
 @router.get("/doctors/sessions/{session_id}/detail", response_model=SessionDetail)
-def session_detail(session_id: uuid.UUID, db: Session = Depends(get_db)):
-    s = db.get(models.DoctorSession, session_id)
-    if s is None:
+def session_detail(
+    request: Request,
+    session_id: uuid.UUID,
+    day: Optional[date] = Query(None, alias="date"),
+    db: Session = Depends(get_db),
+):
+    s = db.get(models.DoctorClinicSession, session_id)
+    hid = _hid(request)
+    if s is None or (hid and s.doctor.hospital_id != hid):
         raise HTTPException(status_code=404, detail="Doctor session not found")
+    day = day or date.today()
     rows = (
         db.query(models.Appointment)
         .options(joinedload(models.Appointment.patient), joinedload(models.Appointment.prediction))
-        .filter(models.Appointment.doctor_name == s.doctor_name,
-                models.Appointment.appointment_day == s.session_date)
+        .filter(models.Appointment.clinic_session_id == s.id,
+                models.Appointment.appointment_day == day,
+                models.Appointment.status != "cancelled")
         .order_by(models.Appointment.queue_number, models.Appointment.scheduled_time)
         .all()
     )
@@ -617,7 +647,7 @@ def session_detail(session_id: uuid.UUID, db: Session = Depends(get_db)):
         for a in rows
     ]
     return SessionDetail(
-        session=schemas.DoctorSessionOut.model_validate(s), booked=len(queue),
+        session=sessions_view.session_out(s, day), booked=len(queue),
         predicted_no_shows=round(sum(i.risk_score or 0 for i in queue), 1),
         high_risk=sum(1 for i in queue if i.risk_category == "High"), queue=queue,
     )

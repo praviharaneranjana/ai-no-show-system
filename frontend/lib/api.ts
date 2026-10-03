@@ -34,6 +34,7 @@ import type {
   SimulatorResult,
   StoredPrediction,
   WaitlistEntry,
+  WaitlistAssignResult,
   ExpenseCategory,
   HospitalExpense,
   DepartmentItem,
@@ -361,7 +362,7 @@ export function getWaitlist() {
 }
 
 export function assignWaitlistSlot(waitlistId: string) {
-  return apiFetch<WaitlistEntry>(`/capacity/waitlist/${waitlistId}/assign`, {
+  return apiFetch<WaitlistAssignResult>(`/capacity/waitlist/${waitlistId}/assign`, {
     method: "POST",
   });
 }

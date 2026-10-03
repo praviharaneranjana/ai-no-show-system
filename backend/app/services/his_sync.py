@@ -56,6 +56,7 @@ def sync_day(
     connector: Optional[HISConnector] = None,
     triggered_by: Optional[str] = None,
     trigger: str = "manual",
+    hospital_id: Optional[uuid.UUID] = None,
 ) -> SyncResult:
     """Pull appointments from HIS connector for target_date and synchronize into SHAI."""
     if connector is None:
@@ -172,6 +173,7 @@ def sync_day(
 
                     patient = models.Patient(
                         id=uuid.uuid4(),
+                        hospital_id=hospital_id,
                         uhid=new_uhid,
                         his_patient_ref=item.his_patient_ref,
                         full_name=item.patient_name.strip(),
@@ -215,6 +217,7 @@ def sync_day(
                     clean_doc_name = item.doctor_name.replace("Dr.", "").strip()
                     doctor = models.Doctor(
                         id=uuid.uuid4(),
+                        hospital_id=hospital_id,
                         title="Dr.",
                         full_name=clean_doc_name,
                         department_id=gen_med_dept.id if gen_med_dept else 1,
@@ -285,6 +288,9 @@ def sync_day(
                     )
                     new_appt = models.Appointment(
                         id=uuid.uuid4(),
+                        hospital_id=hospital_id or doctor.hospital_id or patient.hospital_id,
+                        data_source="real",
+                        fee_lkr=doctor.consultation_fee_lkr,
                         patient_id=patient.id,
                         doctor_id=doctor.id,
                         clinic_session_id=session.id if session else None,

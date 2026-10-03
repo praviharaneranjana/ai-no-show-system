@@ -18,6 +18,7 @@ import {
   getCapacitySettings,
   updateCapacitySettings,
   getCapacityNavCounts,
+  isRedirectError,
 } from "@/lib/api";
 import type {
   CapacityOptimizeResult,
@@ -30,11 +31,20 @@ import type {
   AccuracyResponse,
   CapacitySetting,
   CapacityNavCounts,
+  WaitlistAssignResult,
 } from "@/lib/types";
 
-export async function assignWaitlistSlotAction(waitlistId: string) {
-  await assignWaitlistSlot(waitlistId);
-  revalidatePath("/capacity");
+export async function assignWaitlistSlotAction(
+  waitlistId: string
+): Promise<{ ok: true; result: WaitlistAssignResult } | { ok: false; message: string }> {
+  try {
+    const result = await assignWaitlistSlot(waitlistId);
+    revalidatePath("/capacity");
+    return { ok: true, result };
+  } catch (err) {
+    if (isRedirectError(err)) throw err;
+    return { ok: false, message: err instanceof Error ? err.message : "Could not book a slot" };
+  }
 }
 
 export async function updateDoctorDelayAction(sessionId: string, delayMinutes: number) {

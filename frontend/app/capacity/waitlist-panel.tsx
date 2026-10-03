@@ -15,12 +15,22 @@ const URGENCY_STYLES: Record<string, string> = {
 
 export function WaitlistPanel({ entries }: { entries: WaitlistEntry[] }) {
   const [isPending, startTransition] = useTransition();
-  const [offeredId, setOfferedId] = useState<string | null>(null);
+  const [booked, setBooked] = useState<Record<string, string>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   function offer(id: string) {
+    setBusyId(id);
     startTransition(async () => {
-      await assignWaitlistSlotAction(id);
-      setOfferedId(id);
+      const res = await assignWaitlistSlotAction(id);
+      if (res.ok) {
+        const r = res.result;
+        setBooked((b) => ({ ...b, [id]: `${r.appointment_day} ${r.start_time} · ${r.booked_doctor}${r.token ? ` · token ${r.token}` : ""}` }));
+        setErrors((e) => ({ ...e, [id]: "" }));
+      } else {
+        setErrors((e) => ({ ...e, [id]: res.message }));
+      }
+      setBusyId(null);
     });
   }
 
@@ -28,7 +38,7 @@ export function WaitlistPanel({ entries }: { entries: WaitlistEntry[] }) {
     return (
       <div className="py-8 text-center text-sm text-muted-foreground flex flex-col items-center justify-center gap-2">
         <UserCheck className="size-8 text-muted-foreground/50" />
-        <span>No patients currently on the waitlist. All available slots are filled.</span>
+        <span>No patients on the waitlist.</span>
       </div>
     );
   }
@@ -36,7 +46,7 @@ export function WaitlistPanel({ entries }: { entries: WaitlistEntry[] }) {
   return (
     <div className="flex flex-col divide-y divide-border/40">
       {entries.map((entry) => {
-        const isOffered = entry.status !== "waiting" || offeredId === entry.id;
+        const isOffered = entry.status === "accepted" || !!booked[entry.id];
         const initials = entry.patient_name
           .split(" ")
           .map((n) => n[0])
@@ -69,6 +79,8 @@ export function WaitlistPanel({ entries }: { entries: WaitlistEntry[] }) {
                 <span className="text-xs text-muted-foreground truncate">
                   {entry.specialty} · Consultant: {entry.doctor_name} · Available: {entry.preferred_days}
                 </span>
+                {booked[entry.id] && <span className="text-xs text-emerald-600">Booked: {booked[entry.id]}</span>}
+                {errors[entry.id] && <span className="text-xs text-rose-600">{errors[entry.id]}</span>}
               </div>
             </div>
 
@@ -83,14 +95,14 @@ export function WaitlistPanel({ entries }: { entries: WaitlistEntry[] }) {
                   : "bg-gradient-to-r from-[#8B7CF6] to-[#5B7CFA] text-white hover:opacity-90 shadow-xs"
               }`}
             >
-              {isPending && offeredId === entry.id ? (
+              {isPending && busyId === entry.id ? (
                 <Loader2 className="size-3.5 animate-spin" />
               ) : isOffered ? (
                 <Check className="size-3.5" />
               ) : (
                 <PhoneCall className="size-3.5" />
               )}
-              <span>{isOffered ? "Slot Offered & Contacted" : "Offer This Slot"}</span>
+              <span>{isOffered ? "Booked" : "Book next free slot"}</span>
             </Button>
           </div>
         );

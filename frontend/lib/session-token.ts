@@ -12,9 +12,9 @@ export const SESSION_COOKIE = "shai_session";
 const ROLE_RANK: Record<SessionRole, number> = {
   front_desk: 1,
   analyst: 2,
-  manager: 2,
-  admin: 3,
-  platform_owner: 4,
+  manager: 3,
+  admin: 4,
+  platform_owner: 5,
 };
 
 export type TokenPayload = {

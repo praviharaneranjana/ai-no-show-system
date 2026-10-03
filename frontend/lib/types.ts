@@ -1199,3 +1199,11 @@ export type DataSourceInfo = {
   is_synthetic: boolean;
   synthetic_share: number;
 };
+
+export type WaitlistAssignResult = WaitlistEntry & {
+  appointment_id: string;
+  appointment_day: string;
+  booked_doctor: string;
+  start_time: string;
+  token: number | null;
+};

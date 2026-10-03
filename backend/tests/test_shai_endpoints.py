@@ -37,28 +37,11 @@ def make_appointment(client, patient_id, **overrides):
 # Doctor Sessions
 # ===================================
 
-def test_list_doctor_sessions_auto_seeds_when_empty(client):
+def test_doctor_sessions_list_only_running_sessions(client):
+    # nothing is booked in a fresh database, so no session is "running" and nothing is invented
     resp = client.get("/doctors/sessions")
     assert resp.status_code == 200
-    sessions = resp.json()
-    assert len(sessions) >= 1
-    for s in sessions:
-        assert s["delay_minutes"] >= 0
-        assert s["status"] in {"on_time", "delayed", "in_progress", "completed"}
-
-
-def test_update_doctor_delay(client):
-    sessions = client.get("/doctors/sessions").json()
-    session_id = sessions[0]["id"]
-
-    resp = client.patch(
-        f"/doctors/sessions/{session_id}/delay",
-        json={"delay_minutes": 40, "status": "delayed"},
-    )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["delay_minutes"] == 40
-    assert body["status"] == "delayed"
+    assert resp.json() == []
 
 
 def test_update_delay_for_unknown_session_404s(client):
@@ -87,21 +70,15 @@ def test_optimize_capacity_empty_day_is_honest(client):
 # Waitlist
 # ===================================
 
-def test_get_waitlist_auto_seeds_when_empty(client):
-    resp = client.get("/capacity/waitlist")
-    assert resp.status_code == 200
-    waitlist = resp.json()
-    assert len(waitlist) >= 1
-    assert all(w["status"] == "waiting" for w in waitlist)
-
-
-def test_assign_waitlist_slot_transitions_status(client):
-    waitlist = client.get("/capacity/waitlist").json()
-    entry_id = waitlist[0]["id"]
-
-    resp = client.post(f"/capacity/waitlist/{entry_id}/assign")
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["status"] == "offered"
+def test_waitlist_starts_empty_and_accepts_entries(client):
+    assert client.get("/capacity/waitlist").json() == []
+    created = client.post("/capacity/waitlist", json={
+        "patient_name": "Test Waiter", "patient_phone": "+94770000001", "specialty": "Cardiology",
+        "doctor_name": "Dr. Nobody", "urgency_level": "High",
+    })
+    assert created.status_code == 201, created.text
+    assert created.json()["status"] == "waiting"
+    assert len(client.get("/capacity/waitlist").json()) == 1
 
 
 def test_assign_unknown_waitlist_entry_404s(client):
@@ -332,11 +309,10 @@ def test_expense_categories_and_expenses_crud(client):
     assert "patient_incentives" in cat_keys
     assert "tech_infrastructure" in cat_keys
 
-    # 2. Fetch default expenses (auto-seeded)
+    # 2. No default expenses are invented
     exp_resp = client.get("/expenses")
     assert exp_resp.status_code == 200, exp_resp.text
-    expenses = exp_resp.json()
-    assert len(expenses) >= 3
+    assert exp_resp.json() == []
 
     # 3. Create a custom hospital giveaway expense
     incentive_cat = next(c for c in cats if c["key"] == "patient_incentives")

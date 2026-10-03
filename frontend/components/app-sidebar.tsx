@@ -20,10 +20,10 @@ import {
 
 import { cn } from "@/lib/utils";
 import { logoutAction } from "@/app/login/actions";
-import { hasRole, type SessionRole } from "@/lib/session-token";
 import { ShaiLogo } from "@/components/shai-logo";
 import { ThemePill } from "@/components/theme-pill";
 import { getCapacityNavCountsAction } from "@/app/capacity/actions";
+import { hasRole, type SessionRole } from "@/lib/session-token";
 import type { CapacityNavCounts, ModelInfo } from "@/lib/types";
 
 interface AppSidebarProps {
@@ -99,7 +99,7 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
       label: "Capacity",
       icon: Gauge,
       exact: false,
-      hideForFrontDesk: true,
+      minRole: "manager",
     },
     {
       href: "/outreach",
@@ -109,17 +109,17 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
     },
     {
       href: "/simulator",
-      label: "ROI Simulator",
+      label: "Outreach ROI",
       icon: Calculator,
       exact: false,
-      hideForFrontDesk: true,
+      minRole: "manager",
     },
     {
       href: "/analytics",
       label: "Analytics",
       icon: BarChart3,
       exact: false,
-      hideForFrontDesk: true,
+      minRole: "analyst",
     },
     {
       href: "/predictions",
@@ -132,6 +132,7 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
       label: "New Appointment",
       icon: PlusCircle,
       exact: false,
+      hideForAnalyst: true,
     },
     {
       href: "/admin/staff",
@@ -142,7 +143,6 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
     },
   ];
 
-  const isFrontDesk = storedRole === "front_desk";
   const isAdminOrOwner = storedRole === "admin" || storedRole === "platform_owner";
   const [navCounts, setNavCounts] = useState<CapacityNavCounts | null>(null);
 
@@ -205,7 +205,8 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
         <nav className="flex flex-col gap-1.5" aria-label="Main Navigation">
           {NAV_ITEMS.filter((item) => {
             if (item.adminOnly && !isAdminOrOwner) return false;
-            if (item.hideForFrontDesk && isFrontDesk) return false;
+            if (item.minRole && !hasRole(storedRole as SessionRole, item.minRole as SessionRole)) return false;
+            if (item.hideForAnalyst && storedRole === "analyst") return false;
             return true;
           }).map((item) => {
             const Icon = item.icon;

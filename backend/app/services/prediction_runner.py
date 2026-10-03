@@ -88,6 +88,7 @@ def run_predictions(
                 db=db,
                 triggered_by=actor,
                 trigger="combined_run",
+                hospital_id=eff_hospital_id,
             )
             if sync_res.status == "failed":
                 logger.warning("HIS sync stage completed with errors: %s", sync_res.error)
@@ -108,12 +109,7 @@ def run_predictions(
         )
 
         if eff_hospital_id:
-            q = q.filter(
-                or_(
-                    models.Appointment.hospital_id == eff_hospital_id,
-                    models.Appointment.hospital_id.is_(None),
-                )
-            )
+            q = q.filter(models.Appointment.hospital_id == eff_hospital_id)
 
         if doctor_id:
             q = q.filter(models.Appointment.doctor_id == doctor_id)

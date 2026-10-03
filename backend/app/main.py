@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 
 from app import auth, geo, hospital, insights, models, outreach_drafter, schemas, shai_model
 from app.his import get_his_connector, connector as his_connector
-from app.services import capacity_service, geo_service, his_sync, model_eval, prediction_runner, roi, scoring
+from app.services import capacity_service, geo_service, his_sync, model_eval, prediction_runner, roi, scoring, sessions_view
 from app.services.uhid import LK_TZ
 from app.database import get_db
 
@@ -198,6 +198,20 @@ def _hospital_id(request: Request | None) -> uuid.UUID | None:
     return getattr(request.state, "hospital_id", None) if request is not None else None
 
 
+def _scoped(q, model, request: Request | None):
+    """Restrict a query to the user's hospital (platform owners, who have no hospital, see everything)."""
+    hid = _hospital_id(request)
+    return q.filter(model.hospital_id == hid) if hid else q
+
+
+def _in_scope(obj, request: Request | None, what: str = "Record"):
+    """404 when ``obj`` is missing or belongs to another hospital (never reveal that it exists)."""
+    hid = _hospital_id(request)
+    if obj is None or (hid and getattr(obj, "hospital_id", None) != hid):
+        raise HTTPException(status_code=404, detail=f"{what} not found")
+    return obj
+
+
 def _patient_history(db: Session, appointment: models.Appointment) -> tuple[int, int]:
     """(prior attended-or-no-show visits, prior no-shows) finished before this appointment was booked."""
     prior = (
@@ -257,10 +271,8 @@ def get_data_source(request: Request, db: Session = Depends(get_db)):
             "synthetic_share": (synthetic / total) if total else 0.0}
  
 @app.post("/predict", response_model=PredictionResponse)
-def predict_no_show(data: AppointmentRequest, db: Session = Depends(get_db)):
-    appointment = db.get(models.Appointment, data.appointment_id)
-    if appointment is None:
-        raise HTTPException(status_code=404, detail="Appointment not found")
+def predict_no_show(data: AppointmentRequest, request: Request, db: Session = Depends(get_db)):
+    appointment = _in_scope(db.get(models.Appointment, data.appointment_id), request, "Appointment")
 
     try:
         result = scoring.score_appointment(
@@ -275,17 +287,16 @@ def predict_no_show(data: AppointmentRequest, db: Session = Depends(get_db)):
         return result
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Prediction failed for appointment %s", data.appointment_id)
+        raise HTTPException(status_code=500, detail="Prediction failed")
 
 
 @app.post("/predict/preview")
-def predict_preview(data: schemas.PredictPreviewRequest, db: Session = Depends(get_db)):
+def predict_preview(data: schemas.PredictPreviewRequest, request: Request, db: Session = Depends(get_db)):
     if data.patient_id:
-        patient = db.get(models.Patient, data.patient_id)
-        if not patient:
-            raise HTTPException(status_code=404, detail="Patient not found")
+        patient = _in_scope(db.get(models.Patient, data.patient_id), request, "Patient")
     elif data.patient:
         patient = models.Patient(
             id=uuid.uuid4(),
@@ -313,7 +324,7 @@ def predict_preview(data: schemas.PredictPreviewRequest, db: Session = Depends(g
         raise HTTPException(status_code=400, detail="Either patient_id or patient must be provided")
 
     doctor = db.get(models.Doctor, data.doctor_id)
-    if not doctor:
+    if not doctor or (_hospital_id(request) and doctor.hospital_id not in (None, _hospital_id(request))):
         raise HTTPException(status_code=404, detail="Doctor not found")
 
     dept_name = doctor.department.model_category or doctor.department.name if doctor.department else "General Medicine"
@@ -347,6 +358,7 @@ def predict_preview(data: schemas.PredictPreviewRequest, db: Session = Depends(g
 
 @app.get("/patients/search", response_model=List[schemas.PatientSearchResult])
 def search_patients(
+    request: Request,
     q: str = Query("", min_length=1),
     limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
@@ -357,7 +369,7 @@ def search_patients(
 
     term = f"%{q_clean.lower()}%"
     patients = (
-        db.query(models.Patient)
+        _scoped(db.query(models.Patient), models.Patient, request)
         .filter(
             or_(
                 func.lower(models.Patient.phone).like(term),
@@ -409,12 +421,15 @@ def search_patients(
 @app.post("/appointments/intake", response_model=schemas.IntakeResponse)
 def create_appointment_intake(
     req: schemas.IntakeRequest,
-    current_user: Optional[models.User] = Depends(auth.require_user),
+    request: Request,
+    current_user: Optional[models.User] = Depends(auth.require_any_role(*auth.FRONT_LINE)),
     db: Session = Depends(get_db),
 ):
-    # 1. Validation: Doctor active
+    hospital_id = _hospital_id(request)
+    # 1. Validation: Doctor active and belongs to this hospital
     doctor = db.get(models.Doctor, req.doctor_id)
-    if not doctor or not doctor.active:
+    # Doctors with no hospital are shared reference data; otherwise they must belong to the user's hospital.
+    if not doctor or not doctor.active or (hospital_id and doctor.hospital_id not in (None, hospital_id)):
         raise HTTPException(status_code=400, detail="Doctor not found or inactive")
 
     if not req.clinic_session_id:
@@ -499,19 +514,17 @@ def create_appointment_intake(
     # 2. Upsert Patient
     patient = None
     if req.patient_id:
-        patient = db.get(models.Patient, req.patient_id)
-        if not patient:
-            raise HTTPException(status_code=404, detail="Patient not found")
+        patient = _in_scope(db.get(models.Patient, req.patient_id), request, "Patient")
     elif req.patient:
         if req.patient.nic and req.patient.nic.strip():
             patient = (
-                db.query(models.Patient)
+                _scoped(db.query(models.Patient), models.Patient, request)
                 .filter(func.lower(models.Patient.nic) == req.patient.nic.strip().lower())
                 .first()
             )
         if not patient and req.patient.phone and req.patient.phone.strip():
             patient = (
-                db.query(models.Patient)
+                _scoped(db.query(models.Patient), models.Patient, request)
                 .filter(
                     models.Patient.phone == req.patient.phone.strip(),
                     func.lower(models.Patient.full_name) == req.patient.full_name.strip().lower(),
@@ -531,6 +544,7 @@ def create_appointment_intake(
             new_uhid = generate_uhid(db)
             patient = models.Patient(
                 id=uuid.uuid4(),
+                hospital_id=hospital_id or doctor.hospital_id,
                 uhid=new_uhid,
                 full_name=req.patient.full_name.strip(),
                 date_of_birth=req.patient.date_of_birth,
@@ -615,9 +629,13 @@ def create_appointment_intake(
 
     appointment = models.Appointment(
         id=uuid.uuid4(),
+        hospital_id=hospital_id or doctor.hospital_id,
         patient_id=patient.id,
         doctor_id=doctor.id,
         clinic_session_id=session.id,
+        data_source="real",
+        heavy_rain=bool(req.heavy_rain),
+        fee_lkr=doctor.consultation_fee_lkr,
         doctor_name=f"{doctor.title} {doctor.full_name}".strip(),
         scheduled_day=today_lk,
         appointment_day=req.appointment_day,
@@ -704,7 +722,7 @@ def create_appointment_intake(
 # ======================
 # Patient CRUD
 # ======================
-@app.post("/patients", response_model=schemas.PatientOut, status_code=201)
+@app.post("/patients", response_model=schemas.PatientOut, status_code=201, dependencies=[Depends(auth.require_any_role(*auth.FRONT_LINE))])
 def create_patient(data: schemas.PatientCreate, request: Request, db: Session = Depends(get_db)):
     from app.services.uhid import generate_uhid
     fields = data.model_dump()
@@ -713,6 +731,8 @@ def create_patient(data: schemas.PatientCreate, request: Request, db: Session = 
     hospital_id = getattr(request.state, "hospital_id", None)
     if hospital_id:
         patient.hospital_id = hospital_id
+    else:
+        raise HTTPException(status_code=400, detail="A hospital is required to register a patient")
     if not patient.uhid:
         patient.uhid = generate_uhid(db)
     # Resolve the city to real coordinates and derive the distance from them, so the
@@ -743,31 +763,18 @@ def list_patients(request: Request, skip: int = 0, limit: int = 100, db: Session
 
 @app.get("/patients/{patient_id}", response_model=schemas.PatientOut)
 def get_patient(patient_id: uuid.UUID, request: Request, db: Session = Depends(get_db)):
-    patient = db.get(models.Patient, patient_id)
-    if patient is None:
-        raise HTTPException(status_code=404, detail="Patient not found")
-    hospital_id = getattr(request.state, "hospital_id", None)
-    if hospital_id and patient.hospital_id and patient.hospital_id != hospital_id:
-        raise HTTPException(status_code=404, detail="Patient not found")
-    return patient
+    return _in_scope(db.get(models.Patient, patient_id), request, "Patient")
 
 
 # ======================
 # Appointment CRUD
 # ======================
-@app.post("/appointments", response_model=schemas.AppointmentOut, status_code=201)
+@app.post("/appointments", response_model=schemas.AppointmentOut, status_code=201, dependencies=[Depends(auth.require_any_role(*auth.FRONT_LINE))])
 def create_appointment(data: schemas.AppointmentCreate, request: Request, db: Session = Depends(get_db)):
-    patient = db.get(models.Patient, data.patient_id)
-    if patient is None:
-        raise HTTPException(status_code=404, detail="Patient not found")
-    hospital_id = getattr(request.state, "hospital_id", None)
-    if hospital_id and patient.hospital_id and patient.hospital_id != hospital_id:
-        raise HTTPException(status_code=404, detail="Patient not found")
+    patient = _in_scope(db.get(models.Patient, data.patient_id), request, "Patient")
     appointment = models.Appointment(**data.model_dump())
-    if hospital_id:
-        appointment.hospital_id = hospital_id
-    elif patient.hospital_id:
-        appointment.hospital_id = patient.hospital_id
+    appointment.hospital_id = _hospital_id(request) or patient.hospital_id  # always set: tenancy filters rely on it
+    appointment.data_source = "real"
     db.add(appointment)
     db.commit()
     db.refresh(appointment)
@@ -825,31 +832,21 @@ def appointments_overview(
 
 @app.get("/appointments/{appointment_id}", response_model=schemas.AppointmentOut)
 def get_appointment(appointment_id: uuid.UUID, request: Request, db: Session = Depends(get_db)):
-    appointment = db.get(models.Appointment, appointment_id)
-    if appointment is None:
-        raise HTTPException(status_code=404, detail="Appointment not found")
-    hospital_id = getattr(request.state, "hospital_id", None)
-    if hospital_id and appointment.hospital_id and appointment.hospital_id != hospital_id:
-        raise HTTPException(status_code=404, detail="Appointment not found")
-    return appointment
+    return _in_scope(db.get(models.Appointment, appointment_id), request, "Appointment")
 
 
-@app.patch("/appointments/{appointment_id}/outcome", response_model=schemas.AppointmentOut)
+@app.patch("/appointments/{appointment_id}/outcome", response_model=schemas.AppointmentOut, dependencies=[Depends(auth.require_any_role(*auth.FRONT_LINE))])
 def record_appointment_outcome(
     appointment_id: uuid.UUID,
     data: schemas.AppointmentOutcomeUpdate,
     request: Request,
     db: Session = Depends(get_db),
 ):
-    appointment = db.get(models.Appointment, appointment_id)
-    if appointment is None:
-        raise HTTPException(status_code=404, detail="Appointment not found")
-    hospital_id = getattr(request.state, "hospital_id", None)
-    if hospital_id and appointment.hospital_id and appointment.hospital_id != hospital_id:
-        raise HTTPException(status_code=404, detail="Appointment not found")
-    appointment.no_show = data.no_show
+    appointment = _in_scope(db.get(models.Appointment, appointment_id), request, "Appointment")
+    appointment.no_show = None if data.cancelled else data.no_show  # a cancellation is not an attendance outcome
     if data.cancelled:
         appointment.status = "cancelled"
+        appointment.cancelled_at = datetime.now(timezone.utc)
     elif data.no_show is True:
         appointment.status = "no_show"
     elif data.no_show is False:
@@ -858,6 +855,12 @@ def record_appointment_outcome(
         appointment.status = "scheduled"
     if data.reason:
         appointment.no_show_reason = data.reason
+    if appointment.no_show is None:
+        appointment.outcome_recorded_at = appointment.outcome_recorded_by = appointment.outcome_source = None
+    else:
+        appointment.outcome_recorded_at = datetime.now(timezone.utc)
+        appointment.outcome_recorded_by = getattr(request.state.user, "email", None)
+        appointment.outcome_source = "staff"
     db.commit()
     db.refresh(appointment)
     return appointment
@@ -888,10 +891,9 @@ def _prediction_out(prediction: models.Prediction) -> schemas.PredictionOut:
 
 
 @app.get("/appointments/{appointment_id}/interventions", response_model=List[schemas.InterventionOut])
-def list_appointment_interventions(appointment_id: uuid.UUID, db: Session = Depends(get_db)):
+def list_appointment_interventions(appointment_id: uuid.UUID, request: Request, db: Session = Depends(get_db)):
     """Outreach conversations logged for one appointment, newest first."""
-    if db.get(models.Appointment, appointment_id) is None:
-        raise HTTPException(status_code=404, detail="Appointment not found")
+    _in_scope(db.get(models.Appointment, appointment_id), request, "Appointment")
     return (
         db.query(models.Intervention)
         .filter(models.Intervention.appointment_id == appointment_id)
@@ -901,7 +903,8 @@ def list_appointment_interventions(appointment_id: uuid.UUID, db: Session = Depe
 
 
 @app.get("/appointments/{appointment_id}/prediction", response_model=schemas.PredictionOut)
-def get_appointment_prediction(appointment_id: uuid.UUID, db: Session = Depends(get_db)):
+def get_appointment_prediction(appointment_id: uuid.UUID, request: Request, db: Session = Depends(get_db)):
+    _in_scope(db.get(models.Appointment, appointment_id), request, "Appointment")
     prediction = (
         db.query(models.Prediction)
         .filter(models.Prediction.appointment_id == appointment_id)
@@ -1054,13 +1057,14 @@ def list_doctors(
 
 @app.get("/doctors/{doctor_id}/availability", response_model=schemas.AvailabilityResponse)
 def get_doctor_availability(
+    request: Request,
     doctor_id: uuid.UUID,
     from_date: Optional[date] = Query(None, alias="from"),
     days: int = Query(21, ge=1, le=60),
     db: Session = Depends(get_db),
 ):
     doc = db.get(models.Doctor, doctor_id)
-    if not doc or not doc.active:
+    if not doc or not doc.active or (_hospital_id(request) and doc.hospital_id not in (None, _hospital_id(request))):
         raise HTTPException(status_code=404, detail="Doctor not found or inactive")
 
     start_date = from_date or datetime.now(LK_TZ).date()
@@ -1182,8 +1186,9 @@ def get_his_status(db: Session = Depends(get_db)):
     )
 
 
-@app.post("/his/sync", response_model=schemas.HISSyncResponse)
+@app.post("/his/sync", response_model=schemas.HISSyncResponse, dependencies=[Depends(auth.require_permission("his.sync"))])
 def trigger_his_sync(
+    request: Request,
     date_val: Optional[date] = Query(None, alias="date"),
     current_user: Optional[models.User] = Depends(auth.require_user),
     db: Session = Depends(get_db),
@@ -1197,6 +1202,7 @@ def trigger_his_sync(
         connector=connector,
         triggered_by=actor,
         trigger="manual",
+        hospital_id=_hospital_id(request),
     )
     return schemas.HISSyncResponse(
         run_id=result.run_id,
@@ -1211,7 +1217,7 @@ def trigger_his_sync(
     )
 
 
-@app.post("/his/simulate/arrivals", response_model=schemas.HISSimulateArrivalsResponse)
+@app.post("/his/simulate/arrivals", response_model=schemas.HISSimulateArrivalsResponse, dependencies=[Depends(auth.require_role("admin"))])
 def simulate_his_arrivals(
     count: int = Query(5, ge=1, le=50),
     db: Session = Depends(get_db),
@@ -1325,7 +1331,7 @@ def _run_predictions_background(
         bg_db.close()
 
 
-@app.post("/predictions/runs", response_model=schemas.PredictionRunResponse)
+@app.post("/predictions/runs", response_model=schemas.PredictionRunResponse, dependencies=[Depends(auth.require_role("analyst"))])
 def create_prediction_run(
     req: schemas.PredictionRunCreateRequest,
     background_tasks: BackgroundTasks,
@@ -1396,22 +1402,21 @@ def create_prediction_run(
 
 
 @app.get("/predictions/runs/{run_id}", response_model=schemas.PredictionRunResponse)
-def get_prediction_run(run_id: uuid.UUID, db: Session = Depends(get_db)):
-    run = db.get(models.PredictionRun, run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail="Prediction run not found")
+def get_prediction_run(run_id: uuid.UUID, request: Request, db: Session = Depends(get_db)):
+    run = _in_scope(db.get(models.PredictionRun, run_id), request, "Prediction run")
     return _prediction_run_response(run, db=db)
 
 
 @app.get("/predictions/today", response_model=schemas.PredictionTodayResponse)
 def get_predictions_today(
+    request: Request,
     target_date: Optional[date] = Query(None, alias="date"),
     db: Session = Depends(get_db),
 ):
     day = target_date or datetime.now(LK_TZ).date()
 
     appts = (
-        db.query(models.Appointment)
+        _scoped(db.query(models.Appointment), models.Appointment, request)
         .options(
             joinedload(models.Appointment.patient),
             joinedload(models.Appointment.prediction),
@@ -1477,10 +1482,7 @@ def get_predictions_today(
             if cat_lower == "high":
                 high_count += 1
                 grp["high"] += 1
-                fee = 4500.0
-                if a.doctor and a.doctor.department and a.doctor.department.default_consultation_fee_lkr:
-                    fee = float(a.doctor.department.default_consultation_fee_lkr)
-                lost_revenue += fee
+                lost_revenue += float(a.fee_lkr or (a.doctor.consultation_fee_lkr if a.doctor else 0.0) or 0.0)
             elif cat_lower == "medium":
                 medium_count += 1
                 grp["medium"] += 1
@@ -1547,7 +1549,7 @@ def get_predictions_today(
         db.query(models.HISSyncRun)
         .order_by(models.HISSyncRun.started_at.desc())
         .first()
-    )
+    )  # HIS sync runs are not tenant-scoped (see docs/KNOWN_GAPS.md)
     last_sync_time = last_sync.finished_at or last_sync.started_at if last_sync else None
     is_stale = False
     if last_sync_time:
@@ -1563,7 +1565,7 @@ def get_predictions_today(
     )
 
     last_run = (
-        db.query(models.PredictionRun)
+        _scoped(db.query(models.PredictionRun), models.PredictionRun, request)
         .filter(models.PredictionRun.run_date == day)
         .order_by(models.PredictionRun.started_at.desc())
         .first()
@@ -1584,66 +1586,27 @@ def get_predictions_today(
 # 1. Doctor Sessions & Queue Tracking
 # ===================================
 @app.get("/doctors/sessions", response_model=List[schemas.DoctorSessionOut])
-def list_doctor_sessions(db: Session = Depends(get_db)):
-    sessions = db.query(models.DoctorSession).order_by(models.DoctorSession.session_date.desc()).all()
-    if not sessions:
-        # Auto-seed default clinical sessions if empty
-        defaults = [
-            models.DoctorSession(
-                doctor_name="Dr. Rohan Perera",
-                specialty="Cardiology",
-                room_number="Room 204 (Asiri Central)",
-                session_date=pd.to_datetime("today").date(),
-                scheduled_start_time="17:00",
-                status="delayed",
-                delay_minutes=25,
-                avg_consultation_mins=12,
-                max_capacity=25,
-            ),
-            models.DoctorSession(
-                doctor_name="Dr. Neluka Fernando",
-                specialty="Neurology",
-                room_number="Room 108 (Hemas Wattala)",
-                session_date=pd.to_datetime("today").date(),
-                scheduled_start_time="18:00",
-                status="on_time",
-                delay_minutes=0,
-                avg_consultation_mins=15,
-                max_capacity=20,
-            ),
-            models.DoctorSession(
-                doctor_name="Dr. Anura Jayasinghe",
-                specialty="Orthopedics",
-                room_number="Room 312 (Asiri Surgical)",
-                session_date=pd.to_datetime("today").date(),
-                scheduled_start_time="16:30",
-                status="on_time",
-                delay_minutes=0,
-                avg_consultation_mins=10,
-                max_capacity=30,
-            ),
-        ]
-        for s in defaults:
-            db.add(s)
-        db.commit()
-        sessions = db.query(models.DoctorSession).all()
-    return sessions
+def list_doctor_sessions(request: Request, db: Session = Depends(get_db)):
+    """Today's running clinic sessions (timetable sessions with bookings) with their live delay."""
+    today = datetime.now(LK_TZ).date()
+    return [sessions_view.session_out(s, today) for s in sessions_view.running_sessions(db, _hospital_id(request), today)]
 
 
 @app.patch("/doctors/sessions/{session_id}/delay", response_model=schemas.DoctorSessionOut, dependencies=[Depends(auth.require_role("manager"))])
 def update_doctor_delay(
     session_id: uuid.UUID,
     data: schemas.DoctorSessionDelayUpdate,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-    session = db.get(models.DoctorSession, session_id)
-    if not session:
+    session = db.get(models.DoctorClinicSession, session_id)
+    if session is None or (_hospital_id(request) and session.doctor.hospital_id != _hospital_id(request)):
         raise HTTPException(status_code=404, detail="Doctor session not found")
     session.delay_minutes = data.delay_minutes
-    session.status = data.status
+    session.delay_status = data.status
     db.commit()
     db.refresh(session)
-    return session
+    return sessions_view.session_out(session, datetime.now(LK_TZ).date())
 
 
 # ===================================
@@ -1829,110 +1792,148 @@ def get_capacity_nav_counts(request: Request, db: Session = Depends(get_db)):
 # ===================================
 # 3. Dynamic Waitlist Management
 # ===================================
-@app.get("/capacity/waitlist", response_model=List[schemas.WaitlistOut])
-def get_waitlist(db: Session = Depends(get_db)):
-    items = db.query(models.WaitlistEntry).order_by(models.WaitlistEntry.created_at.desc()).all()
-    if not items:
-        # Default seed waitlist
-        defaults = [
-            models.WaitlistEntry(
-                patient_name="Sunil Jayawardena",
-                patient_phone="+94774567890",
-                specialty="Cardiology",
-                doctor_name="Dr. Rohan Perera",
-                urgency_level="High",
-                preferred_days="Weekday evenings",
-                status="waiting",
-            ),
-            models.WaitlistEntry(
-                patient_name="Malini Dias",
-                patient_phone="+94775678901",
-                specialty="Neurology",
-                doctor_name="Dr. Neluka Fernando",
-                urgency_level="Normal",
-                preferred_days="Any evening",
-                status="waiting",
-            ),
-            models.WaitlistEntry(
-                patient_name="Chaminda Vaas",
-                patient_phone="+94776789012",
-                specialty="Orthopedics",
-                doctor_name="Dr. Anura Jayasinghe",
-                urgency_level="Routine",
-                preferred_days="Saturdays",
-                status="waiting",
-            ),
-        ]
-        for w in defaults:
-            db.add(w)
-        db.commit()
-        items = db.query(models.WaitlistEntry).all()
-    return items
+@app.get("/capacity/waitlist", response_model=List[schemas.WaitlistOut],
+         dependencies=[Depends(auth.require_any_role(*auth.FRONT_LINE))])
+def get_waitlist(request: Request, db: Session = Depends(get_db)):
+    return (
+        _scoped(db.query(models.WaitlistEntry), models.WaitlistEntry, request)
+        .order_by(models.WaitlistEntry.created_at.desc())
+        .all()
+    )
 
 
-@app.post("/capacity/waitlist/{waitlist_id}/assign", response_model=schemas.WaitlistOut)
-def assign_waitlist_slot(waitlist_id: uuid.UUID, db: Session = Depends(get_db)):
-    entry = db.get(models.WaitlistEntry, waitlist_id)
-    if not entry:
-        raise HTTPException(status_code=404, detail="Waitlist entry not found")
-    entry.status = "offered"
+@app.post("/capacity/waitlist", response_model=schemas.WaitlistOut, status_code=201,
+          dependencies=[Depends(auth.require_any_role(*auth.FRONT_LINE))])
+def create_waitlist_entry(data: schemas.WaitlistCreate, request: Request, db: Session = Depends(get_db)):
+    patient = None
+    if data.patient_id:
+        patient = _in_scope(db.get(models.Patient, data.patient_id), request, "Patient")
+    entry = models.WaitlistEntry(
+        hospital_id=_hospital_id(request),
+        patient_id=patient.id if patient else None,
+        patient_name=patient.full_name if patient else data.patient_name,
+        patient_phone=(patient.phone if patient and patient.phone else data.patient_phone),
+        specialty=data.specialty,
+        doctor_name=data.doctor_name,
+        urgency_level=data.urgency_level,
+        preferred_days=data.preferred_days,
+        status="waiting",
+    )
+    db.add(entry)
     db.commit()
     db.refresh(entry)
     return entry
+
+
+def _find_free_slot(db: Session, request: Request, entry: models.WaitlistEntry, horizon_days: int = 28):
+    """Earliest (doctor, session, date) with a free seat for the entry's specialty, preferring the named doctor."""
+    hid = _hospital_id(request)
+    doctors_q = (
+        db.query(models.Doctor)
+        .options(joinedload(models.Doctor.department), joinedload(models.Doctor.sessions))
+        .filter(models.Doctor.active.is_(True))
+    )
+    if hid:
+        doctors_q = doctors_q.filter(or_(models.Doctor.hospital_id == hid, models.Doctor.hospital_id.is_(None)))
+    spec = (entry.specialty or "").strip().lower()
+    want = (entry.doctor_name or "").strip().lower().replace("dr.", "").strip()
+    doctors = [
+        d for d in doctors_q.all()
+        if d.department and spec in {(d.department.name or "").lower(), (d.department.model_category or "").lower()}
+    ]
+    doctors.sort(key=lambda d: (0 if want and want in d.full_name.lower() else 1, d.full_name))
+    today = datetime.now(LK_TZ).date()
+    for offset in range(1, horizon_days + 1):
+        day = today + timedelta(days=offset)
+        for d in doctors:
+            for sess in sorted((x for x in d.sessions if x.active and x.weekday == day.weekday()), key=lambda x: x.start_time):
+                booked = (
+                    db.query(models.Appointment)
+                    .filter(
+                        models.Appointment.clinic_session_id == sess.id,
+                        models.Appointment.appointment_day == day,
+                        models.Appointment.status != "cancelled",
+                    )
+                    .count()
+                )
+                if booked < sess.max_patients:
+                    return d, sess, day
+    return None
+
+
+@app.post("/capacity/waitlist/{waitlist_id}/assign", response_model=schemas.WaitlistAssignOut,
+          dependencies=[Depends(auth.require_any_role(*auth.FRONT_LINE))])
+def assign_waitlist_slot(
+    waitlist_id: uuid.UUID,
+    request: Request,
+    current_user: models.User = Depends(auth.require_user),
+    db: Session = Depends(get_db),
+):
+    """Book the waitlisted patient into the earliest free seat of a matching clinic session (a real appointment)."""
+    entry = _in_scope(db.get(models.WaitlistEntry, waitlist_id), request, "Waitlist entry")
+    if entry.status == "accepted":
+        raise HTTPException(status_code=409, detail="This waitlist entry has already been booked")
+
+    patient = db.get(models.Patient, entry.patient_id) if entry.patient_id else None
+    if patient is None and entry.patient_phone:
+        patient = (
+            _scoped(db.query(models.Patient), models.Patient, request)
+            .filter(models.Patient.phone == entry.patient_phone.strip(),
+                    func.lower(models.Patient.full_name) == entry.patient_name.strip().lower())
+            .first()
+        )
+    if patient is None:
+        raise HTTPException(
+            status_code=422,
+            detail="No registered patient matches this waitlist entry. Register the patient first, then assign.",
+        )
+
+    slot = _find_free_slot(db, request, entry)
+    if slot is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"No free slot in the next 28 days for {entry.specialty}"
+                   f"{' with ' + entry.doctor_name if entry.doctor_name else ''}.",
+        )
+    doctor, sess, day = slot
+
+    result = create_appointment_intake(
+        schemas.IntakeRequest(
+            patient_id=patient.id, doctor_id=doctor.id, clinic_session_id=sess.id, appointment_day=day,
+            booking_channel="Phone", payment_mode="Cash", notes="Booked from the waitlist",
+        ),
+        request, current_user, db,
+    )
+    entry.status = "accepted"
+    entry.patient_id = patient.id
+    db.commit()
+    db.refresh(entry)
+    return schemas.WaitlistAssignOut(
+        **schemas.WaitlistOut.model_validate(entry).model_dump(),
+        appointment_id=result.appointment.id,
+        appointment_day=result.appointment.appointment_day,
+        booked_doctor=result.slot.doctor,
+        start_time=result.slot.start_time,
+        token=result.slot.token,
+    )
 
 
 # ===================================
 # 4. Trilingual Autonomous Agent Hub
 # ===================================
 @app.get("/outreach/conversations", response_model=List[schemas.InterventionOut])
-def list_conversations(db: Session = Depends(get_db)):
-    interventions = db.query(models.Intervention).order_by(models.Intervention.created_at.desc()).all()
-    if not interventions:
-        # Seed realistic trilingual conversations
-        appts = db.query(models.Appointment).limit(3).all()
-        if appts:
-            examples = [
-                models.Intervention(
-                    appointment_id=appts[0].id,
-                    channel="WhatsApp",
-                    language="si",
-                    status="rescheduled",
-                    patient_reply="Mata heta enna bahe, wadata yanna thiyenawa. Saturday puluwanda?",
-                    intent_detected="Reschedule Request (Sinhala)",
-                    offered_slot="Saturday 10:00 AM (Token #8)",
-                ),
-                models.Intervention(
-                    appointment_id=appts[1].id if len(appts) > 1 else appts[0].id,
-                    channel="WhatsApp",
-                    language="en",
-                    status="confirmed",
-                    patient_reply="Yes, I will be attending tomorrow at 5:30 PM. Thank you.",
-                    intent_detected="Confirmation (English)",
-                    offered_slot="Slot Confirmed",
-                ),
-                models.Intervention(
-                    appointment_id=appts[2].id if len(appts) > 2 else appts[0].id,
-                    channel="WhatsApp",
-                    language="ta",
-                    status="telehealth_requested",
-                    patient_reply="Vara mudiyadhu. Video call moolam doctor paarkka mudiyuma?",
-                    intent_detected="Telehealth Switch (Tamil)",
-                    offered_slot="Teleconsultation Link Generated",
-                ),
-            ]
-            for ex in examples:
-                db.add(ex)
-            db.commit()
-            interventions = db.query(models.Intervention).all()
-    return interventions
+def list_conversations(request: Request, db: Session = Depends(get_db)):
+    q = db.query(models.Intervention)
+    hid = _hospital_id(request)
+    if hid:
+        q = q.filter(models.Intervention.hospital_id == hid)
+    return q.order_by(models.Intervention.created_at.desc()).all()
 
 
-@app.post("/outreach/draft", response_model=schemas.OutreachDraftResponse)
-def draft_outreach_message(req: schemas.OutreachDraftRequest, db: Session = Depends(get_db)):
+@app.post("/outreach/draft", response_model=schemas.OutreachDraftResponse, dependencies=[Depends(auth.require_any_role(*auth.FRONT_LINE))])
+def draft_outreach_message(req: schemas.OutreachDraftRequest, request: Request, db: Session = Depends(get_db)):
     """AI-drafted reminder for staff to review (not sent). Falls back to a template."""
-    appt = db.get(models.Appointment, req.appointment_id)
-    if appt is None:
-        raise HTTPException(status_code=404, detail="Appointment not found")
+    appt = _in_scope(db.get(models.Appointment, req.appointment_id), request, "Appointment")
 
     prediction = (
         db.query(models.Prediction).filter(models.Prediction.appointment_id == appt.id).first()
@@ -1955,11 +1956,9 @@ def draft_outreach_message(req: schemas.OutreachDraftRequest, db: Session = Depe
     )
 
 
-@app.post("/outreach/simulate-agent", response_model=schemas.AgentSimulateResponse)
-def simulate_patient_agent(req: schemas.AgentSimulateRequest, db: Session = Depends(get_db)):
-    appt = db.get(models.Appointment, req.appointment_id)
-    if not appt:
-        raise HTTPException(status_code=404, detail="Appointment not found")
+@app.post("/outreach/simulate-agent", response_model=schemas.AgentSimulateResponse, dependencies=[Depends(auth.require_any_role(*auth.FRONT_LINE))])
+def simulate_patient_agent(req: schemas.AgentSimulateRequest, request: Request, db: Session = Depends(get_db)):
+    appt = _in_scope(db.get(models.Appointment, req.appointment_id), request, "Appointment")
 
     msg = req.patient_message.lower()
     
@@ -2076,6 +2075,7 @@ def simulate_patient_agent(req: schemas.AgentSimulateRequest, db: Session = Depe
 
     # Save intervention record
     intervention = models.Intervention(
+        hospital_id=appt.hospital_id,
         appointment_id=appt.id,
         channel="WhatsApp",
         language=req.language,
@@ -2152,63 +2152,29 @@ def _ensure_expense_categories(db: Session) -> list[models.ExpenseCategory]:
     return cats
 
 
-def _ensure_default_expenses(db: Session, categories: list[models.ExpenseCategory]) -> list[models.HospitalExpense]:
-    expenses = db.query(models.HospitalExpense).all()
-    if not expenses:
-        cat_map = {c.key: c.id for c in categories}
-        initial_items = [
-            models.HospitalExpense(
-                hospital_name="Default Hospital",
-                category_id=cat_map.get("patient_incentives", categories[0].id),
-                title="PickMe & Transport Vouchers for Chronic Patients",
-                amount_lkr=450000.0,
-                recurrence="annual",
-                is_active=True,
-                notes="Subsidized transport for elderly diabetic/cardiac patients travelling > 15 km",
-            ),
-            models.HospitalExpense(
-                hospital_name="Default Hospital",
-                category_id=cat_map.get("telco_outreach", categories[1].id),
-                title="Dialog SMS & WhatsApp Gateway Package",
-                amount_lkr=380000.0,
-                recurrence="annual",
-                is_active=True,
-                notes="Monthly bulk SMS quota and WhatsApp session messages",
-            ),
-            models.HospitalExpense(
-                hospital_name="Default Hospital",
-                category_id=cat_map.get("tech_infrastructure", categories[2].id),
-                title="SHAI Core Platform & HIS Integration Run-rate",
-                amount_lkr=1800000.0,
-                recurrence="annual",
-                is_active=True,
-                notes="Fixed annual infrastructure, server run-rate, and model maintenance",
-            ),
-        ]
-        db.add_all(initial_items)
-        db.commit()
-        expenses = db.query(models.HospitalExpense).all()
-    return expenses
-
-
 @app.get("/expenses/categories", response_model=List[schemas.ExpenseCategoryResponse], dependencies=[Depends(auth.require_role("manager"))])
 def list_expense_categories(db: Session = Depends(get_db)):
     return _ensure_expense_categories(db)
 
 
 @app.get("/expenses", response_model=List[schemas.HospitalExpenseResponse], dependencies=[Depends(auth.require_role("manager"))])
-def list_hospital_expenses(db: Session = Depends(get_db)):
-    cats = _ensure_expense_categories(db)
-    _ensure_default_expenses(db, cats)
-    return db.query(models.HospitalExpense).join(models.ExpenseCategory).order_by(models.HospitalExpense.created_at.desc()).all()
+def list_hospital_expenses(request: Request, db: Session = Depends(get_db)):
+    _ensure_expense_categories(db)
+    return (
+        _scoped(db.query(models.HospitalExpense), models.HospitalExpense, request)
+        .join(models.ExpenseCategory)
+        .order_by(models.HospitalExpense.created_at.desc())
+        .all()
+    )
 
 
 @app.post("/expenses", response_model=schemas.HospitalExpenseResponse, dependencies=[Depends(auth.require_role("manager"))])
-def create_hospital_expense(expense: schemas.HospitalExpenseCreate, db: Session = Depends(get_db)):
+def create_hospital_expense(expense: schemas.HospitalExpenseCreate, request: Request, db: Session = Depends(get_db)):
     cat = db.get(models.ExpenseCategory, expense.category_id)
     if not cat:
         raise HTTPException(status_code=404, detail="Expense category not found")
     record = models.HospitalExpense(
+        hospital_id=_hospital_id(request),
         hospital_name=expense.hospital_name,
         category_id=expense.category_id,
         title=expense.title.strip(),
@@ -2224,11 +2190,9 @@ def create_hospital_expense(expense: schemas.HospitalExpenseCreate, db: Session 
 
 
 @app.patch("/expenses/{expense_id}", response_model=schemas.HospitalExpenseResponse, dependencies=[Depends(auth.require_role("manager"))])
-def update_hospital_expense(expense_id: uuid.UUID, updates: schemas.HospitalExpenseUpdate, db: Session = Depends(get_db)):
-    record = db.get(models.HospitalExpense, expense_id)
-    if not record:
-        raise HTTPException(status_code=404, detail="Hospital expense not found")
-    
+def update_hospital_expense(expense_id: uuid.UUID, updates: schemas.HospitalExpenseUpdate, request: Request, db: Session = Depends(get_db)):
+    record = _in_scope(db.get(models.HospitalExpense, expense_id), request, "Hospital expense")
+
     if updates.category_id is not None:
         cat = db.get(models.ExpenseCategory, updates.category_id)
         if not cat:
@@ -2253,10 +2217,8 @@ def update_hospital_expense(expense_id: uuid.UUID, updates: schemas.HospitalExpe
 
 
 @app.delete("/expenses/{expense_id}", dependencies=[Depends(auth.require_role("manager"))])
-def delete_hospital_expense(expense_id: uuid.UUID, db: Session = Depends(get_db)):
-    record = db.get(models.HospitalExpense, expense_id)
-    if not record:
-        raise HTTPException(status_code=404, detail="Hospital expense not found")
+def delete_hospital_expense(expense_id: uuid.UUID, request: Request, db: Session = Depends(get_db)):
+    record = _in_scope(db.get(models.HospitalExpense, expense_id), request, "Hospital expense")
     db.delete(record)
     db.commit()
     return {"ok": True, "id": str(expense_id)}

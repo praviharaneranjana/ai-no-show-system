@@ -612,6 +612,7 @@ class OutreachDraftResponse(BaseModel):
 
 
 class WaitlistCreate(BaseModel):
+    patient_id: uuid.UUID | None = None
     patient_name: str
     patient_phone: str
     specialty: str
@@ -626,6 +627,15 @@ class WaitlistOut(WaitlistCreate):
     id: uuid.UUID
     status: str
     created_at: datetime
+
+
+class WaitlistAssignOut(WaitlistOut):
+    """The waitlist entry plus the real appointment that was created for it."""
+    appointment_id: uuid.UUID
+    appointment_day: date
+    booked_doctor: str
+    start_time: str
+    token: int | None = None
 
 
 class CapacityOptimizeRequest(BaseModel):

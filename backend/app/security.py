@@ -22,9 +22,9 @@ logger = logging.getLogger("noshow_api")
 ROLE_RANK = {
     "front_desk": 1,
     "analyst": 2,
-    "manager": 2,
-    "admin": 3,
-    "platform_owner": 4,
+    "manager": 3,
+    "admin": 4,
+    "platform_owner": 5,
 }
 ROLES = ("front_desk", "analyst", "manager", "admin", "platform_owner")
 

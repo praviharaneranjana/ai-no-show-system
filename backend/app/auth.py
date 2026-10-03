@@ -161,6 +161,24 @@ def require_role(minimum: str):
     return dependency
 
 
+# Roles that run the front line (book, record outcomes, work the waitlist, send outreach). Analysts are read-only.
+FRONT_LINE = ("front_desk", "manager", "admin", "platform_owner")
+
+
+def require_any_role(*allowed: str):
+    """Dependency factory: allow exactly the listed roles (rank is not enough: an analyst outranks front_desk
+    but must not be able to write)."""
+    allowed_set = set(allowed)
+
+    def dependency(request: Request, user: models.User | None = Depends(require_user)) -> models.User:
+        role = getattr(request.state, "role", getattr(user, "role", "front_desk"))
+        if role not in allowed_set:
+            raise HTTPException(status_code=403, detail=f"This action requires one of: {', '.join(allowed)}.")
+        return user
+
+    return dependency
+
+
 def require_permission(permission: str):
     """Dependency factory: verify active role possesses the required permission."""
     def dependency(request: Request, user: models.User | None = Depends(require_user)) -> models.User:
