@@ -194,13 +194,13 @@ def get_recommendation(score: float) -> str:
     return shai.recommendation(shai.category(score))
 
 def _patient_history(db: Session, appointment: models.Appointment) -> tuple[int, int]:
-    """(prior attended-or-no-show visits, prior no-shows) before this appointment's date."""
+    """(prior attended-or-no-show visits, prior no-shows) finished before this appointment was booked."""
     prior = (
         db.query(models.Appointment.no_show)
         .filter(
             models.Appointment.patient_id == appointment.patient_id,
             models.Appointment.id != appointment.id,
-            models.Appointment.appointment_day < appointment.appointment_day,
+            models.Appointment.appointment_day < appointment.scheduled_day,
             models.Appointment.no_show.isnot(None),
         )
         .all()

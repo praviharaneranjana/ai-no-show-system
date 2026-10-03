@@ -35,13 +35,13 @@ def score_appointment(
         shai_instance = shai
 
     patient = appointment.patient
-    # Prior appointments & no-shows before this appointment day
+    # Prior appointments & no-shows known at booking time (same rule as the training notebook)
     prior = (
         db.query(models.Appointment.no_show)
         .filter(
             models.Appointment.patient_id == appointment.patient_id,
             models.Appointment.id != appointment.id,
-            models.Appointment.appointment_day < appointment.appointment_day,
+            models.Appointment.appointment_day < appointment.scheduled_day,  # finished before this one was booked
             models.Appointment.no_show.isnot(None),
         )
         .all()
@@ -79,7 +79,7 @@ def score_appointment(
         diabetes=patient.diabetes if patient else False,
         prior_appts=prior_appts,
         prior_no_shows=prior_no_shows,
-        heavy_rain=1 if heavy_rain else 0,
+        heavy_rain=1 if (appointment.heavy_rain if heavy_rain is None else heavy_rain) else 0,
     )
 
     df = shai_instance.frame([features])
@@ -110,6 +110,7 @@ def score_appointment(
             existing.risk_category = category
             existing.explanation = explanation_payload
             existing.recommendation = recommendation
+            existing.model_version = shai_instance.version
         else:
             db.add(
                 models.Prediction(
@@ -118,6 +119,8 @@ def score_appointment(
                     risk_category=category,
                     explanation=explanation_payload,
                     recommendation=recommendation,
+                    model_version=shai_instance.version,
+                    hospital_id=appointment.hospital_id,
                 )
             )
 

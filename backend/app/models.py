@@ -347,6 +347,9 @@ class Appointment(Base):
     outcome_recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     outcome_recorded_by: Mapped[str | None] = mapped_column(Text, nullable=True)
     outcome_source: Mapped[str | None] = mapped_column(Text, nullable=True)  # staff, system, his_sync
+    data_source: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)  # synthetic, real
+    heavy_rain: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    fee_lkr: Mapped[float | None] = mapped_column(Float, nullable=True)  # fee charged for this visit
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     patient: Mapped["Patient"] = relationship(back_populates="appointments")
@@ -368,6 +371,7 @@ class Prediction(Base):
     risk_category: Mapped[str] = mapped_column(String, nullable=False)
     explanation: Mapped[dict] = mapped_column(JSONB, nullable=False)
     recommendation: Mapped[str] = mapped_column(String, nullable=False)
+    model_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     appointment: Mapped["Appointment"] = relationship(back_populates="prediction")
