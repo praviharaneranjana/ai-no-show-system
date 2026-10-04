@@ -307,8 +307,9 @@ def update_hospital_profile(
     db.add(
         models.HospitalAuditLog(
             hospital_id=hospital.id,
-            actor_user_id=admin.id,
+            user_id=admin.id,
             action="hospital_profile_updated",
+            entity_type="hospitals",
             details=changed,
         )
     )
@@ -459,7 +460,7 @@ def list_hospital_audit(
     )
     results = []
     for log in logs:
-        actor = db.get(models.User, log.actor_user_id) if log.actor_user_id else None
+        actor = db.get(models.User, log.user_id) if log.user_id else None
         results.append(
             HospitalAuditOut(
                 id=log.id,

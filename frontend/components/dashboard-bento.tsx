@@ -151,16 +151,19 @@ export function DashboardBento({ records, doctorSessions, trend, activity, regis
 
       {/* Consultant Punctuality Status Strip */}
       {doctorSessions.length > 0 && (
-        <div className="flex items-center gap-2.5 overflow-x-auto rounded-[20px] border border-border bg-card p-3 shadow-xs">
+        <div className="flex items-center gap-2.5 overflow-hidden rounded-[20px] border border-border bg-card p-3 shadow-xs">
           <div className="flex items-center gap-1.5 pl-1 pr-2 text-xs font-bold text-muted-foreground shrink-0">
             <Clock className="size-4 text-[#8B7CF6]" />
             <span>Clinic Sessions:</span>
           </div>
 
-          <div className="flex items-center gap-2">
-            {doctorSessions.map((s) => (
+          <div className="min-w-0 flex-1 overflow-hidden">
+            <div className="shai-marquee flex w-max items-center gap-2 hover:[animation-play-state:paused]">
+            {[...doctorSessions, ...doctorSessions].map((s, i) => (
               <Link
-                key={s.id}
+                key={`${s.id}-${i}`}
+                aria-hidden={i >= doctorSessions.length || undefined}
+                tabIndex={i >= doctorSessions.length ? -1 : undefined}
                 href={`/sessions/${s.id}`}
                 title="Open session detail"
                 className="flex items-center gap-2 rounded-xl bg-muted/60 px-3 py-1.5 text-xs shrink-0 transition-colors hover:bg-[#8B7CF6]/10"
@@ -184,6 +187,7 @@ export function DashboardBento({ records, doctorSessions, trend, activity, regis
                 )}
               </Link>
             ))}
+            </div>
           </div>
         </div>
       )}
@@ -379,7 +383,7 @@ export function DashboardBento({ records, doctorSessions, trend, activity, regis
           </div>
 
           <div className="pt-3 border-t border-border/60 flex items-center justify-between text-[11px] text-muted-foreground">
-            <span>Base: Colombo General Hospital</span>
+            <span>Base: Asiri Central Hospital</span>
             <span className="font-semibold text-[#8B7CF6]">Town-level location</span>
           </div>
         </div>

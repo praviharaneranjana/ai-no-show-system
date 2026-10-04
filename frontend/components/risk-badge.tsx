@@ -1,3 +1,4 @@
+import { riskPctLabel } from "@/lib/risk-display";
 import { AlertTriangle, AlertCircle, CheckCircle2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -59,7 +60,7 @@ export function RiskBadge({
       <span>{category} risk</span>
       {typeof score === "number" && (
         <span className="ml-0.5 opacity-90 tabular-nums">
-          ({Math.round(score * 100)}%)
+          ({riskPctLabel(score)})
         </span>
       )}
     </Badge>

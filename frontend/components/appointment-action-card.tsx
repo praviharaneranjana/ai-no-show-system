@@ -229,7 +229,7 @@ export function AppointmentActionCard({
   return (
     <section
       aria-label="Patient outreach actions"
-      className={cn("flex flex-col gap-4 rounded-[24px] border bg-gradient-to-br to-card p-5 bento-card-shadow", TIER[category] ?? "border-border")}
+      className={cn("flex flex-col gap-4 rounded-[24px] border bg-gradient-to-br to-card p-5 bento-card-shadow", done ? TIER.Low : (TIER[category] ?? "border-border"))}
     >
       {/* 1. Header: title and why */}
       <div className="min-w-0">

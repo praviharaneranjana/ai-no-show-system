@@ -68,11 +68,10 @@ export function ForecastView({ initialForecast, departments }: ForecastViewProps
     forecast.total_expected_no_shows ??
     forecast.summary?.total_expected_no_shows ??
     0;
-  const expected_no_shows_range =
-    forecast.expected_no_shows_range ?? [
-      Math.max(0, total_expected_no_shows - 2),
-      total_expected_no_shows + 2,
-    ];
+  const expected_no_shows_range = [
+    forecast.expected_no_shows_range?.[0] ?? forecast.summary?.expected_no_shows_interval_low ?? total_expected_no_shows,
+    forecast.expected_no_shows_range?.[1] ?? forecast.summary?.expected_no_shows_interval_high ?? total_expected_no_shows,
+  ];
   const total_recommended_overbooks =
     forecast.total_recommended_overbooks ??
     forecast.summary?.total_bufferable_overbooks ??
@@ -84,7 +83,7 @@ export function ForecastView({ initialForecast, departments }: ForecastViewProps
   const daily_forecast =
     forecast.daily_forecast ??
     (Array.isArray(forecast.days) ? forecast.days : []);
-  const department_breakdown = forecast.department_breakdown ?? [];
+  const department_breakdown = forecast.department_breakdown ?? forecast.departments ?? [];
 
   // Confidence band data for Recharts
   const chartData = daily_forecast.map((d) => ({
@@ -164,10 +163,10 @@ export function ForecastView({ initialForecast, departments }: ForecastViewProps
           value={total_expected_no_shows}
           icon={AlertTriangle}
           delta={{
-            value: `80% CI: [${expected_no_shows_range[0]} - ${expected_no_shows_range[1]}]`,
+            value: `80% sampling range: ${expected_no_shows_range[0]} – ${expected_no_shows_range[1]}`,
             isPositive: false,
           }}
-          subvalue="AI probability estimate"
+          subvalue="Assumes calibrated, independent scores"
         />
         <SharedKpiCard
           title="Rec. Overbooks"

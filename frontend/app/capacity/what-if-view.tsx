@@ -231,7 +231,7 @@ export function WhatIfView({ onBack }: WhatIfViewProps) {
           <DateField value={targetDate} onChange={setTargetDate} />
           <LeverField
             label="Cost per overflow patient"
-            hint="Assumption"
+            hint="Assumption (default 4× the fee, LKR 10,000)"
             value={waitCost}
             fallback={saved.wait}
             min={0}

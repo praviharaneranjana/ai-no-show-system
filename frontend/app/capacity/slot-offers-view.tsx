@@ -49,6 +49,25 @@ export function SlotOffersView({ initialOffers }: SlotOffersViewProps) {
   const openOffers = offers.filter((o) => o.status === "proposed");
   const completedOffers = offers.filter((o) => o.status === "approved" || o.status === "declined");
 
+  const topCandidates = openOffers.map((o) => o.candidates?.[0]).filter((c): c is SlotOfferCandidate => !!c);
+  const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+  const avgTopScore = avg(topCandidates.map((c) => c.total_score));
+  const avgTopRisk = avg(topCandidates.map((c) => c.predicted_no_show_prob * 100));
+  const totalRanked = openOffers.reduce((n, o) => n + (o.candidates?.length ?? 0), 0);
+  const summaryStats = [
+    { label: "Open freed slots", value: String(openOffers.length), hint: "awaiting backfill" },
+    { label: "Standby patients ranked", value: String(totalRanked), hint: "across all open slots" },
+    { label: "Avg top-match score", value: avgTopScore === null ? "–" : `${avgTopScore.toFixed(0)} / 100`, hint: "best candidate per slot" },
+    { label: "Avg top-match no-show risk", value: avgTopRisk === null ? "–" : `${avgTopRisk.toFixed(0)}%`, hint: "lower = more reliable fill" },
+  ];
+  const scoreLegend = [
+    { label: "Specialty match", color: "bg-sky-500" },
+    { label: "Reliability", color: "bg-emerald-500" },
+    { label: "Wait time", color: "bg-primary" },
+    { label: "Urgency", color: "bg-rose-500" },
+    { label: "Proximity", color: "bg-amber-500" },
+  ];
+
   async function handleAct(offerId: string, action: "approve" | "decline" | "undo") {
     startTransition(async () => {
       const updated = await actOnSlotOfferAction(offerId, action);
@@ -97,6 +116,17 @@ export function SlotOffersView({ initialOffers }: SlotOffersViewProps) {
             </span>
           </div>
         </div>
+      </div>
+
+      {/* Summary strip */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {summaryStats.map((st) => (
+          <div key={st.label} className="rounded-2xl bg-card border border-border/60 p-4 flex flex-col gap-1 shadow-xs">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{st.label}</span>
+            <span className="text-2xl font-bold text-foreground tabular-nums">{st.value}</span>
+            <span className="text-[11px] text-muted-foreground">{st.hint}</span>
+          </div>
+        ))}
       </div>
 
       {recentAction && (
@@ -193,9 +223,19 @@ export function SlotOffersView({ initialOffers }: SlotOffersViewProps) {
 
                   {/* Ranked Candidates List */}
                   <div className="flex flex-col gap-3">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-                      Ranked Waitlist Candidates ({candidates.length})
-                    </span>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        Ranked Waitlist Candidates ({candidates.length})
+                      </span>
+                      <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                        {scoreLegend.map((l) => (
+                          <span key={l.label} className="flex items-center gap-1">
+                            <span className={cn("size-2 rounded-full", l.color)} />
+                            {l.label}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
 
                     <div className="grid grid-cols-1 gap-2.5">
                       {candidates.map((cand, idx) => {
@@ -251,10 +291,11 @@ export function SlotOffersView({ initialOffers }: SlotOffersViewProps) {
                                   <span className="text-foreground font-bold">{cand.total_score} / 100</span>
                                 </div>
                                 <div className="w-full h-2 rounded-full bg-muted/40 overflow-hidden flex">
-                                  <div style={{ width: `${(bd.reliability ?? 30)}%` }} className="bg-emerald-500" title="Reliability" />
-                                  <div style={{ width: `${(bd.wait_time ?? 25)}%` }} className="bg-primary" title="Wait Time" />
-                                  <div style={{ width: `${(bd.urgency ?? 20)}%` }} className="bg-rose-500" title="Urgency" />
-                                  <div style={{ width: `${(bd.distance ?? 15)}%` }} className="bg-amber-500" title="Proximity" />
+                                  <div style={{ width: `${bd.specialty_doctor_match ?? 0}%` }} className="bg-sky-500" title="Specialty match" />
+                                  <div style={{ width: `${bd.attendance_reliability ?? 0}%` }} className="bg-emerald-500" title="Reliability" />
+                                  <div style={{ width: `${bd.waiting_time_priority ?? 0}%` }} className="bg-primary" title="Wait time" />
+                                  <div style={{ width: `${bd.clinical_urgency ?? 0}%` }} className="bg-rose-500" title="Urgency" />
+                                  <div style={{ width: `${bd.travel_proximity ?? 0}%` }} className="bg-amber-500" title="Proximity" />
                                 </div>
                               </div>
 

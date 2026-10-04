@@ -33,13 +33,13 @@ export const recallOptionsAction = async (appointmentId: string): Promise<SlotOp
   }
 };
 
-export const recallDraftAction = (appointmentId: string, language: string): Promise<Result<RecallDraft>> =>
+export const recallDraftAction = async (appointmentId: string, language: string): Promise<Result<RecallDraft>> =>
   run(() => draftRecall(appointmentId, language));
 
-export const recallContactAction = (appointmentId: string, channel: string, message?: string): Promise<Result<{ ok: boolean }>> =>
+export const recallContactAction = async (appointmentId: string, channel: string, message?: string): Promise<Result<{ ok: boolean }>> =>
   run(() => logRecallContact(appointmentId, { channel, message_text: message }));
 
-export const recallRebookAction = (
+export const recallRebookAction = async (
   appointmentId: string,
   body: { clinic_session_id: string; appointment_day: string; doctor_id?: string; notify?: boolean; language?: string }
 ) => run(() => rebookRecall(appointmentId, body));

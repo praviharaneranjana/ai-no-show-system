@@ -17,6 +17,23 @@ from app import auth, geo, models, schemas
 from app.services import sessions_view
 from app.database import get_db
 
+def _esc(term: str) -> str:
+    return term.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _prefix_match(q: str, *cols):
+    """Type-ahead match: the text must start a column value or start a word inside it ("sa" -> "Sam Perera",
+    "Anna Sampath" but not "Rosa" / "Hassan")."""
+    t = _esc(q)
+    return or_(*[c.ilike(f"{t}%", escape="\\") | c.ilike(f"% {t}%", escape="\\") for c in cols])
+
+
+def _prefix_rank(q: str, *cols):
+    """0 = value starts with the text, 1 = a later word starts with it."""
+    t = _esc(q)
+    return case(*[(c.ilike(f"{t}%", escape="\\"), 0) for c in cols], else_=1)
+
+
 router = APIRouter()
 
 # Revenue at risk uses each appointment's own fee (appointment.fee_lkr, else the doctor's fee); no ancillary uplift.
@@ -183,6 +200,7 @@ def revenue_at_risk(request: Request, days: int = Query(7, ge=1, le=90), db: Ses
             models.Appointment.appointment_day >= today,
             models.Appointment.appointment_day < today + timedelta(days=days),
             models.Appointment.no_show.is_(None),
+            models.Appointment.status != "cancelled",
         )
     )
     if hospital_id:
@@ -283,10 +301,8 @@ def appointment_register(
 
     # Counts for the tab strip (respect search/department filters, not the view itself)
     def common(query):
-        if q:
-            like = f"%{q.strip()}%"
-            query = query.filter(or_(Pt.full_name.ilike(like), Pt.phone.ilike(like), Pt.uhid.ilike(like),
-                                     A.department.ilike(like), A.doctor_name.ilike(like)))
+        if q and q.strip():
+            query = query.filter(_prefix_match(q, Pt.full_name, Pt.phone, Pt.uhid, A.department, A.doctor_name))
         if department:
             query = query.filter(A.department == department)
         if doctor:
@@ -296,20 +312,20 @@ def appointment_register(
     cq = common(base)
     counts = RegisterCounts(
         all=cq.count(),
-        high_risk=cq.filter(P.risk_category == "High", A.no_show.is_(None), A.appointment_day >= today).count(),
+        high_risk=cq.filter(P.risk_category == "High", A.no_show.is_(None), A.status != "cancelled", A.appointment_day >= today).count(),
         today=cq.filter(A.appointment_day == today).count(),
-        pending_outcome=cq.filter(A.appointment_day < today, A.no_show.is_(None)).count(),
+        pending_outcome=cq.filter(A.appointment_day < today, A.no_show.is_(None), A.status != "cancelled").count(),
     )
 
     query = common(base)
     if view == "today":
         query = query.filter(A.appointment_day == today)
     elif view == "high_risk":
-        query = query.filter(P.risk_category == "High", A.no_show.is_(None), A.appointment_day >= today)
+        query = query.filter(P.risk_category == "High", A.no_show.is_(None), A.status != "cancelled", A.appointment_day >= today)
     elif view == "pending_outcome":
-        query = query.filter(A.appointment_day < today, A.no_show.is_(None))
+        query = query.filter(A.appointment_day < today, A.no_show.is_(None), A.status != "cancelled")
     elif view == "upcoming":
-        query = query.filter(A.appointment_day >= today, A.no_show.is_(None))
+        query = query.filter(A.appointment_day >= today, A.no_show.is_(None), A.status != "cancelled")
     if risk:
         query = query.filter(P.risk_category == risk)
     if window_days:
@@ -318,6 +334,9 @@ def appointment_register(
         query = query.filter(A.status == status)
 
     total = query.count()
+    if q and q.strip():
+        # names that START with the typed text come first, then word-start matches
+        query = query.order_by(_prefix_rank(q, Pt.full_name, Pt.uhid, Pt.phone), Pt.full_name)
     if sort == "risk":
         query = query.order_by(RISK_ORDER, P.risk_score.desc().nullslast(), A.appointment_day, A.id)
     elif sort == "date_asc":
@@ -496,17 +515,16 @@ class SearchHit(BaseModel):
 
 @router.get("/search", response_model=list[SearchHit])
 def search(request: Request, q: str = Query(..., min_length=2, max_length=80), db: Session = Depends(get_db)):
-    like = f"%{q.strip()}%"
     A, Pt = models.Appointment, models.Patient
     sq = (
         db.query(A)
         .join(Pt, A.patient_id == Pt.id)
         .options(joinedload(A.patient))
-        .filter(or_(Pt.full_name.ilike(like), Pt.phone.ilike(like), Pt.uhid.ilike(like), Pt.city.ilike(like)))
+        .filter(_prefix_match(q, Pt.full_name, Pt.phone, Pt.uhid, Pt.city))
     )
     if _hid(request):
         sq = sq.filter(A.hospital_id == _hid(request))
-    rows = sq.order_by(A.appointment_day.desc()).limit(12).all()
+    rows = sq.order_by(_prefix_rank(q, Pt.full_name, Pt.uhid, Pt.phone), Pt.full_name, A.appointment_day.desc()).limit(12).all()
     return [
         SearchHit(kind="appointment", title=a.patient.full_name,
                   subtitle=f"{a.appointment_day:%d %b %Y} · {a.department or 'General'} · {a.patient.phone or ''}".strip(" ·"),

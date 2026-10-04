@@ -98,7 +98,7 @@ export function PatientMap({ points }: { points: GeoPoint[] }) {
                 `<div style="font-family:inherit;font-size:12px;line-height:1.4;color:#171725">
                    <strong>${esc(p.name)}</strong><br/>
                    ${esc(p.city)} · ${Number(p.km).toFixed(1)} km<br/>
-                   ${esc(p.risk)} risk${p.pct >= 0 ? ` (${p.pct}%)` : ""} · ${esc(p.day)}<br/>
+                   ${esc(p.risk)} risk${p.pct >= 0 ? ` (${p.pct > 60 ? "60%+" : p.pct + "%"})` : ""} · ${esc(p.day)}<br/>
                    <a href="/appointments/${encodeURIComponent(p.id)}" style="color:#8B7CF6;font-weight:700">Open record →</a>
                  </div>`
               )

@@ -467,8 +467,11 @@ export type ForecastResponse = {
     total_bufferable_overbooks: number;
     total_revenue_at_risk_lkr: number;
     total_recoverable_revenue_lkr: number;
+    expected_no_shows_interval_low?: number;
+    expected_no_shows_interval_high?: number;
+    interval_basis?: string;
   };
-  departments?: Array<{ department: string; share_pct: number; expected_no_shows: number }>;
+  departments?: Array<{ department: string; share_pct: number; expected_no_shows: number; revenue_at_risk_lkr?: number }>;
 };
 
 export type AccuracyDecile = {

@@ -1,9 +1,9 @@
 // Fixed hospital location (mirrors backend/app/geo.py). Patients are plotted at their
 // real geocoded coordinates; distance is straight-line, travel time is an estimate.
 export const HOSPITAL = {
-  name: "Colombo General Hospital",
-  lat: 6.919,
-  lng: 79.8668,
+  name: "Asiri Central Hospital",
+  lat: 6.9248,
+  lng: 79.8654,
 };
 
 const ROAD_FACTOR = 1.3; // road distance is typically ~1.3x straight-line

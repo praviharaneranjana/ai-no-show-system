@@ -45,22 +45,46 @@ async function quiet<T>(fn: () => Promise<T>): Promise<T | null> {
   }
 }
 
-export const listThreadsAction = (q: string, status: string): Promise<ThreadSummary[] | null> => quiet(() => listThreads(q, status));
-export const getThreadAction = (patientId: string): Promise<ThreadDetail | null> => quiet(() => getThread(patientId));
-export const attentionAction = (): Promise<AttentionSummary | null> => quiet(getAttention);
-export const appointmentConversationAction = (id: string): Promise<RescheduleConversation | null> =>
-  quiet(() => getAppointmentConversation(id));
-export const appointmentHistoryAction = (id: string): Promise<HistoryStep[] | null> => quiet(() => getAppointmentHistory(id));
+export async function listThreadsAction(q: string, status: string): Promise<ThreadSummary[] | null> {
+  return quiet(() => listThreads(q, status));
+}
+export async function getThreadAction(patientId: string): Promise<ThreadDetail | null> {
+  return quiet(() => getThread(patientId));
+}
+export async function attentionAction(): Promise<AttentionSummary | null> {
+  return quiet(getAttention);
+}
+export async function appointmentConversationAction(id: string): Promise<RescheduleConversation | null> {
+  return quiet(() => getAppointmentConversation(id));
+}
+export async function appointmentHistoryAction(id: string): Promise<HistoryStep[] | null> {
+  return quiet(() => getAppointmentHistory(id));
+}
 
-export const startConversationAction = (appointmentId: string, language?: string) =>
-  run(() => startConversation(appointmentId, language), ["/outreach", "/"]);
-export const sendIncomingAction = (id: string, text: string) => run(() => sendIncoming(id, text));
-export const sendStaffMessageAction = (id: string, text: string) => run(() => sendStaffMessage(id, text));
-export const approveConversationAction = (id: string) => run(() => approveConversation(id), ["/outreach", "/", "/capacity", "/predictions"]);
-export const rejectConversationAction = (id: string, note?: string) => run(() => rejectConversation(id, note));
-export const takeOverAction = (id: string) => run(() => takeOverConversation(id));
-export const resumeAction = (id: string) => run(() => resumeConversation(id));
-export const bookConversationAction = (
+export async function startConversationAction(appointmentId: string, language?: string) {
+  return run(() => startConversation(appointmentId, language), ["/outreach", "/"]);
+}
+export async function sendIncomingAction(id: string, text: string) {
+  return run(() => sendIncoming(id, text));
+}
+export async function sendStaffMessageAction(id: string, text: string) {
+  return run(() => sendStaffMessage(id, text));
+}
+export async function approveConversationAction(id: string) {
+  return run(() => approveConversation(id), ["/outreach", "/", "/capacity", "/predictions"]);
+}
+export async function rejectConversationAction(id: string, note?: string) {
+  return run(() => rejectConversation(id, note));
+}
+export async function takeOverAction(id: string) {
+  return run(() => takeOverConversation(id));
+}
+export async function resumeAction(id: string) {
+  return run(() => resumeConversation(id));
+}
+export async function bookConversationAction(
   id: string,
   body: { clinic_session_id: string; appointment_day: string; doctor_id?: string; notify?: boolean; language?: string }
-) => run(() => bookConversation(id, body), ["/outreach", "/", "/capacity", "/predictions"]);
+) {
+  return run(() => bookConversation(id, body), ["/outreach", "/", "/capacity", "/predictions"]);
+}

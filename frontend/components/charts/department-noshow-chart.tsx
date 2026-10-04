@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   BarChart,
@@ -14,12 +14,32 @@ import {
 } from "recharts";
 import type { AppointmentRecord } from "@/lib/appointments-with-predictions";
 
+const SELECT_CLASS =
+  "h-8 rounded-lg border border-border bg-card px-2 text-xs text-foreground outline-none focus:ring-2 focus:ring-primary/30";
+const AXIS_TEXT = "var(--muted-foreground)";
+const LABEL_TEXT = "var(--foreground)";
+
 interface DepartmentNoShowChartProps {
   records: AppointmentRecord[];
 }
 
 export function DepartmentNoShowChart({ records }: DepartmentNoShowChartProps) {
   const router = useRouter();
+  const [risk, setRisk] = useState("all");
+  const [period, setPeriod] = useState("all");
+  const [now] = useState(() => Date.now());
+
+  const filtered = useMemo(() => {
+    const cutoff =
+      period === "all"
+        ? null
+        : new Date(now - Number(period) * 86400000).toISOString().slice(0, 10);
+    return records.filter(
+      (r) =>
+        (risk === "all" || r.prediction?.risk_category === risk) &&
+        (cutoff === null || r.appointment.appointment_day >= cutoff)
+    );
+  }, [records, risk, period, now]);
 
   const data = useMemo(() => {
     const deptStats = new Map<
@@ -27,7 +47,7 @@ export function DepartmentNoShowChart({ records }: DepartmentNoShowChartProps) {
       { total: number; outcomes: number; noShows: number; highRisk: number }
     >();
 
-    for (const r of records) {
+    for (const r of filtered) {
       const dept = r.appointment.department || "General Medicine";
       if (!deptStats.has(dept)) {
         deptStats.set(dept, { total: 0, outcomes: 0, noShows: 0, highRisk: 0 });
@@ -61,18 +81,51 @@ export function DepartmentNoShowChart({ records }: DepartmentNoShowChartProps) {
         };
       })
       .sort((a, b) => b.rate - a.rate);
-  }, [records]);
+  }, [filtered]);
+
+  const filters = (
+    <div className="flex flex-wrap items-center gap-2">
+      <select aria-label="Risk category" className={SELECT_CLASS} value={risk} onChange={(e) => setRisk(e.target.value)}>
+        <option value="all">All risk levels</option>
+        <option value="High">High risk</option>
+        <option value="Medium">Medium risk</option>
+        <option value="Low">Low risk</option>
+      </select>
+      <select aria-label="Period" className={SELECT_CLASS} value={period} onChange={(e) => setPeriod(e.target.value)}>
+        <option value="all">All dates</option>
+        <option value="7">Last 7 days</option>
+        <option value="14">Last 14 days</option>
+        <option value="30">Last 30 days</option>
+      </select>
+      {(risk !== "all" || period !== "all") && (
+        <button
+          type="button"
+          className="text-xs font-semibold text-primary hover:underline"
+          onClick={() => {
+            setRisk("all");
+            setPeriod("all");
+          }}
+        >
+          Reset
+        </button>
+      )}
+    </div>
+  );
 
   if (data.length === 0) {
     return (
-      <div className="py-8 text-center text-xs text-muted-foreground">
-        No department data recorded yet.
+      <div className="flex flex-col gap-3">
+        {filters}
+        <div className="py-8 text-center text-xs text-muted-foreground">
+          No departments match these filters.
+        </div>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-3">
+      {filters}
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span>Click any department bar to filter Appointments</span>
         <div className="flex items-center gap-3">
@@ -98,17 +151,21 @@ export function DepartmentNoShowChart({ records }: DepartmentNoShowChartProps) {
             layout="vertical"
             margin={{ top: 5, right: 30, left: 100, bottom: 5 }}
           >
-            <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border) / 0.5)" />
+            <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--border)" />
             <XAxis
               type="number"
               domain={[0, 40]}
               tickFormatter={(v) => `${v}%`}
-              tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+              tick={{ fontSize: 11, fill: AXIS_TEXT }}
+              axisLine={{ stroke: "var(--border)" }}
+              tickLine={{ stroke: "var(--border)" }}
             />
             <YAxis
               type="category"
               dataKey="department"
-              tick={{ fontSize: 11, fill: "hsl(var(--foreground))" }}
+              tick={{ fontSize: 11, fill: LABEL_TEXT }}
+              axisLine={{ stroke: "var(--border)" }}
+              tickLine={{ stroke: "var(--border)" }}
               width={95}
             />
             <Tooltip

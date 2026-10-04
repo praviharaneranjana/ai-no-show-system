@@ -175,6 +175,14 @@ export default async function AppointmentDetailPage({
               />
             </div>
 
+            {conversation?.state === "booked" && conversation.appointment_id === id && (
+              <p className="mx-auto max-w-xs rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-700 dark:text-emerald-300">
+                Patient confirmed this slot through outreach
+                {conversation.approved_by ? ` (approved by ${conversation.approved_by})` : ""}. The score above is the model&apos;s own
+                estimate and does not include this confirmation.
+              </p>
+            )}
+
             <p className="text-xs text-muted-foreground max-w-xs mx-auto">
               Recommendation:{" "}
               <strong className="text-foreground">

@@ -384,9 +384,9 @@ export function PredictionHubClient({
     const time = activeAppointment.scheduled_time || "Scheduled Time";
 
     return {
-      en: `Colombo General Hospital Reminder: Dear ${name}, your consultation with ${doc} is scheduled for today at ${time}. Reply 1 to CONFIRM, 2 to RESCHEDULE, or 3 for assistance. Inquiries: 011-2691111.`,
-      si: `කොළඹ මහ රෝහල: හිතවත් ${name}, ${doc} මහතා/මහත්මිය සමඟ ඔබගේ වෛද්‍ය හමුව අද ${time} ට පැවැත්වේ. තහවුරු කිරීමට 1, වෙනස් කිරීමට 2 ලෙස පිළිතුරු එවන්න. විමසීම්: 011-2691111.`,
-      ta: `கொழும்பு பொது வைத்தியசாலை: அன்புள்ள ${name}, ${doc} உடனான உங்கள் மருத்துவ சந்திப்பு இன்று ${time} மணிக்கு திட்டமிடப்பட்டுள்ளது. உறுதிப்படுத்த 1, மாற்றியமைக்க 2 என பதிலளிக்கவும்.`,
+      en: `Asiri Central Hospital Reminder: Dear ${name}, your consultation with ${doc} is scheduled for today at ${time}. Reply 1 to CONFIRM, 2 to RESCHEDULE, or 3 for assistance. Inquiries: 011-4580000.`,
+      si: `ආසිරි සෙන්ට්‍රල් රෝහල: හිතවත් ${name}, ${doc} මහතා/මහත්මිය සමඟ ඔබගේ වෛද්‍ය හමුව අද ${time} ට පැවැත්වේ. තහවුරු කිරීමට 1, වෙනස් කිරීමට 2 ලෙස පිළිතුරු එවන්න. විමසීම්: 011-4580000.`,
+      ta: `ஆசிரி சென்ட்ரல் வைத்தியசாலை: அன்புள்ள ${name}, ${doc} உடனான உங்கள் மருத்துவ சந்திப்பு இன்று ${time} மணிக்கு திட்டமிடப்பட்டுள்ளது. உறுதிப்படுத்த 1, மாற்றியமைக்க 2 என பதிலளிக்கவும். தொலைபேசி: 011-4580000.`,
     };
   }, [activeAppointment]);
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   Search,
@@ -24,7 +25,6 @@ import { SlotPicker } from "@/components/outreach/slot-picker";
 import { useCanApprove } from "@/components/use-role";
 import { getRescheduleOptionsAction } from "@/app/appointments/[id]/actions";
 import {
-  approveConversationAction,
   bookConversationAction,
   getThreadAction,
   listThreadsAction,
@@ -60,6 +60,7 @@ const slotLine = (s: SlotDict) =>
   `${s.doctor_name}, ${new Date(`${s.date}T00:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })} ${s.start_time}`;
 
 export function ThreadsHub({ initialThreads, initialPatientId }: { initialThreads: ThreadSummary[]; initialPatientId?: string }) {
+  const router = useRouter();
   const canApprove = useCanApprove();
   const [threads, setThreads] = useState(initialThreads);
   const [query, setQuery] = useState("");
@@ -348,7 +349,7 @@ export function ThreadsHub({ initialThreads, initialPatientId }: { initialThread
                         <button
                           type="button"
                           disabled={busy}
-                          onClick={() => startBusy(async () => void (await act(() => approveConversationAction(conv.id))))}
+                          onClick={() => router.push(`/new?conversation=${conv.id}&patient=${conv.patient_id}`)}
                           className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg bg-emerald-600 px-4 text-xs font-bold text-white shadow-sm transition-all hover:-translate-y-0.5 active:scale-95 disabled:opacity-50"
                         >
                           {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />} Approve and book

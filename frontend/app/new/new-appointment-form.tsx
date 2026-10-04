@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -35,7 +35,11 @@ import { SegmentedCards, type SegmentedCardOption } from "@/components/ui/segmen
 import { RiskPill } from "@/components/risk-pill";
 import { JourneyMap } from "@/components/journey-map";
 import { cn } from "@/lib/utils";
+import { estimateTravelMinutes, formatTravel } from "@/lib/geo";
+import { approveConversationAction, bookConversationAction } from "@/app/outreach/thread-actions";
 import type {
+  SlotDict,
+  Patient,
   DepartmentItem,
   DoctorItem,
   LocationItem,
@@ -68,14 +72,26 @@ const PAYMENTS: SegmentedCardOption[] = [
   { value: "Insurance", title: "Insurance Guarantee", description: "Prior cashless approval" },
 ];
 
+export type ConversationPrefill = {
+  conversationId: string;
+  patient: Patient & { nic?: string | null; district?: string | null };
+  offer: SlotDict;
+  departmentId: number | null;
+  departmentName: string | null;
+};
+
 // Sri Lanka calendar date (en-CA formats as YYYY-MM-DD)
 const TODAY_LK = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" });
 
-export function NewAppointmentForm() {
+export function NewAppointmentForm({ prefill = null }: { prefill?: ConversationPrefill | null }) {
   const router = useRouter();
+  const pp = prefill?.patient;
 
-  // Current wizard stage
-  const [currentStage, setCurrentStage] = useState(0);
+  // Current wizard stage: a patient-approved offer already has steps 1-3, so land on the review step
+  const [currentStage, setCurrentStage] = useState(prefill ? 3 : 0);
+  // The agreed doctor/session must survive the "first doctor / first session" defaults on first load
+  const keepOffer = useRef(!!prefill);
+  const [approved, setApproved] = useState<{ appointmentId: string; token: number | null; message: string } | null>(null);
 
   // Reference data lists
   const [departments, setDepartments] = useState<DepartmentItem[]>([]);
@@ -84,36 +100,36 @@ export function NewAppointmentForm() {
   const [patientMatches, setPatientMatches] = useState<PatientSearchResult[]>([]);
 
   // Stage 1: Patient Identity
-  const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
+  const [selectedPatientId, setSelectedPatientId] = useState<string | null>(pp?.id ?? null);
   const [patientSearchQ, setPatientSearchQ] = useState("");
-  const [fullName, setFullName] = useState("");
-  const [nic, setNic] = useState("");
-  const [dob, setDob] = useState("");
-  const [gender, setGender] = useState("male");
-  const [phone, setPhone] = useState("+94 ");
-  const [email, setEmail] = useState("");
-  const [preferredLanguage, setPreferredLanguage] = useState("en");
-  const [hasHypertension, setHasHypertension] = useState(false);
-  const [hasDiabetes, setHasDiabetes] = useState(false);
+  const [fullName, setFullName] = useState(pp?.full_name ?? "");
+  const [nic, setNic] = useState(pp?.nic ?? "");
+  const [dob, setDob] = useState(pp?.date_of_birth ?? "");
+  const [gender, setGender] = useState(pp?.gender ?? "male");
+  const [phone, setPhone] = useState(pp?.phone || "+94 ");
+  const [email, setEmail] = useState(pp?.email ?? "");
+  const [preferredLanguage, setPreferredLanguage] = useState<string>(pp?.preferred_language ?? "en");
+  const [hasHypertension, setHasHypertension] = useState(pp?.hypertension ?? false);
+  const [hasDiabetes, setHasDiabetes] = useState(pp?.diabetes ?? false);
 
   // Stage 2: Commute & Location
   const [selectedLocationId, setSelectedLocationId] = useState<number | null>(null);
-  const [city, setCity] = useState("Colombo 07");
-  const [district, setDistrict] = useState("Colombo");
-  const [latitude, setLatitude] = useState<number | null>(6.9044);
-  const [longitude, setLongitude] = useState<number | null>(79.8697);
+  const [city, setCity] = useState(pp?.city ?? "Colombo 07");
+  const [district, setDistrict] = useState(pp?.district ?? "Colombo");
+  const [latitude, setLatitude] = useState<number | null>(pp?.latitude ?? 6.9044);
+  const [longitude, setLongitude] = useState<number | null>(pp?.longitude ?? 79.8697);
   const [addressLine, setAddressLine] = useState("");
-  const [distanceKm, setDistanceKm] = useState<number>(3.5);
+  const [distanceKm, setDistanceKm] = useState<number>(pp?.distance_km ?? 3.5);
   const [distanceSource, setDistanceSource] = useState<"road_osrm" | "estimated" | "manual">("estimated");
 
   // Stage 3: Clinical & Scheduling
-  const [selectedDeptId, setSelectedDeptId] = useState<number | null>(null);
-  const [selectedDeptName, setSelectedDeptName] = useState("General Medicine");
-  const [selectedDoctorId, setSelectedDoctorId] = useState<string>("");
-  const [appointmentDay, setAppointmentDay] = useState(TODAY_LK);
-  const [selectedSessionId, setSelectedSessionId] = useState<string>("");
+  const [selectedDeptId, setSelectedDeptId] = useState<number | null>(prefill?.departmentId ?? null);
+  const [selectedDeptName, setSelectedDeptName] = useState(prefill?.departmentName ?? "General Medicine");
+  const [selectedDoctorId, setSelectedDoctorId] = useState<string>(prefill?.offer.doctor_id ?? "");
+  const [appointmentDay, setAppointmentDay] = useState(prefill?.offer.date ?? TODAY_LK);
+  const [selectedSessionId, setSelectedSessionId] = useState<string>(prefill?.offer.session_id ?? "");
   const [doctorSessions, setDoctorSessions] = useState<
-    Array<{ id: string; name: string; start: string; end: string; room: string; remaining: number }>
+    Array<{ id: string; name: string; start: string; end: string; room: string; remaining: number; nextToken: number }>
   >([]);
   const [clinicSession, setClinicSession] = useState("Morning");
 
@@ -162,7 +178,9 @@ export function NewAppointmentForm() {
         if (docRes.ok) {
           const docData = await docRes.json();
           setDoctors(docData);
-          if (docData.length > 0) {
+          if (keepOffer.current && prefill && docData.some((d: DoctorItem) => d.id === prefill.offer.doctor_id)) {
+            setSelectedDoctorId(prefill.offer.doctor_id);
+          } else if (docData.length > 0) {
             setSelectedDoctorId(docData[0].id);
           } else {
             setSelectedDoctorId("");
@@ -187,7 +205,7 @@ export function NewAppointmentForm() {
         const res = await fetch(`/api/doctors/${selectedDoctorId}/availability?days=30`);
         if (res.ok) {
           const avail = await res.json();
-          type AvailSession = { session_id: string; label: string; start_time: string; end_time: string; room: string; remaining: number };
+          type AvailSession = { session_id: string; label: string; start_time: string; end_time: string; room: string; remaining: number; next_token: number };
           const matchingDay = (avail.days as Array<{ date: string; sessions?: AvailSession[] }> | undefined)?.find(
             (d) => d.date === appointmentDay
           );
@@ -198,9 +216,15 @@ export function NewAppointmentForm() {
             end: s.end_time,
             room: s.room,
             remaining: s.remaining,
+            nextToken: s.next_token,
           }));
           setDoctorSessions(mapped);
-          setSelectedSessionId(mapped[0]?.id ?? "");
+          if (keepOffer.current && prefill?.offer.doctor_id === selectedDoctorId && mapped.some((m) => m.id === prefill.offer.session_id)) {
+            setSelectedSessionId(prefill.offer.session_id);
+            keepOffer.current = false; // later edits behave normally
+          } else {
+            setSelectedSessionId(mapped[0]?.id ?? "");
+          }
         }
       } catch (e) {
         console.error("Failed to load doctor sessions", e);
@@ -453,6 +477,36 @@ export function NewAppointmentForm() {
     }
   }
 
+  // Patient already agreed in the outreach hub: approving books the agreed slot. If staff changed the
+  // doctor, day or session in the steps above, book the changed slot instead of the agreed one.
+  async function submitApproval() {
+    if (!prefill) return;
+    setIsSubmitting(true);
+    setSubmissionError(null);
+    const o = prefill.offer;
+    const changed = selectedDoctorId !== o.doctor_id || selectedSessionId !== o.session_id || appointmentDay !== o.date;
+    const res = changed
+      ? await bookConversationAction(prefill.conversationId, {
+          clinic_session_id: selectedSessionId,
+          appointment_day: appointmentDay,
+          doctor_id: selectedDoctorId,
+          notify: smsReminderOptIn,
+          language: preferredLanguage,
+        })
+      : await approveConversationAction(prefill.conversationId);
+    setIsSubmitting(false);
+    if (!res.ok) return setSubmissionError(res.message);
+    const conv = "conversation" in res.data ? res.data.conversation : res.data;
+    if ("booked" in res.data && !res.data.booked) {
+      return setSubmissionError("That slot was just taken. The patient has been offered another option.");
+    }
+    setApproved({
+      appointmentId: conv.appointment_id,
+      token: conv.appointment?.token ?? null,
+      message: "booked" in res.data ? res.data.message : "Booked and the patient has been notified.",
+    });
+  }
+
   // Reset Form for another booking
   function resetForm() {
     setConfirmedBooking(null);
@@ -463,6 +517,42 @@ export function NewAppointmentForm() {
     setPhone("+94 ");
     setCurrentStage(0);
     setPreview(null);
+  }
+
+  if (approved && prefill) {
+    return (
+      <Card className="border-emerald-500/40 bg-card shadow-xl ring-2 ring-emerald-500/20 max-w-2xl mx-auto animate-in fade-in-0 duration-300">
+        <CardContent className="p-8 flex flex-col gap-5">
+          <div className="flex items-center gap-3 border-b border-border/80 pb-5">
+            <div className="flex size-12 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-400">
+              <CheckCircle2 className="size-7" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-foreground">Approval confirmed</h2>
+              <p className="text-xs text-muted-foreground">{approved.message}</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4 text-xs font-mono">
+            <div>
+              <span className="text-muted-foreground">Patient:</span>
+              <div className="text-foreground font-semibold text-sm">{fullName}</div>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Queue token:</span>
+              <div className="text-foreground font-semibold text-sm">{approved.token ? `#${approved.token}` : "-"}</div>
+            </div>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-3 pt-2">
+            <Button className="text-xs font-semibold" onClick={() => router.push(`/appointments/${approved.appointmentId}`)}>
+              Open appointment
+            </Button>
+            <Button variant="outline" className="text-xs" onClick={() => router.push(`/outreach?patient=${prefill.patient.id}`)}>
+              Back to outreach hub
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
   }
 
   // Render Confirmation Receipt View
@@ -480,7 +570,7 @@ export function NewAppointmentForm() {
             <div>
               <h2 className="text-xl font-bold text-foreground">Appointment Confirmed</h2>
               <p className="text-xs text-muted-foreground">
-                Official queue token issued for Colombo General Hospital
+                Official queue token issued for Asiri Central Hospital
               </p>
             </div>
           </div>
@@ -568,6 +658,16 @@ export function NewAppointmentForm() {
 
   return (
     <div className="flex flex-col gap-6">
+      {prefill && (
+        <div className="flex items-start gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-foreground">
+          <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-500" />
+          <span>
+            <strong>{prefill.patient.full_name}</strong> agreed to {prefill.offer.doctor_name} on {prefill.offer.date}{" "}
+            {prefill.offer.start_time}. Steps 1 to 3 are filled in from the conversation; check them, then approve below.
+          </span>
+        </div>
+      )}
+
       {/* Guided Progress Stages */}
       <ProgressStages
         stages={STAGES}
@@ -805,7 +905,7 @@ export function NewAppointmentForm() {
               {/* Distance State Machine */}
               <div className="rounded-lg border border-border/80 bg-muted/20 p-4 flex flex-col gap-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-foreground">Distance to Colombo General Hospital</span>
+                  <span className="text-xs font-semibold text-foreground">Distance to Asiri Central Hospital</span>
                   <Badge variant="outline" className="text-[10px] font-mono capitalize">
                     {distanceSource === "road_osrm" ? "Road Route (OSRM)" : "Estimated / Straight Line"}
                   </Badge>
@@ -826,7 +926,7 @@ export function NewAppointmentForm() {
                     <span className="text-xs text-muted-foreground font-mono">km</span>
                   </div>
                   <span className="text-xs text-muted-foreground">
-                    Estimated commute time: ~{Math.round(distanceKm * 2.2 + 10)} mins
+                    Estimated commute time: {formatTravel(estimateTravelMinutes(distanceKm))} by road
                   </span>
                 </div>
               </div>
@@ -971,6 +1071,9 @@ export function NewAppointmentForm() {
                           <span className="text-[10px] text-muted-foreground/80 mt-0.5">
                             {sess.room}
                           </span>
+                          <span className="text-[11px] font-bold text-[#8B7CF6] mt-1.5">
+                            {sess.remaining > 0 ? `Next token: #${sess.nextToken}` : "Session full"}
+                          </span>
                         </button>
                       );
                     })}
@@ -1079,6 +1182,17 @@ export function NewAppointmentForm() {
                 </Button>
 
                 <div className="flex-1 w-full flex flex-col sm:flex-row items-center justify-end gap-3">
+                  {prefill ? (
+                    <Button
+                      onClick={submitApproval}
+                      disabled={isSubmitting || !selectedSessionId}
+                      className="w-full sm:w-auto text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 h-10 px-5 gap-2 shadow-sm"
+                    >
+                      <CheckCircle2 className="size-3.5" />
+                      <span>{isSubmitting ? "Approving..." : "Approve & confirm booking"}</span>
+                    </Button>
+                  ) : (
+                  <>
                   {/* Button 1: Confirm Booking only */}
                   <Button
                     onClick={() => submitIntake(false)}
@@ -1098,6 +1212,8 @@ export function NewAppointmentForm() {
                     <Sparkles className="size-3.5" />
                     <span>Confirm & Triage in Hub</span>
                   </Button>
+                  </>
+                  )}
                 </div>
               </div>
             </div>
@@ -1126,6 +1242,13 @@ export function NewAppointmentForm() {
                     score={preview.risk_score}
                   />
                 </div>
+
+                {prefill && (
+                  <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-[11px] text-foreground">
+                    <strong>Patient confirmed this slot</strong> in the outreach chat. The score is the model&apos;s own
+                    estimate and does not include that confirmation; it is recorded on the booking.
+                  </div>
+                )}
 
                 <div className="rounded-lg bg-muted/30 p-3 border border-border/60 flex flex-col gap-2">
                   <span className="text-[11px] font-semibold text-muted-foreground">

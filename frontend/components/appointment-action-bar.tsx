@@ -1,3 +1,4 @@
+import { riskPctLabel } from "@/lib/risk-display";
 import { AppointmentActionCard, type CardAction } from "@/components/appointment-action-card";
 import { recommendActions } from "@/lib/recommend-action";
 import type { Appointment, FeatureContribution, Intervention, Patient, RescheduleConversation, RiskCategory } from "@/lib/types";
@@ -40,11 +41,11 @@ export function AppointmentActionBar({
   }));
 
   if (highRisk && !done && patient.phone) {
-    const pct = Math.round((riskScore ?? 0) * 100);
+    const pct = riskPctLabel(riskScore ?? 0);
     actions.unshift({
       key: "ask",
       label: "Ask patient to reschedule",
-      reason: `Risk is ${pct}%. Message the patient first and let them choose a new time; the final booking waits for a manager's approval.`,
+      reason: `Risk is ${pct}. Message the patient first and let them choose a new time; the final booking waits for a manager's approval.`,
       href: null,
     });
   }

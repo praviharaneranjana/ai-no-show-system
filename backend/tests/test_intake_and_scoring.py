@@ -159,7 +159,7 @@ def test_intake_wrong_weekday(client: TestClient, db_session: Session):
 
 def test_intake_past_date(client: TestClient, db_session: Session):
     doctor, session, appt_day = get_active_doctor_and_session(db_session)
-    past_date = appt_day - timedelta(days=7)
+    past_date = appt_day - timedelta(days=14)
 
     payload = {
         "patient": {

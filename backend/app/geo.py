@@ -8,10 +8,10 @@ import math
 import re
 import uuid
 
-# Colombo General Hospital (Regent St / Kynsey Rd, Colombo 08)
-HOSPITAL_NAME = "Colombo General Hospital"
-HOSPITAL_LAT = 6.9190
-HOSPITAL_LNG = 79.8668
+# Asiri Central Hospital (Norris Canal Rd, Colombo 10)
+HOSPITAL_NAME = "Asiri Central Hospital"
+HOSPITAL_LAT = 6.9248
+HOSPITAL_LNG = 79.8654
 
 # (lat, lng) of the town centre. Colombo postal zones use their neighbourhood centre.
 TOWNS: dict[str, tuple[float, float]] = {

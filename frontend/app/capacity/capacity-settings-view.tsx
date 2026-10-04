@@ -113,7 +113,7 @@ export function CapacitySettingsView({ initialSettings }: CapacitySettingsViewPr
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <NumberField
               label="Cost of one overflow patient (LKR)"
-              hint="Assumption. What a patient who arrives beyond capacity costs you (long wait, turn-away, goodwill)."
+              hint="Assumption, not a measured figure. Default LKR 10,000 is 4× the consultation fee: what a patient who arrives beyond capacity costs (long wait, turn-away, goodwill). Change it and the overbooking advice changes; see the What-If page for sensitivity."
               value={setting.wait_cost_lkr}
               min={0}
               max={1000000}

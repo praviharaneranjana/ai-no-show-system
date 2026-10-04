@@ -313,3 +313,16 @@
   width: 0;
   height: 0;
 }
+
+/* Clinic-session strip: endless slow left-to-right loop (list is duplicated, so -50% -> 0 is seamless) */
+@keyframes shai-marquee {
+  from { transform: translateX(-50%); }
+  to { transform: translateX(0); }
+}
+.shai-marquee {
+  animation: shai-marquee 40s linear infinite;
+  padding-right: 0.5rem;
+}
+@media (prefers-reduced-motion: reduce) {
+  .shai-marquee { animation: none; }
+}

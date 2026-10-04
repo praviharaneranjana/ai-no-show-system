@@ -1,3 +1,4 @@
+import { riskPctLabel } from "@/lib/risk-display";
 import { cn } from "@/lib/utils";
 import type { RiskCategory } from "@/lib/types";
 
@@ -84,7 +85,7 @@ export function RiskGauge({
         {/* Center text */}
         <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
           <span className={cn("font-bold tracking-tight tabular-nums", config.fontSize, strokeColor)}>
-            {percentage}%
+            {riskPctLabel(score)}
           </span>
           {showLabel && size !== "sm" && (
             <span className={cn("font-medium uppercase tracking-wider text-muted-foreground", config.subSize)}>

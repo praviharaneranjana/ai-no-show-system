@@ -12,6 +12,7 @@ import uuid
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app import models, schemas
@@ -546,10 +547,60 @@ def get_freed_slot_offers(db: Session, hospital_id: Optional[uuid.UUID] = None) 
     ).filter(models.SlotOffer.status.in_(["proposed", "approved"]))
     if hospital_id:
         q = q.filter(models.SlotOffer.hospital_id == hospital_id)
-    return [_offer_out(o) for o in q.order_by(models.SlotOffer.created_at.desc()).all()]
+    offers = q.order_by(models.SlotOffer.created_at.desc()).all()
+    pool_q = db.query(models.WaitlistEntry).filter(models.WaitlistEntry.status.in_(["waiting", "offered"]))
+    if hospital_id:
+        pool_q = pool_q.filter(models.WaitlistEntry.hospital_id == hospital_id)
+    pool = pool_q.all()
+    patient_ids = {w.patient_id for w in pool if w.patient_id}
+    patients = {p.id: p for p in db.query(models.Patient).filter(models.Patient.id.in_(patient_ids)).all()} if patient_ids else {}
+    risks: Dict[uuid.UUID, float] = {}
+    if patient_ids:
+        rows = (
+            db.query(models.Appointment.patient_id, func.avg(models.Prediction.risk_score))
+            .join(models.Prediction, models.Prediction.appointment_id == models.Appointment.id)
+            .filter(models.Appointment.patient_id.in_(patient_ids))
+            .group_by(models.Appointment.patient_id)
+            .all()
+        )
+        risks = {pid: float(r) for pid, r in rows}
+    return [_offer_out(o, _rank_candidates(o, pool, patients, risks)) for o in offers]
 
 
-def _offer_out(o: models.SlotOffer) -> schemas.SlotOfferOut:
+def _rank_candidates(
+    offer: models.SlotOffer,
+    pool: List[models.WaitlistEntry],
+    patients: Dict[uuid.UUID, models.Patient],
+    risks: Dict[uuid.UUID, float],
+) -> List[schemas.SlotOfferCandidateOut]:
+    """Rank the waiting patients for this freed slot with the multi-attribute utility model (candidate_ranker)."""
+    doctor = offer.doctor
+    specialty = doctor.department.name if doctor and doctor.department else ""
+    doctor_name = doctor.full_name if doctor else None
+    ranked = []
+    for w in pool:
+        if w.specialty.lower() != specialty.lower() and w.id != offer.waitlist_entry_id:
+            continue
+        pat = patients.get(w.patient_id) if w.patient_id else None
+        risk = risks.get(w.patient_id, 0.15) if w.patient_id else 0.15
+        dist = float(pat.distance_km) if pat and pat.distance_km is not None else None
+        res = score_waitlist_candidate(
+            target_specialty=specialty or w.specialty, target_doctor_name=doctor_name,
+            candidate_specialty=w.specialty, candidate_doctor_name=w.doctor_name,
+            predicted_no_show_prob=risk, created_at=w.created_at, urgency_level=w.urgency_level, distance_km=dist,
+            preferred_days=w.preferred_days,
+        )
+        ranked.append(schemas.SlotOfferCandidateOut(
+            waitlist_id=w.id, patient_id=w.patient_id, patient_name=w.patient_name, phone=w.patient_phone,
+            total_score=res["total_score"], score_breakdown=schemas.CandidateScoreBreakdown(**res["breakdown"]),
+            predicted_no_show_prob=round(risk, 3), wait_days=round(res["breakdown"]["days_waiting"]),
+            distance_km=dist, urgency="urgent" if w.urgency_level in ("High", "Urgent") else w.urgency_level.lower(),
+        ))
+    ranked.sort(key=lambda c: c.total_score, reverse=True)
+    return ranked[:5]
+
+
+def _offer_out(o: models.SlotOffer, candidates: Optional[List[schemas.SlotOfferCandidateOut]] = None) -> schemas.SlotOfferOut:
     w = o.waitlist_entry
     bd = o.score_breakdown or {}
     breakdown = schemas.CandidateScoreBreakdown(
@@ -576,6 +627,7 @@ def _offer_out(o: models.SlotOffer) -> schemas.SlotOfferOut:
         candidate_uhid=None,
         match_score=o.match_score,
         score_breakdown=breakdown,
+        candidates=candidates or [],
         status=o.status,
         acted_by=o.acted_by,
         acted_at=o.acted_at,
@@ -625,6 +677,8 @@ def get_capacity_forecast(db: Session, horizon_days: int = 7, hospital_id: Optio
     base_rate = _model_base_rate()
     days_out: List[schemas.ForecastDayOut] = []
     dept_acc: Dict[str, float] = {}
+    dept_rev: Dict[str, float] = {}
+    all_probs: List[float] = []
     tot_booked = 0
     tot_ns = tot_rev = tot_rec = 0.0
     tot_buffer = 0
@@ -641,6 +695,7 @@ def get_capacity_forecast(db: Session, horizon_days: int = 7, hospital_id: Optio
                 rev_risk += pi * fee
                 dept = a.doctor.department.name if a.doctor and a.doctor.department else (a.department or "Unassigned")
                 dept_acc[dept] = dept_acc.get(dept, 0.0) + pi
+                dept_rev[dept] = dept_rev.get(dept, 0.0) + pi * fee
             settings = get_effective_settings(
                 db, department_id=g.doctor.department_id if g.doctor else None,
                 doctor_id=g.doctor.id if g.doctor else None, hospital_id=hospital_id,
@@ -655,13 +710,20 @@ def get_capacity_forecast(db: Session, horizon_days: int = 7, hospital_id: Optio
             bufferable_overbooks=overbooks, revenue_at_risk_lkr=round(rev_risk, 2),
             recoverable_revenue_lkr=0.0,
         ))
+        all_probs.extend(probs)
         tot_booked += len(probs)
         tot_ns += exp
         tot_rev += rev_risk
         tot_buffer += overbooks
 
+    # One interval over the whole window (not a +/- guess): exact Poisson-binomial on every booked appointment.
+    _, _, win_lo, win_hi = calculate_poisson_binomial_stats(all_probs, confidence_level=0.80)
     summary = {
         "horizon_days": horizon_days,
+        "expected_no_shows_interval_low": win_lo,
+        "expected_no_shows_interval_high": win_hi,
+        "interval_basis": "Sampling range only: assumes the stored risk scores are calibrated and patients act independently. "
+                          "It excludes model error and shared shocks (weather, outbreaks), so real days can fall outside it.",
         "total_projected_appointments": tot_booked,
         "total_expected_no_shows": round(tot_ns, 1),
         "total_bufferable_overbooks": tot_buffer,
@@ -670,7 +732,8 @@ def get_capacity_forecast(db: Session, horizon_days: int = 7, hospital_id: Optio
         "basis": "bookings already in the system; days further out simply have fewer bookings",
     }
     departments = [
-        {"department": name, "share_pct": round(100 * v / tot_ns, 1) if tot_ns else 0.0, "expected_no_shows": round(v, 1)}
+        {"department": name, "share_pct": round(100 * v / tot_ns, 1) if tot_ns else 0.0, "expected_no_shows": round(v, 1),
+         "revenue_at_risk_lkr": round(dept_rev.get(name, 0.0), 2)}
         for name, v in sorted(dept_acc.items(), key=lambda kv: -kv[1])
     ]
     return schemas.ForecastResponse(horizon_days=horizon_days, summary=summary, days=days_out, departments=departments)

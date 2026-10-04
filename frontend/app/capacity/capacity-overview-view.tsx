@@ -98,10 +98,10 @@ export function CapacityOverviewView({ optimization, sessions }: CapacityOvervie
           subvalue="Only sessions that are already full"
         />
         <SharedKpiCard
-          title="Est. Extra Revenue"
+          title="Revenue from filling free seats"
           value={formatLkr(optimization.estimated_revenue_recovery_lkr)}
           icon={Wallet}
-          delta={{ value: "Fee x extra patients expected to be seen", isPositive: true }}
+          delta={{ value: "Fee × extra patients expected to be seen, from free seats and overbooking", isPositive: true }}
           subvalue="For this date, if the advice is followed"
         />
       </div>

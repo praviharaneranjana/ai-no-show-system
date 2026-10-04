@@ -51,7 +51,7 @@ def test_geo_endpoint_returns_hospital_and_real_points(client):
     p = make_patient(client, city="Galle")
     make_appointment(client, p["id"])
     body = client.get("/geo/patients").json()
-    assert body["hospital_name"] == "Colombo General Hospital"
+    assert body["hospital_name"] == "Asiri Central Hospital"
     pt = next(x for x in body["points"] if x["patient_name"] == "Test Patient" and x["city"] == "Galle")
     assert 80 < pt["distance_km"] < 130  # Galle is ~100 km from Colombo
 

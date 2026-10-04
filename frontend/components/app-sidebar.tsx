@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 import { logoutAction } from "@/app/login/actions";
 import { ShaiLogo } from "@/components/shai-logo";
 import { ThemePill } from "@/components/theme-pill";
+import { getPendingStaffCountAction } from "@/app/admin/staff/actions";
 import { getCapacityNavCountsAction } from "@/app/capacity/actions";
 import { hasRole, type SessionRole } from "@/lib/session-token";
 import type { CapacityNavCounts, ModelInfo } from "@/lib/types";
@@ -158,6 +159,7 @@ export function AppSidebar({ onItemClick, className, collapsed = false, onToggle
 
   const isAdminOrOwner = storedRole === "admin" || storedRole === "platform_owner";
   const [navCounts, setNavCounts] = useState<CapacityNavCounts | null>(null);
+  const [pendingStaff, setPendingStaff] = useState(0);
 
   useEffect(() => {
     let mounted = true;
@@ -166,6 +168,10 @@ export function AppSidebar({ onItemClick, className, collapsed = false, onToggle
         const counts = await getCapacityNavCountsAction();
         if (mounted && counts) {
           setNavCounts(counts);
+        }
+        if (isAdminOrOwner) {
+          const pending = await getPendingStaffCountAction();
+          if (mounted) setPendingStaff(pending);
         }
       } catch {
         // Silently swallow network / auth error on sidebar
@@ -177,7 +183,7 @@ export function AppSidebar({ onItemClick, className, collapsed = false, onToggle
       mounted = false;
       clearInterval(interval);
     };
-  }, []);
+  }, [isAdminOrOwner]);
 
   async function handleSignOut() {
     // The session cookie is httpOnly, so it can only be cleared on the server.
@@ -269,7 +275,7 @@ export function AppSidebar({ onItemClick, className, collapsed = false, onToggle
                   {!collapsed && <span className="animate-in fade-in duration-300 whitespace-nowrap">{item.label}</span>}
                 </div>
 
-                {collapsed && (item.href === "/capacity" ? (navCounts?.waitlist_waiting ?? 0) > 0 : item.href === "/outreach" ? (navCounts?.open_slot_offers ?? 0) > 0 : false) && (
+                {collapsed && (item.href === "/capacity" ? (navCounts?.waitlist_waiting ?? 0) > 0 : item.href === "/outreach" ? (navCounts?.open_slot_offers ?? 0) > 0 : item.href === "/admin/staff" ? pendingStaff > 0 : false) && (
                   <span className="absolute right-2 top-2 size-2 rounded-full bg-[#8B7CF6] ring-2 ring-white dark:ring-[#171722]" />
                 )}
                 <div className={cn("flex items-center gap-1.5", collapsed && "hidden")}>
@@ -295,6 +301,18 @@ export function AppSidebar({ onItemClick, className, collapsed = false, onToggle
                       )}
                     >
                       {navCounts?.open_slot_offers}
+                    </span>
+                  )}
+                  {item.href === "/admin/staff" && pendingStaff > 0 && (
+                    <span
+                      className={cn(
+                        "shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-bold leading-none tabular-nums",
+                        isActive
+                          ? "bg-white/20 text-white"
+                          : "bg-amber-500/15 text-amber-600 dark:bg-amber-500/25 dark:text-amber-400"
+                      )}
+                    >
+                      {pendingStaff}
                     </span>
                   )}
                   {isActive && (

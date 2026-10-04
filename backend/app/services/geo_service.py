@@ -22,7 +22,7 @@ _LAST_PHOTON_TIME: float = 0.0
 
 
 def calculate_distance(lat: float, lng: float) -> tuple[float, str]:
-    """Calculate distance to Colombo General Hospital.
+    """Calculate distance to Asiri Central Hospital.
     Returns (distance_km, source), where source is 'road_osrm' or 'estimated'.
     """
     routing_mode = os.getenv("ROUTING", "osrm").strip().lower()

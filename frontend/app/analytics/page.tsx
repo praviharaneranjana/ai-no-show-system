@@ -185,7 +185,7 @@ export default async function AnalyticsPage() {
               </div>
             </div>
             <div className="pt-1">
-              <RiskDistributionChart counts={categoryCounts} total={predicted.length} />
+              <RiskDistributionChart records={records} />
             </div>
           </div>
 

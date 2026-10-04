@@ -29,3 +29,11 @@ export async function approveStaffAction(membershipId: string, role: string, not
 export async function rejectStaffAction(membershipId: string, reason?: string): Promise<StaffMember> {
   return await rejectStaff(membershipId, reason);
 }
+
+export async function getPendingStaffCountAction(): Promise<number> {
+  try {
+    return (await listPendingStaff()).length;
+  } catch {
+    return 0;
+  }
+}

@@ -1,5 +1,6 @@
 import { cn } from "@/lib/utils";
 import type { RiskCategory } from "@/lib/types";
+import { riskPctLabel } from "@/lib/risk-display";
 
 interface RiskPillProps {
   category: RiskCategory;
@@ -14,7 +15,7 @@ export function RiskPill({
   size = "default",
   className,
 }: RiskPillProps) {
-  const percentage = score !== undefined ? Math.round(score * 100) : null;
+  const percentage = score !== undefined ? riskPctLabel(score) : null;
 
   const sizeClasses = {
     sm: "px-2 py-0.5 text-[10px]",
@@ -45,7 +46,7 @@ export function RiskPill({
     >
       <span className={cn("size-1.5 rounded-full shrink-0", dotColor)} />
       <span>
-        {percentage !== null ? `${percentage}% ` : ""}
+        {percentage !== null ? `${percentage} ` : ""}
         {category}
       </span>
     </span>

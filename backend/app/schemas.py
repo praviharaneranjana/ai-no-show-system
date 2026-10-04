@@ -872,6 +872,19 @@ class CandidateScoreBreakdown(BaseModel):
     predicted_no_show_prob: float
 
 
+class SlotOfferCandidateOut(BaseModel):
+    waitlist_id: uuid.UUID
+    patient_id: uuid.UUID | None = None
+    patient_name: str
+    phone: str
+    total_score: float
+    score_breakdown: CandidateScoreBreakdown
+    predicted_no_show_prob: float
+    wait_days: float
+    distance_km: float | None = None
+    urgency: str
+
+
 class SlotOfferOut(BaseModel):
     id: uuid.UUID
     doctor_id: uuid.UUID
@@ -887,6 +900,7 @@ class SlotOfferOut(BaseModel):
     candidate_uhid: str | None = None
     match_score: float
     score_breakdown: CandidateScoreBreakdown
+    candidates: list[SlotOfferCandidateOut] = []
     status: str
     acted_by: str | None = None
     acted_at: datetime | None = None

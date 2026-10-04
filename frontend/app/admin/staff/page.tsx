@@ -159,6 +159,13 @@ export default function StaffManagementPage() {
         </Button>
       </div>
 
+      {error && (
+        <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-400">
+          <AlertCircle className="size-4 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
       {feedback && (
         <div
           className={`flex items-center gap-2 rounded-xl p-3 text-xs font-semibold ${

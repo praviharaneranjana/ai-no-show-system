@@ -1,3 +1,4 @@
+import { riskPctLabel } from "@/lib/risk-display";
 import { cn } from "@/lib/utils";
 import type { RiskCategory } from "@/lib/types";
 
@@ -65,7 +66,7 @@ export function DotRingGauge({
         {/* Center score & badge */}
         <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
           <span className="font-rounded text-3xl font-extrabold tracking-tight text-foreground tabular-nums">
-            {percentage}%
+            {riskPctLabel(score)}
           </span>
           {showLabel && (
             <span

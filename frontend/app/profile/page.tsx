@@ -82,7 +82,7 @@ export default function ProfilePage() {
               <CardTitle className="text-base">Identity & Station Assignment</CardTitle>
             </div>
             <CardDescription className="text-xs">
-              Staff identification and physical station in Colombo General Hospital.
+              Staff identification and physical station in Asiri Central Hospital.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
