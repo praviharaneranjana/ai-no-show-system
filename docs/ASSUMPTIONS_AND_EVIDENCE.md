@@ -33,33 +33,60 @@ It is 16 / 61: the share of patients **who had already missed** a visit and then
 |---|---|---|---|---|---|
 | Outreach efficacy | **0.26**, range 0.17–0.38 | 0.30 | The study above | Weak–moderate: one clinic, no control, post-miss | `economics.EFFICACY_*` |
 | Reach rate | 1.0 | not modelled | The 26.2% is per targeted patient and already includes unreachable ones, so applying a reach rate on top would double-count. Lower it only if your phone numbers are worse than the study's | — | `roi.evaluate(reach_rate)` |
-| Consultation fee | **LKR 2,500** average | 4,500 (CSV mean 4,745) | Reported typical outpatient fee; 4,500 was a specialist headline price. **No citation yet** | Weak: needs a source | `economics.DEFAULT_CONSULTATION_FEE_LKR` |
-| SMS cost | LKR 1 | 50 per contact | Third-party check quoted bulk tariffs of roughly LKR 0.5–0.85 per SMS. **Not independently verified here** | Moderate | `economics.SMS_COST_LKR` |
-| Share of contacts needing a phone call | 25% | implicit 100% | None | Unsourced | `economics.CALL_SHARE` |
-| Call length / staff cost | 3.5 min / LKR 850 per hour | the same, folded into 50 | None | Unsourced | `economics.CALL_MINUTES`, `STAFF_HOURLY_COST_LKR` |
-| **Blended cost per contact** | **LKR 13.40** = 1 + 0.25 × 3.5 × 850 / 60 | 50 | Derived | Weak (inherits the three above) | `economics.cost_per_contact` |
-| Platform costs | LKR 2.18 M a year (2 rows) | same | Typed in; no source | Unsourced | `hospital_expenses` table |
+| Consultation fee | **LKR 2,500** average | 4,500 (CSV mean 4,745) | Chosen as a blended average over all outpatient visits. **No primary source found, and what was found points higher for private specialists (§3a)** | Weak, and the ROI is very sensitive to it | `economics.DEFAULT_CONSULTATION_FEE_LKR` |
+| SMS cost | LKR 1.00 | 50 per contact | Provider price lists: LKR 0.56–1.10 (§3a). LKR 1 is the upper end | **Sourced** | `economics.SMS_COST_LKR` |
+| Share of contacts needing a phone call | 25% | implicit 100% | None found | Unsourced | `economics.CALL_SHARE` |
+| Call length | 3.5 min | 3.5 min | 3 min 29 s per reminder call, UK mental-health clinic (§3a) | Sourced, but not Sri Lankan | `economics.CALL_MINUTES` |
+| Staff cost | **LKR 300 an hour** | 850 | Front-desk pay plus EPF/ETF over 176 paid hours = LKR 280–380 (§3a) | Moderate | `economics.STAFF_HOURLY_COST_LKR` |
+| **Blended cost per contact** | **LKR 5.38** = 1 + 0.25 × 3.5 × 300 / 60 | 50 | Derived | Moderate (the call share is still a guess) | `economics.cost_per_contact` |
+| Platform costs | LKR 2.18 M a year (2 rows) | same | Typed in; no source. For scale only: a Sri Lankan clinic-software plan (DocPP, SMS included) is LKR 65,000 a year; hospital-scale pricing is not published | Unsourced | `hospital_expenses` table |
 | Contact top share K | 20% | 20% | Policy choice | n/a | `roi.DEFAULT_CONTACT_FRACTION` |
 | Overbooking wait cost | LKR 10,000 per overflow patient | unchanged | None. Note it is now 4× the fee, which makes the overbooking rule cautious | Unsourced | `capacity_settings.wait_cost_lkr` |
 
-The original LKR 50 was not an SMS price. The code comment shows it was a phone call: 3.5 min × LKR 850 per hour ≈ 49.6. It is now split into its parts so each can be argued separately.
+The original LKR 50 was not an SMS price. The code comment shows it was a phone call: 3.5 min × LKR 850 per hour ≈ 49.6. It is now split into its parts so each can be argued separately, and the hourly cost was corrected from 850 to 300 once pay data were found.
+
+### 3a. What the sourcing found (checked 2026-10-04)
+
+| Item | Finding | Confidence |
+|---|---|---|
+| SMS tariff | [QuickSend.lk](https://quicksend.lk/): "Any SMS: 0.56 LKR (All Taxes Included)", setup fee LKR 2,440 (read on the page). [Text.lk](https://text.lk/) LKR 0.64–0.84 and [Sri Lanka Hosting](https://www.srilankahosting.lk/sms-solutions) LKR 0.90–1.10 (from search results, pages not read) | Good: 0.56–1.10 per SMS |
+| Reminder call length | Richards & Okopi, *BJPsych Open* 2026, South-West Leeds community mental health unit, 95 patients: "average telephone call duration was 3 minutes 29 seconds" ([PMC13329279](https://pmc.ncbi.nlm.nih.gov/articles/PMC13329279/)) | Good, but UK |
+| Staff pay | Labour Force Survey 2024 (Department of Census and Statistics, Table 4.6): mean monthly gross pay LKR 58,292, median 48,000 (quoted by [app-dev.lk](https://www.app-dev.lk/blog/average-salary-sri-lanka), original table not read). Receptionist average about LKR 43,241 a month on salary aggregators ([worldsalaries.com](https://worldsalaries.com/average-receptionist-salary-in-sri-lanka/)) | Moderate. 176 h a month and 15% on-costs (employer EPF 12% + ETF 3%) are my assumptions |
+| Consultation fees | One vendor guide ([nestfainder.ai](https://www.nestfainder.ai/country/sri-lanka/guides/healthcare), "as of early 2026", **no source cited**) gives specialists "from 4,500 up to 8,000 LKR or more" and a short Colombo GP visit at 6,185. A 2024 four-district survey of chronic patients ([BMC Health Services Research](https://bmchealthservres.biomedcentral.com/articles/10.1186/s12913-024-11553-4)) reports about LKR 3,000 per clinic visit in total out-of-pocket cost (search snippet; includes more than the fee). Hospital and channelling sites ([doc.lk](https://www.doc.lk/), [eChannelling](https://www.echannelling.com/)) load fees dynamically and could not be read | **Weak and conflicting. Nothing here supports 2,500 for a private-hospital specialist visit; nothing reliable contradicts it as an all-visit blend** |
+| Platform cost | [DocPP](https://healthcare.lk/) Standard: LKR 10,000 a month or 65,000 a year, SMS included; custom hospital tier is "talk to an expert". No public price for hospital-scale systems | Floor only |
+
+## 3b. The fee is the assumption that matters most
+
+Holding everything else, the annual net benefit is a straight line in the average fee (live replay, efficacy 0.26, cost per contact LKR 5.38, platform costs LKR 2.18 M):
+
+| Average fee | Net benefit | ROI multiple |
+|---|---|---|
+| 2,500 (now) | −LKR 819,425 | 0.63× |
+| 3,500 | −258,733 | 0.88× |
+| **3,961 (break-even)** | 0 | 1.00× |
+| 4,500 | +301,959 | 1.14× |
+| 6,000 | +1,142,998 | 1.51× |
+
+So the sign of the ROI depends on whether the real average is below or above about LKR 4,000, and the only fee evidence found for private specialist visits is above it. The ROI page now shows the break-even fee and the largest platform cost the benefit could cover. **The real hospital's fee schedule or its billing data settles this and is the single most valuable thing to obtain.**
 
 ## 4. What changed in the result
 
 Replay of the last 90 days of recorded outcomes (**live**): 9,266 appointments, observed no-show rate 15.5%, 1,888 contacts at K = 20%, **542 of 1,435 no-shows reached (recall 37.8%) against 20.4% for random contact**. Ranking by risk still beats random contact by the same margin; that part does not depend on the assumptions.
 
-| Annual, LKR | Before (fee 4,760; efficacy 0.30; LKR 50) | Now (fee 2,507; efficacy 0.26; LKR 13.40) |
+| Annual, LKR | Before (fee 4,760; efficacy 0.30; LKR 50) | Now (fee 2,507; efficacy 0.26; LKR 5.38) |
 |---|---|---|
 | Recovered revenue | 3,038,990 | 1,405,891 |
-| Contact cost | 378,789 | 102,570 |
+| Contact cost | 378,789 | 41,156 |
 | Platform costs | 2,180,000 | 2,180,000 |
-| **Net benefit** | **+480,201** | **−876,680** |
-| **ROI multiple** | **1.19×** | **0.62×** |
-| Break-even efficacy | not computed | **42%** |
+| **Net benefit** | **+480,201** | **−815,265** |
+| **ROI multiple** | **1.19×** | **0.63×** |
+| Break-even efficacy | not computed | **41%** |
+| Largest platform cost the benefit covers | not computed | LKR 1,364,735 |
+| Break-even average fee | not computed | LKR 3,961 |
 
-Other efficacies at the same fee and costs: 0.17 → ROI 0.40×; 0.30 → 0.71×; 0.38 (top of the evidence) → 0.90×. With no platform cost the net benefit is **+LKR 1,303,320**.
+Other efficacies at the same fee and costs: 0.17 → ROI 0.41×; 0.30 → 0.73×; 0.38 (top of the evidence) → 0.93×. With no platform cost the net benefit is **+LKR 1,364,735**.
 
-**Reading.** The break-even efficacy (42%) is above the top of the evidence (38%), so on these inputs outreach does not pay for the recorded platform costs from consultation fees alone. That conclusion rests on the LKR 1.8 M platform cost, which has no source; remove it and the case is strongly positive. The honest statement for the thesis is therefore conditional: outreach is cheap, risk-ranking finds nearly twice as many no-shows as random contact, and whether it covers a platform cost depends on that cost and on an efficacy that nobody has yet measured in a general hospital. The ROI page now shows the break-even efficacy and says when it is above the evidence. The data are synthetic, so none of this is evidence of benefit in practice.
+**Reading.** The break-even efficacy (41%) is above the top of the evidence (38%), so on these inputs outreach does not pay for the recorded platform costs from consultation fees alone. That conclusion rests on two inputs with no primary source: the LKR 1.8 M platform cost and the LKR 2,500 fee (§3b). Remove the platform cost, or raise the fee above about LKR 4,000, and the case turns positive. The honest statement for the thesis is therefore conditional: outreach is cheap, risk-ranking finds nearly twice as many no-shows as random contact, and whether it covers a platform cost depends on that cost and on an efficacy that nobody has yet measured in a general hospital. The ROI page now shows the break-even efficacy and says when it is above the evidence. The data are synthetic, so none of this is evidence of benefit in practice.
 
 ## 5. How the paper's findings compare with the system
 
@@ -101,16 +128,18 @@ The recall summary compares contacted and non-contacted patients but is **not ra
 
 May claim: that a Sri Lankan study found 26.2% (16 of 61, interval 17–38%) of patients who missed a psychiatric follow-up attended after a call or letter, without a control group; that the efficacy used here is taken from it and varied across its interval; that ranking by risk reached 37.8% of no-shows against 20.4% for random contact on synthetic history; that the system can now measure its own recall and, with a hold-out, its own efficacy.
 
-May not claim: that 30% (or 26%) efficacy is established for a private general hospital; that the fee, SMS tariff, call time, staff cost or platform cost are sourced (they are not, or not yet); that the ROI is positive (on the current inputs it is below 1 with the recorded platform costs); that the model or its gender behaviour were validated against the paper; that messages are sent to patients (they are not).
+May not claim: that 30% (or 26%) efficacy is established for a private general hospital; that the LKR 2,500 fee or the platform cost are sourced (they are not, and the evidence found for the fee points higher); that the ROI is positive (on the current inputs it is below 1 with the recorded platform costs); that the model or its gender behaviour were validated against the paper; that messages are sent to patients (they are not).
 
 ## 9. Still open
 
-1. A citation for the LKR 2,500 average fee (hospital fee schedules or a published survey).
-2. A provider tariff for SMS, confirmed against the actual provider.
-3. A source or a decision for the LKR 1.8 M platform cost; it decides the sign of the result.
-4. Time-and-motion data for a recall call.
+Resolved by sourcing (§3a): SMS tariff, call length, staff cost.
+
+1. **The average fee** (§3b): the hospital's own fee schedule or billing export. Most valuable.
+2. **The platform cost**: LKR 1.8 M and LKR 380,000 have no source. A vendor quote or the hospital's actual contract is needed; the ROI page shows the ceiling it must stay under.
+3. The share of outreach that needs a phone call (25% is a guess); a pilot log would settle it.
+4. A Sri Lankan measurement of call time, and the original Labour Force Survey table (the figures here were read second-hand).
 5. Real outcome data for validation and for a first gender check.
-6. A real pilot with the hold-out switched on.
+6. A real pilot with the hold-out switched on, to replace the assumed efficacy with a measured one.
 
 ## 10. Reproducing the figures
 

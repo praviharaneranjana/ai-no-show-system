@@ -31,11 +31,18 @@ EFFICACY_SOURCE = (
     "attended within 6 weeks of a phone call or letter. One psychiatric clinic, no control group."
 )
 
-# Cost of one outreach contact, built from channels instead of a single flat number.
-SMS_COST_LKR = 1.0  # bulk SMS is quoted well under LKR 1; confirm against your provider's tariff
-CALL_MINUTES = 3.5  # assumption: no time-and-motion study
-STAFF_HOURLY_COST_LKR = 850.0  # assumption: loaded cost of front-desk time
-CALL_SHARE = 0.25  # assumption: share of contacts that need a phone call after the SMS
+# Cost of one outreach contact, built from channels instead of a single flat number. Sources checked 2026-10-04.
+# SMS: Sri Lankan providers list LKR 0.56 (QuickSend.lk, taxes included), LKR 0.64-0.84 (Text.lk, by top-up size) and
+# LKR 0.90-1.10 (Sri Lanka Hosting). LKR 1.00 is the upper end of that range, kept deliberately conservative.
+SMS_COST_LKR = 1.0
+# Call length: average 3 min 29 s per reminder call (Richards & Okopi, BJPsych Open 2026, UK community mental health
+# clinic, 95 patients). Not a Sri Lankan measurement.
+CALL_MINUTES = 3.5
+# Staff time: front-desk pay of about LKR 43,000 a month (receptionist average, salary aggregators) to LKR 58,292 (mean
+# monthly pay of all employees, Labour Force Survey 2024, Department of Census and Statistics), over 176 paid hours
+# (22 days x 8 h) plus 15% employer EPF and ETF, is LKR 280-380 an hour. LKR 300 sits at the lower, receptionist end.
+STAFF_HOURLY_COST_LKR = 300.0
+CALL_SHARE = 0.25  # assumption: share of contacts that need a phone call after the SMS. No source found
 
 
 def cost_per_contact(sms_cost: float, call_share: float, call_minutes: float, staff_hourly_cost: float) -> float:

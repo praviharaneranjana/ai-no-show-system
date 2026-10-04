@@ -23,7 +23,7 @@ const DEFAULTS: SimulatorParams = {
   sms_cost_lkr: 1,
   call_share: 0.25,
   call_minutes: 3.5,
-  staff_hourly_cost_lkr: 850,
+  staff_hourly_cost_lkr: 300,
   window_days: 90,
 };
 
@@ -263,6 +263,17 @@ export function RoiSimulator({
                 ? "The break-even is above that range, so on these inputs the case is not proven."
                 : "The break-even is inside that range."}
             </p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              The recorded platform costs would have to be below <b className="font-mono text-foreground">{lkr(result.annual.max_fixed_cost_lkr)}</b> a
+              year for the benefit to cover them
+              {result.annual.break_even_fee_lkr != null && (
+                <>
+                  , or the average fee at least <b className="font-mono text-foreground">{lkr(result.annual.break_even_fee_lkr)}</b> (it is{" "}
+                  {lkr(result.baseline.avg_fee_lkr)} now)
+                </>
+              )}
+              .
+            </p>
             <p className="mt-2 text-[11px] text-muted-foreground">{result.evidence.source} {result.evidence.caveat}</p>
           </section>
         </>
@@ -308,7 +319,7 @@ export function RoiSimulator({
           />
           <Assumption
             label="SMS cost"
-            hint="Bulk SMS is quoted under LKR 1 each; check your provider's tariff"
+            hint="Sri Lankan providers list LKR 0.56–1.10 per SMS"
             display={`LKR ${params.sms_cost_lkr.toFixed(2)}`}
             value={params.sms_cost_lkr}
             min={0}
@@ -328,7 +339,7 @@ export function RoiSimulator({
           />
           <Assumption
             label="Call length"
-            hint="Minutes of staff time per phone call"
+            hint="UK clinic study: 3 min 29 s per reminder call"
             display={`${params.call_minutes.toFixed(1)} min`}
             value={params.call_minutes}
             min={0.5}
@@ -338,7 +349,7 @@ export function RoiSimulator({
           />
           <Assumption
             label="Staff cost per hour"
-            hint="Loaded cost of front-desk time"
+            hint="Front-desk pay incl. EPF/ETF: about LKR 280–380 an hour"
             display={`LKR ${params.staff_hourly_cost_lkr}`}
             value={params.staff_hourly_cost_lkr}
             min={200}

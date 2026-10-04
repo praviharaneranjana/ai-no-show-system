@@ -238,7 +238,7 @@ def test_simulator_evaluate_is_empty_without_history(client):
     body = resp.json()
     assert body["empty"] is True
     assert body["assumptions"]["intervention_efficacy"] == 0.26
-    assert 5 < body["assumptions"]["cost_per_contact_lkr"] < 25
+    assert 3 < body["assumptions"]["cost_per_contact_lkr"] < 10
 
 
 def test_simulator_evaluate_rejects_out_of_range_params(client):

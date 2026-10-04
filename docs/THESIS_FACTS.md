@@ -2290,8 +2290,8 @@ Do not quote the following figures from the sections above; they were replaced. 
 |---|---|---|
 | Consultation fee (§15.4, §15.6, §23) | LKR 4,500 default; synthetic fees mean 4,745 | **LKR 2,500** average; synthetic fees rescaled (mean 2,500, range 1,650–3,950); migration `c9d0e1f2a3b4` |
 | Outreach efficacy (§15.6) | 0.30, "needs a source" | **0.26**, range 0.17–0.38, from Rajasuriya et al. 2010 (16 of 61, uncontrolled, post-miss) |
-| Cost per contact (§15.6, §23) | LKR 50 | **LKR 13.40** = SMS LKR 1 + 25% × 3.5 min × LKR 850/h; each part is an input |
-| ROI replay (§15.6, Numbers sheet #26) | 1.19×, annual net LKR +480,201, payback 307 days | **0.62×**, annual net **LKR −876,680**; break-even efficacy **42%** (above the evidence); with no platform cost the net is +LKR 1,303,320 |
+| Cost per contact (§15.6, §23) | LKR 50 | **LKR 5.38** = SMS LKR 1 + 25% × 3.5 min × LKR 300/h; each part is an input and has a source except the 25% call share |
+| ROI replay (§15.6, Numbers sheet #26) | 1.19×, annual net LKR +480,201, payback 307 days | **0.63×**, annual net **LKR −815,265**; break-even efficacy **41%** (above the evidence), break-even fee LKR 3,961; with no platform cost the net is +LKR 1,364,735 |
 | Replay recall | 38.0% vs 20.4% random | 37.8% vs 20.4% random (window moved one day; the fee does not change it) |
 | Revenue at risk, hub "lost revenue" | per-appointment fee 4,751 | Same formulas, now over the rescaled fees |
 | Outreach privacy (§17) | Department sent to Gemini | Sensitive departments (psychiatry, psychology, mental health, counselling) are withheld from messages and the Gemini prompt |

@@ -248,6 +248,10 @@ def evaluate(
             "net_benefit_low_lkr": min(nets),
             "net_benefit_high_lkr": max(nets),
             "break_even_efficacy": break_even,
+            # The most the recorded platform costs could be, and the lowest average fee, at which the benefit still
+            # covers the costs, holding the other inputs. Both are what a decision needs; neither is a forecast.
+            "max_fixed_cost_lkr": annual_recovered - annual_cost,
+            "break_even_fee_lkr": (baseline["avg_fee_lkr"] * total_cost / annual_recovered) if annual_recovered > 0 else None,
             "roi_multiple": (annual_recovered / total_cost) if total_cost > 0 else None,
             "payback_days": (total_cost / annual_recovered * 365.0) if annual_recovered > 0 and total_cost > 0 else None,
             "expense_category_breakdown": breakdown,

@@ -634,6 +634,8 @@ export type SimulatorResult =
         net_benefit_low_lkr: number;
         net_benefit_high_lkr: number;
         break_even_efficacy: number | null;
+        max_fixed_cost_lkr: number;
+        break_even_fee_lkr: number | null;
         roi_multiple: number | null;
         payback_days: number | null;
         expense_category_breakdown: Record<string, number>;

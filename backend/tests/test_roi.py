@@ -84,7 +84,7 @@ def test_evaluate_from_db_rows(db_session):
 def test_cost_per_contact_is_sms_plus_call_share():
     assert economics.cost_per_contact(1.0, 0.0, 3.5, 850.0) == 1.0  # SMS only
     assert economics.cost_per_contact(1.0, 1.0, 6.0, 600.0) == pytest.approx(1.0 + 60.0)  # always a 6 min call
-    assert 5 < economics.DEFAULT_COST_PER_CONTACT_LKR < 25  # nowhere near the old flat LKR 50
+    assert 3 < economics.DEFAULT_COST_PER_CONTACT_LKR < 10  # nowhere near the old flat LKR 50
 
 
 def test_break_even_efficacy_closes_the_gap(db_session):
@@ -109,6 +109,9 @@ def test_break_even_efficacy_closes_the_gap(db_session):
     # Running at the break-even efficacy makes the annual net benefit zero.
     at_be = roi.evaluate(db_session, hospital_id=None, window_days=30, custom_expenses=fixed, efficacy=min(be, 1.0))
     assert at_be["annual"]["net_benefit_lkr"] == pytest.approx(0.0, abs=1.0)
+    # At the break-even fee the benefit exactly covers the costs; below it the case fails.
+    assert base["annual"]["break_even_fee_lkr"] == pytest.approx(2500.0 * be / base["assumptions"]["intervention_efficacy"], rel=1e-6)
+    assert base["annual"]["max_fixed_cost_lkr"] == pytest.approx(base["annual"]["recovered_lkr"] - base["annual"]["contact_cost_lkr"])
     assert base["evidence"]["efficacy_central"] == economics.EFFICACY_CENTRAL
     assert base["evidence"]["break_even_above_evidence"] == (be > economics.EFFICACY_HIGH)
     # A lower reach rate raises the efficacy needed to break even.
