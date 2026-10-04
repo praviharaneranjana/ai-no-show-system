@@ -20,6 +20,7 @@ from sqlalchemy import insert, text
 from sqlalchemy.orm import Session
 
 from app import models
+from app.economics import scale_synthetic_fee
 import fake_data_lk as fk
 
 ASIRI_ID = uuid.UUID("a0000000-0000-0000-0000-000000000001")
@@ -258,7 +259,7 @@ def import_synthetic(
             sms_received=bool(r.sms_sent),
             sms_reminder_opt_in=False,
             heavy_rain=bool(r.heavy_rain),
-            fee_lkr=float(r.consult_fee_lkr),
+            fee_lkr=scale_synthetic_fee(float(r.consult_fee_lkr)),
             status=status,
             no_show=no_show,
             late_cancel=False,

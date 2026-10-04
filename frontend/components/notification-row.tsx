@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertTriangle, Clock, MessageSquare, Users } from "lucide-react";
+import { AlertTriangle, BellRing, Clock, MessageSquare, PhoneCall, ShieldCheck, Users } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/format";
@@ -9,6 +9,9 @@ const STYLE: Record<NotificationItem["type"], { icon: typeof Clock; cls: string 
   high_risk: { icon: AlertTriangle, cls: "bg-rose-50 text-rose-600 dark:bg-rose-950/40 dark:text-rose-400" },
   delay: { icon: Clock, cls: "bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400" },
   reply: { icon: MessageSquare, cls: "bg-[#EDE9FE] text-[#8B7CF6] dark:bg-[#8B7CF6]/20 dark:text-[#C4B5FD]" },
+  approval: { icon: ShieldCheck, cls: "bg-violet-50 text-violet-600 dark:bg-violet-950/40 dark:text-violet-300" },
+  needs_staff: { icon: PhoneCall, cls: "bg-rose-50 text-rose-600 dark:bg-rose-950/40 dark:text-rose-400" },
+  no_reply: { icon: BellRing, cls: "bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400" },
   waitlist: { icon: Users, cls: "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400" },
 };
 

@@ -1,4 +1,4 @@
-import { Cpu, Layers, BarChart3, Database, TriangleAlert } from "lucide-react";
+import { Cpu, Layers, BarChart3, Database, TriangleAlert, Rows3, Percent, Split, Target, TrendingUp, Gauge, Crosshair, Zap, type LucideIcon } from "lucide-react";
 
 import { getModelInfo } from "@/lib/api";
 import { BackendUnreachable } from "@/components/backend-unreachable";
@@ -10,11 +10,47 @@ const num = (v: number | null | undefined, digits = 3) => (v == null ? "—" : v
 const pct = (v: number | null | undefined, digits = 1) => (v == null ? "—" : `${(v * 100).toFixed(digits)}%`);
 const int = (v: number | null | undefined) => (v == null ? "—" : v.toLocaleString("en-US"));
 
-function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+type Tone = "violet" | "rose" | "emerald" | "amber" | "sky" | "indigo";
+
+const TONES: Record<Tone, { card: string; pill: string; value: string }> = {
+  violet: { card: "border-violet-500/30 bg-gradient-to-br from-violet-500/10 to-card", pill: "bg-violet-500/15 text-violet-700 dark:text-violet-300", value: "text-violet-700 dark:text-violet-300" },
+  rose: { card: "border-rose-500/30 bg-gradient-to-br from-rose-500/10 to-card", pill: "bg-rose-500/15 text-rose-700 dark:text-rose-300", value: "text-rose-700 dark:text-rose-300" },
+  emerald: { card: "border-emerald-500/30 bg-gradient-to-br from-emerald-500/10 to-card", pill: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300", value: "text-emerald-700 dark:text-emerald-300" },
+  amber: { card: "border-amber-500/30 bg-gradient-to-br from-amber-500/10 to-card", pill: "bg-amber-500/15 text-amber-700 dark:text-amber-300", value: "text-amber-700 dark:text-amber-300" },
+  sky: { card: "border-sky-500/30 bg-gradient-to-br from-sky-500/10 to-card", pill: "bg-sky-500/15 text-sky-700 dark:text-sky-300", value: "text-sky-700 dark:text-sky-300" },
+  indigo: { card: "border-indigo-500/30 bg-gradient-to-br from-indigo-500/10 to-card", pill: "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300", value: "text-indigo-700 dark:text-indigo-300" },
+};
+
+function Stat({
+  label,
+  value,
+  sub,
+  tone = "violet",
+  tag,
+  icon: Icon,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: Tone;
+  tag?: string;
+  icon?: LucideIcon;
+}) {
+  const t = TONES[tone];
   return (
-    <div className="rounded-2xl border border-border bg-card p-4">
-      <div className="text-[11px] font-semibold text-muted-foreground">{label}</div>
-      <div className="mt-1 font-mono text-2xl font-extrabold text-foreground">{value}</div>
+    <div className={`rounded-2xl border p-4 shadow-xs ${t.card}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
+          {Icon && (
+            <span className={`flex size-5 items-center justify-center rounded-md ${t.pill}`}>
+              <Icon className="size-3" />
+            </span>
+          )}
+          {label}
+        </div>
+        {tag && <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider ${t.pill}`}>{tag}</span>}
+      </div>
+      <div className={`mt-2 font-mono text-2xl font-extrabold ${t.value}`}>{value}</div>
       {sub && <div className="mt-0.5 text-[11px] text-muted-foreground">{sub}</div>}
     </div>
   );
@@ -82,23 +118,26 @@ export default async function ModelPage() {
       </div>
 
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat label="Training rows" value={int(info.n_rows)} sub={info.date_range.start ? `${info.date_range.start} → ${info.date_range.end}` : undefined} />
-        <Stat label="Base no-show rate" value={pct(info.base_rate)} sub="share of no-shows in the training data" />
+        <Stat tone="violet" icon={Rows3} tag="Training" label="Training rows" value={int(info.n_rows)} sub={info.date_range.start ? `${info.date_range.start} → ${info.date_range.end}` : undefined} />
+        <Stat tone="amber" icon={Percent} tag="Base rate" label="Base no-show rate" value={pct(info.base_rate)} sub="share of no-shows in the training data" />
         <Stat
+          tone="sky"
+          icon={Split}
+          tag="Chronological"
           label="Split (train / val / test)"
           value={info.split ? `${int(info.split.train)} / ${int(info.split.val)} / ${int(info.split.test)}` : "—"}
-          sub="chronological"
+          sub="oldest rows train, newest test"
         />
-        <Stat label="Oracle AUC" value={num(info.oracle_auc)} sub="ceiling given the generator’s true probabilities" />
+        <Stat tone="indigo" icon={Target} tag="Ceiling" label="Oracle AUC" value={num(info.oracle_auc)} sub="ceiling given the generator’s true probabilities" />
       </section>
 
       <Panel title="Test-set metrics" subtitle="Held-out test split, from metrics.json">
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-          <Stat label="ROC-AUC" value={num(info.metrics.roc_auc)} sub={ciText(ci, "roc") ?? undefined} />
-          <Stat label="PR-AUC" value={num(info.metrics.pr_auc)} sub={ciText(ci, "pr") ?? undefined} />
-          <Stat label="Brier" value={num(info.metrics.brier)} sub={ciText(ci, "brier") ?? "lower is better"} />
-          <Stat label="Recall @ top 20%" value={pct(info.metrics.recall_top20)} sub={`precision ${pct(info.metrics.precision_top20)}`} />
-          <Stat label="Lift @ top 20%" value={info.metrics.lift_top20 == null ? "—" : `${info.metrics.lift_top20.toFixed(2)}×`} />
+          <Stat tone="violet" icon={TrendingUp} tag="Ranking" label="ROC-AUC" value={num(info.metrics.roc_auc)} sub={ciText(ci, "roc") ?? "higher is better"} />
+          <Stat tone="sky" icon={Crosshair} tag="Precision" label="PR-AUC" value={num(info.metrics.pr_auc)} sub={ciText(ci, "pr") ?? "higher is better"} />
+          <Stat tone="emerald" icon={Gauge} tag="Calibration" label="Brier" value={num(info.metrics.brier)} sub={ciText(ci, "brier") ?? "lower is better"} />
+          <Stat tone="amber" icon={Target} tag="Top 20%" label="Recall @ top 20%" value={pct(info.metrics.recall_top20)} sub={`precision ${pct(info.metrics.precision_top20)}`} />
+          <Stat tone="rose" icon={Zap} tag="Lift" label="Lift @ top 20%" value={info.metrics.lift_top20 == null ? "—" : `${info.metrics.lift_top20.toFixed(2)}×`} sub="vs. contacting at random" />
         </div>
         {Object.keys(ci).length === 0 && (
           <p className="mt-3 text-[11px] text-muted-foreground">No confidence intervals are stored in this bundle’s metrics.json.</p>

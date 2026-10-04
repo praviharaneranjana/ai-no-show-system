@@ -80,6 +80,11 @@ export default async function WorklistPage({ searchParams }: { searchParams: Pro
                       {appointment.appointment_day} · {appointment.scheduled_time ?? "—"} · {appointment.department ?? "General"} · {appointment.doctor_name ?? ""}
                     </span>
                     <span className="block truncate text-[11px] font-medium text-[#8B7CF6]">{prediction?.recommendation}</span>
+                    {appointment.outreach_arm === "holdout" && (
+                      <span className="mt-0.5 inline-block rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">
+                        Control group · please do not contact
+                      </span>
+                    )}
                   </span>
                 </Link>
                 {prediction && <RiskPill category={prediction.risk_category} score={prediction.risk_score} size="sm" />}

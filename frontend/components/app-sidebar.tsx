@@ -12,10 +12,13 @@ import {
   Calculator,
   LogOut,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   Sparkles,
   Building2,
   MapPin,
   ShieldCheck,
+  RotateCcw,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -29,9 +32,12 @@ import type { CapacityNavCounts, ModelInfo } from "@/lib/types";
 interface AppSidebarProps {
   onItemClick?: () => void;
   className?: string;
+  /** Icon-only rail (desktop). */
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }
 
-export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
+export function AppSidebar({ onItemClick, className, collapsed = false, onToggleCollapsed }: AppSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   // The snapshot must be a primitive: returning a fresh object each call makes
@@ -106,6 +112,13 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
       label: "Outreach Hub",
       icon: MessagesSquare,
       exact: false,
+    },
+    {
+      href: "/recall",
+      label: "Missed-visit Recall",
+      icon: RotateCcw,
+      exact: false,
+      hideForAnalyst: true,
     },
     {
       href: "/simulator",
@@ -187,19 +200,34 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
   return (
     <aside
       className={cn(
-        "flex h-full w-full flex-col border-r border-[#F0F0F4] bg-white p-5 text-[#171725] transition-colors dark:border-[#272738] dark:bg-[#171722] dark:text-[#F5F5FA]",
+        "flex h-full w-full flex-col overflow-hidden border-r border-[#F0F0F4] bg-white text-[#171725] transition-[padding,background-color] duration-300 dark:border-[#272738] dark:bg-[#171722] dark:text-[#F5F5FA]",
+        collapsed ? "p-3" : "p-5",
         className
       )}
     >
       <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto">
-        {/* Logo Brand Header */}
-        <Link
-          href="/"
-          onClick={onItemClick}
-          className="group flex items-center transition-opacity hover:opacity-95"
-        >
-          <ShaiLogo size="lg" />
-        </Link>
+        {/* Logo Brand Header: centred, with the collapse arrow */}
+        <div className={cn("flex items-center", collapsed ? "flex-col gap-3" : "justify-between")}>
+          <Link
+            href="/"
+            onClick={onItemClick}
+            aria-label="SHAI home"
+            className={cn("group flex items-center transition-opacity hover:opacity-95", collapsed ? "justify-center" : "flex-1 justify-center")}
+          >
+            {collapsed ? <ShaiLogo variant="glyph" size="md" /> : <ShaiLogo size="default" />}
+          </Link>
+          {onToggleCollapsed && (
+            <button
+              type="button"
+              onClick={onToggleCollapsed}
+              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-[#F0F0F4] text-[#8C8CA1] transition-all hover:border-[#8B7CF6]/50 hover:text-[#8B7CF6] dark:border-[#272738]"
+            >
+              {collapsed ? <ChevronsRight className="size-4" /> : <ChevronsLeft className="size-4" />}
+            </button>
+          )}
+        </div>
 
         {/* Navigation Items (Dropify-style active gradient pill with chevron) */}
         <nav className="flex flex-col gap-1.5" aria-label="Main Navigation">
@@ -219,8 +247,11 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
                 key={item.href}
                 href={item.href}
                 onClick={onItemClick}
+                title={collapsed ? item.label : undefined}
+                aria-label={item.label}
                 className={cn(
-                  "group relative flex items-center justify-between rounded-2xl px-3.5 py-2.5 text-[13px] font-semibold transition-all",
+                  "group relative flex items-center rounded-2xl text-[13px] font-semibold transition-all",
+                  collapsed ? "justify-center px-0 py-3" : "justify-between px-3.5 py-2.5",
                   isActive
                     ? "bg-gradient-to-r from-[#8B7CF6] to-[#5B7CFA] text-white shadow-md shadow-[#8B7CF6]/25"
                     : "text-[#8C8CA1] hover:bg-[#F5F5F9] hover:text-[#171725] dark:hover:bg-[#222234] dark:hover:text-white"
@@ -235,10 +266,13 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
                         : "text-[#8C8CA1] group-hover:text-[#171725] dark:group-hover:text-white"
                     )}
                   />
-                  <span>{item.label}</span>
+                  {!collapsed && <span className="animate-in fade-in duration-300 whitespace-nowrap">{item.label}</span>}
                 </div>
 
-                <div className="flex items-center gap-1.5">
+                {collapsed && (item.href === "/capacity" ? (navCounts?.waitlist_waiting ?? 0) > 0 : item.href === "/outreach" ? (navCounts?.open_slot_offers ?? 0) > 0 : false) && (
+                  <span className="absolute right-2 top-2 size-2 rounded-full bg-[#8B7CF6] ring-2 ring-white dark:ring-[#171722]" />
+                )}
+                <div className={cn("flex items-center gap-1.5", collapsed && "hidden")}>
                   {item.href === "/capacity" && (navCounts?.waitlist_waiting ?? 0) > 0 && (
                     <span
                       className={cn(
@@ -275,6 +309,55 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
 
       {/* Bottom Area: Hospital Tab, Promo Card, Profile & Theme Toggle */}
       <div className="flex shrink-0 flex-col gap-3 pt-3 border-t border-[#F0F0F4] dark:border-[#272738]">
+        {collapsed ? (
+        <div className="flex flex-col items-center gap-3 animate-in fade-in duration-300">
+          <Link
+            href="/hospital"
+            onClick={onItemClick}
+            title={`${hospitalName} · Connected`}
+            aria-label={hospitalName}
+            className="relative flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-[#8B7CF6] to-[#5B7CFA] text-white shadow-sm transition-transform hover:scale-105"
+          >
+            <Building2 className="size-4" />
+            <span className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-[#171722]" />
+          </Link>
+
+          <Link
+            href="/model"
+            onClick={onItemClick}
+            title={
+              modelInfo?.metrics.roc_auc != null
+                ? `Risk model active · ROC-AUC ${modelInfo.metrics.roc_auc.toFixed(3)}`
+                : "Risk model"
+            }
+            aria-label="Risk model"
+            className="relative flex size-10 items-center justify-center rounded-xl border border-[#DDD6FE]/60 bg-gradient-to-br from-[#EDE9FE] to-[#F5F3FF] text-[#8B7CF6] transition-transform hover:scale-105 dark:border-[#383850] dark:from-[#252538] dark:to-[#1C1C2A] dark:text-[#C4B5FD]"
+          >
+            <Sparkles className="size-4" />
+            <span className="absolute -right-0.5 -top-0.5 size-2.5 animate-pulse rounded-full bg-emerald-500 ring-2 ring-white dark:ring-[#171722]" />
+          </Link>
+
+          <Link href="/profile" onClick={onItemClick} title={`${userName} · ${userRole}`} aria-label="Profile" className="relative">
+            <div className="flex size-9 items-center justify-center rounded-full bg-[#EDE9FE] text-xs font-bold text-[#8B7CF6] ring-2 ring-white transition-all hover:ring-[#8B7CF6]/40 dark:bg-[#252538] dark:text-[#C4B5FD] dark:ring-[#171722]">
+              {initials}
+            </div>
+            <span className="absolute bottom-0 right-0 size-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-[#171722]" />
+          </Link>
+
+          <ThemePill compact />
+
+          <button
+            type="button"
+            onClick={handleSignOut}
+            title="Sign out"
+            className="rounded-lg p-1.5 text-[#8C8CA1] transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
+          >
+            <LogOut className="size-4" />
+            <span className="sr-only">Sign out</span>
+          </button>
+        </div>
+        ) : (
+          <div className="flex flex-col gap-3 animate-in fade-in duration-300">
         {/* Hospital Identity Tab / Card (P1-6) - Clickable to /hospital */}
         <Link
           href="/hospital"
@@ -373,6 +456,8 @@ export function AppSidebar({ onItemClick, className }: AppSidebarProps) {
 
         {/* Segmented Light/Dark Pill Toggle */}
         <ThemePill size="default" />
+          </div>
+        )}
       </div>
     </aside>
   );

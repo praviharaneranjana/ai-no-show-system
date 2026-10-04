@@ -392,7 +392,7 @@ def outreach_activity(request: Request, limit: int = Query(10, ge=1, le=100), db
 # ======================================================================
 class NotificationItem(BaseModel):
     id: str  # stable id so "read" state can be kept client-side
-    type: Literal["high_risk", "delay", "reply", "waitlist"]
+    type: Literal["high_risk", "delay", "reply", "waitlist", "approval", "needs_staff", "no_reply"]
     title: str
     detail: str
     href: str
@@ -453,6 +453,23 @@ def notifications(request: Request, limit: int = Query(50, ge=1, le=200), db: Se
             detail=(i.intent_detected or i.status.replace("_", " ")), href=f"/appointments/{i.appointment_id}",
             at=i.created_at,
         ))
+
+    from app.services import reschedule_flow  # local import: keeps insights importable without the booking stack
+    reschedule_flow.expire_stale(db, hid)
+    conv_q = db.query(models.RescheduleConversation).filter(
+        models.RescheduleConversation.state.in_(("pending_approval", "needs_staff", "no_reply"))
+    )
+    if hid:
+        conv_q = conv_q.filter(models.RescheduleConversation.hospital_id == hid)
+    for c in conv_q.order_by(models.RescheduleConversation.updated_at.desc()).limit(20).all():
+        who = c.patient.full_name if c.patient else "Patient"
+        title, detail, kind = {
+            "pending_approval": (f"Approve new slot for {who}", f"Patient agreed to {c.offer['doctor_name']} on {c.offer['date']} {c.offer['start_time']}" if c.offer else "Patient agreed to a new time", "approval"),
+            "needs_staff": (f"{who} needs a call", "The automatic conversation could not finish", "needs_staff"),
+            "no_reply": (f"{who} did not reply in 24 hours", "Call the patient to confirm the appointment", "no_reply"),
+        }[c.state]
+        items.append(NotificationItem(id=f"conv:{c.id}:{c.state}", type=kind, title=title, detail=detail,
+                                      href=f"/outreach?patient={c.patient_id}", at=c.updated_at or now))
 
     wait_q = db.query(models.WaitlistEntry).filter(models.WaitlistEntry.status == "waiting")
     if hid:

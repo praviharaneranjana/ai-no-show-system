@@ -2278,3 +2278,23 @@ D  backend/app/services/queue_simulator.py
 ?? frontend/app/capacity/slot-heatmap-view.tsx.bak
 ```
 (`?? backend/data/appointments_synthetic.csv` is the untracked dataset; `?? docs/thesis_figures/` and `docs/THESIS_FACTS.md` are the only files created by this fact-gathering. Other modified/untracked backend files belong to the concurrent "Step 5" capacity work, not to this report.)
+
+
+---
+
+# ADDENDUM 2026-10-04 — what changed after this report
+
+Do not quote the following figures from the sections above; they were replaced. The full evidence and reasoning is in `docs/ASSUMPTIONS_AND_EVIDENCE.md`.
+
+| Item | This report said | Now |
+|---|---|---|
+| Consultation fee (§15.4, §15.6, §23) | LKR 4,500 default; synthetic fees mean 4,745 | **LKR 2,500** average; synthetic fees rescaled (mean 2,500, range 1,650–3,950); migration `c9d0e1f2a3b4` |
+| Outreach efficacy (§15.6) | 0.30, "needs a source" | **0.26**, range 0.17–0.38, from Rajasuriya et al. 2010 (16 of 61, uncontrolled, post-miss) |
+| Cost per contact (§15.6, §23) | LKR 50 | **LKR 13.40** = SMS LKR 1 + 25% × 3.5 min × LKR 850/h; each part is an input |
+| ROI replay (§15.6, Numbers sheet #26) | 1.19×, annual net LKR +480,201, payback 307 days | **0.62×**, annual net **LKR −876,680**; break-even efficacy **42%** (above the evidence); with no platform cost the net is +LKR 1,303,320 |
+| Replay recall | 38.0% vs 20.4% random | 37.8% vs 20.4% random (window moved one day; the fee does not change it) |
+| Revenue at risk, hub "lost revenue" | per-appointment fee 4,751 | Same formulas, now over the rescaled fees |
+| Outreach privacy (§17) | Department sent to Gemini | Sensitive departments (psychiatry, psychology, mental health, counselling) are withheld from messages and the Gemini prompt |
+| Missing features (§17, §23) | No recall workflow; no way to measure efficacy | Post-miss recall queue (`/recall`) and optional randomised hold-out (`OUTREACH_HOLDOUT_PCT`, report on the ROI page) |
+| Model | — | **Not retrained**; bundle, thresholds and stored scores unchanged |
+| Alembic head (§4) | `b1c2d3e4f5a7` | `c9d0e1f2a3b4` (also applies the reschedule migration `b8c9d0e1f2a3`) |

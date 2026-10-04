@@ -7,9 +7,12 @@ The single implementation of the model (the frontend only renders what this retu
   ``K`` share, and count the no-shows that fall inside the contacted group. A contacted would-be no-show is
   recovered with probability ``efficacy`` and is worth ``fee * value_multiplier``. The comparison is the same
   number of contacts chosen at random, whose expected capture is simply ``K`` of the no-shows.
-* Costs: ``cost_per_contact`` per contact, plus the hospital's recorded expenses (annualised).
+* Costs: ``cost_per_contact`` per contact (an SMS plus a phone call for the share that needs one), plus the
+  hospital's recorded expenses (annualised).
 
-Everything that is not in the database is an explicit assumption: efficacy, K, value multiplier, contact cost.
+Everything that is not in the database is an explicit assumption: efficacy, reach, K, value multiplier and the
+contact-cost parts. app/economics.py names the source of each default. ``break_even_efficacy`` says how effective
+outreach must be for the benefit to cover its costs, which is the honest way to present an unmeasured efficacy.
 """
 import math
 import uuid
@@ -18,14 +21,15 @@ from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
-from app import models
+from app import economics, models
 
-DEFAULT_EFFICACY = 0.30
+DEFAULT_EFFICACY = economics.EFFICACY_CENTRAL
+DEFAULT_REACH_RATE = 1.0  # the 26.2% in the source is per targeted patient and already includes unreachable ones
 DEFAULT_CONTACT_FRACTION = 0.20
 DEFAULT_VALUE_MULTIPLIER = 1.0  # hospital revenue per LKR of consultation fee (1.0 = fee only, no ancillary)
-DEFAULT_COST_PER_CONTACT_LKR = 50.0  # ~3.5 min of staff time at ~LKR 850/h plus message cost
 DEFAULT_WINDOW_DAYS = 90
-SENS_EFFICACIES = (0.1, 0.2, 0.3, 0.4)
+# Low and high ends of the evidence, the central value, and one value above the evidence for contrast.
+SENS_EFFICACIES = (economics.EFFICACY_LOW, economics.EFFICACY_CENTRAL, economics.EFFICACY_HIGH, 0.50)
 SENS_KS = (0.10, 0.20, 0.30)
 
 
@@ -158,17 +162,27 @@ def evaluate(
     hospital_id: uuid.UUID | None,
     contact_fraction: float = DEFAULT_CONTACT_FRACTION,
     efficacy: float = DEFAULT_EFFICACY,
+    reach_rate: float = DEFAULT_REACH_RATE,
     value_multiplier: float = DEFAULT_VALUE_MULTIPLIER,
-    cost_per_contact_lkr: float = DEFAULT_COST_PER_CONTACT_LKR,
+    sms_cost_lkr: float = economics.SMS_COST_LKR,
+    call_share: float = economics.CALL_SHARE,
+    call_minutes: float = economics.CALL_MINUTES,
+    staff_hourly_cost_lkr: float = economics.STAFF_HOURLY_COST_LKR,
     window_days: int = DEFAULT_WINDOW_DAYS,
     custom_expenses: list[dict] | None = None,
     as_of: date | None = None,
 ) -> dict:
     rows = load_history(db, hospital_id, window_days, as_of)
+    cost_per_contact_lkr = economics.cost_per_contact(sms_cost_lkr, call_share, call_minutes, staff_hourly_cost_lkr)
     assumptions = {
         "contact_fraction": contact_fraction,
         "intervention_efficacy": efficacy,
+        "reach_rate": reach_rate,
         "value_multiplier": value_multiplier,
+        "sms_cost_lkr": sms_cost_lkr,
+        "call_share": call_share,
+        "call_minutes": call_minutes,
+        "staff_hourly_cost_lkr": staff_hourly_cost_lkr,
         "cost_per_contact_lkr": cost_per_contact_lkr,
         "window_days": window_days,
     }
@@ -192,13 +206,16 @@ def evaluate(
     }
 
     agg = replay(rows, contact_fraction)
-    main = _scenario(agg, efficacy, value_multiplier, cost_per_contact_lkr)
+    main = _scenario(agg, efficacy * reach_rate, value_multiplier, cost_per_contact_lkr)
+    main["efficacy"] = efficacy
 
     cells = []
     for k in SENS_KS:
         a = replay(rows, k)
         for e in SENS_EFFICACIES:
-            cells.append(_scenario(a, e, value_multiplier, cost_per_contact_lkr))
+            cell = _scenario(a, e * reach_rate, value_multiplier, cost_per_contact_lkr)
+            cell["efficacy"] = e
+            cells.append(cell)
 
     expenses = custom_expenses if custom_expenses is not None else load_expenses(db, hospital_id)
     contacts_per_year = main["contacts"] * annual_scale
@@ -212,6 +229,9 @@ def evaluate(
     net = annual_recovered - annual_cost - fixed
     nets = [annual_net(c) for c in cells]
     total_cost = annual_cost + fixed
+    # Recovered value is linear in efficacy, so the efficacy at which benefit equals cost has a closed form.
+    recovered_per_unit_efficacy = agg["caught_model_fee_lkr"] * reach_rate * value_multiplier * annual_scale
+    break_even = (total_cost / recovered_per_unit_efficacy) if recovered_per_unit_efficacy > 0 else None
     return {
         "empty": False,
         "baseline": baseline,
@@ -227,10 +247,20 @@ def evaluate(
             "net_benefit_lkr": net,
             "net_benefit_low_lkr": min(nets),
             "net_benefit_high_lkr": max(nets),
+            "break_even_efficacy": break_even,
             "roi_multiple": (annual_recovered / total_cost) if total_cost > 0 else None,
             "payback_days": (total_cost / annual_recovered * 365.0) if annual_recovered > 0 and total_cost > 0 else None,
             "expense_category_breakdown": breakdown,
             "expenses_recorded": len(expenses),
+        },
+        "evidence": {
+            "efficacy_central": economics.EFFICACY_CENTRAL,
+            "efficacy_low": economics.EFFICACY_LOW,
+            "efficacy_high": economics.EFFICACY_HIGH,
+            "source": economics.EFFICACY_SOURCE,
+            "break_even_above_evidence": break_even is not None and break_even > economics.EFFICACY_HIGH,
+            "caveat": "Efficacy is the share of contacted would-be no-shows who attend afterwards. The only Sri Lankan "
+                      "estimate is uncontrolled, from one psychiatric clinic; measure your own with the hold-out report.",
         },
         "sensitivity": {
             "efficacies": list(SENS_EFFICACIES),

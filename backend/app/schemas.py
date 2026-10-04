@@ -2,7 +2,9 @@ import re
 import uuid
 from datetime import date, datetime, time
 from typing import Any
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+
+from app import economics
 
 
 # ===================================
@@ -286,6 +288,43 @@ class AppointmentOut(BaseModel):
     outcome_source: str | None = None
     created_at: datetime
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def outreach_arm(self) -> str:
+        """'holdout' when this appointment is in the no-contact control group (always 'contact' if hold-out is off)."""
+        from app import holdout  # local import: holdout depends on schemas-free modules only
+        return holdout.arm_for(self.id)
+
+
+class AppointmentRescheduleRequest(BaseModel):
+    """Move a booking to an open session (any doctor of the same department)."""
+    appointment_day: date
+    clinic_session_id: uuid.UUID
+    doctor_id: uuid.UUID | None = None  # optional safety check: must own the session
+    reason: str | None = None
+    notify: bool = False  # message the patient with the new slot
+    language: str | None = None  # defaults to the patient's preferred language
+
+
+class RescheduleResultOut(BaseModel):
+    appointment: "AppointmentOut"
+    message: str | None = None  # the text logged to the patient, when notify was requested
+
+
+class SlotOptionOut(BaseModel):
+    doctor_id: uuid.UUID
+    doctor_name: str
+    session_id: uuid.UUID
+    label: str
+    date: date
+    start_time: str
+    end_time: str
+    room: str
+    remaining: int
+    max_patients: int
+    same_doctor: bool
+    next_token: int
+
 
 class AppointmentOutcomeUpdate(BaseModel):
     no_show: bool | None = None  # None allows undo
@@ -557,6 +596,7 @@ class InterventionCreate(BaseModel):
     patient_reply: str | None = None
     intent_detected: str | None = None
     offered_slot: str | None = None
+    message_text: str | None = None
 
 
 class InterventionOut(InterventionCreate):
@@ -580,6 +620,7 @@ class AgentSimulateResponse(BaseModel):
     suggested_action: str
     action_executed: str | None = None
     status_updated: str
+    offered_slot: SlotOptionOut | None = None  # a concrete slot proposed to the patient, awaiting their yes
 
 
 class OutreachDraftRequest(BaseModel):
@@ -594,6 +635,7 @@ class OutreachDraftResponse(BaseModel):
     source: str
     reasons: list[str]
     model: str | None = None
+    discreet: bool = False  # the specialty was left out of the message because it is sensitive
 
 
 class WaitlistCreate(BaseModel):
@@ -938,9 +980,13 @@ class HospitalExpenseResponse(BaseModel):
 class SimulatorEvaluateRequest(BaseModel):
     """Assumptions for the ROI replay. Volume, fee and no-show rate are read from the database, not sent."""
     contact_fraction: float = Field(0.20, ge=0.01, le=1.0)  # share of each day's bookings contacted, riskiest first
-    intervention_efficacy: float = Field(0.30, ge=0.0, le=1.0)  # P(a contacted would-be no-show is recovered)
+    intervention_efficacy: float = Field(economics.EFFICACY_CENTRAL, ge=0.0, le=1.0)  # P(a contacted would-be no-show attends)
+    reach_rate: float = Field(1.0, ge=0.0, le=1.0)  # share of the contact list that can actually be reached
     value_multiplier: float = Field(1.0, ge=0.1, le=3.0)  # hospital revenue per LKR of consultation fee
-    cost_per_contact_lkr: float = Field(50.0, ge=0.0, le=5000.0)
+    sms_cost_lkr: float = Field(economics.SMS_COST_LKR, ge=0.0, le=100.0)
+    call_share: float = Field(economics.CALL_SHARE, ge=0.0, le=1.0)  # share of contacts that also need a phone call
+    call_minutes: float = Field(economics.CALL_MINUTES, ge=0.0, le=60.0)
+    staff_hourly_cost_lkr: float = Field(economics.STAFF_HOURLY_COST_LKR, ge=0.0, le=20000.0)
     window_days: int = Field(90, ge=14, le=730)  # history window replayed
     custom_expenses: list[HospitalExpenseEvaluateItem] | None = None  # override the stored expense rows
 

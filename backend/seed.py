@@ -20,6 +20,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from app.database import Base, SessionLocal, engine
 from app import models, security
+from app.economics import DEFAULT_CONSULTATION_FEE_LKR, scale_synthetic_fee
 
 ASIRI_ID = uuid.UUID("a0000000-0000-0000-0000-000000000001")
 NHSL_ID = uuid.UUID("a0000000-0000-0000-0000-000000000002")
@@ -222,7 +223,7 @@ def seed():
                     model_category=dname,
                     icon="stethoscope",
                     active=True,
-                    default_consultation_fee_lkr=4500.0,
+                    default_consultation_fee_lkr=DEFAULT_CONSULTATION_FEE_LKR,
                 )
                 db.add(dept)
                 db.flush()
@@ -232,10 +233,10 @@ def seed():
 
         # Asiri Doctors
         asiri_docs_data = [
-            ("Dr. Rohan Perera", "Cardiology", "Consultant Cardiologist", 4500.0),
-            ("Dr. Neluka Fernando", "Neurology", "Consultant Neurologist", 5000.0),
-            ("Dr. Anura Jayasinghe", "Orthopedics", "Consultant Orthopedic Surgeon", 4000.0),
-            ("Dr. Preethi Wijesinghe", "ENT", "Consultant ENT Surgeon", 3800.0),
+            ("Dr. Rohan Perera", "Cardiology", "Consultant Cardiologist", scale_synthetic_fee(4500.0)),
+            ("Dr. Neluka Fernando", "Neurology", "Consultant Neurologist", scale_synthetic_fee(5000.0)),
+            ("Dr. Anura Jayasinghe", "Orthopedics", "Consultant Orthopedic Surgeon", scale_synthetic_fee(4000.0)),
+            ("Dr. Preethi Wijesinghe", "ENT", "Consultant ENT Surgeon", scale_synthetic_fee(3800.0)),
         ]
         for doc_name, dname, title, fee in asiri_docs_data:
             doc = db.query(models.Doctor).filter_by(full_name=doc_name, hospital_id=ASIRI_ID).first()
@@ -333,7 +334,7 @@ def seed():
                     max_overbook_per_slot=2,
                     max_overbook_per_session=4,
                     wait_tolerance_mins=15,
-                    consultation_fee_lkr=4500.0 if hid == ASIRI_ID else 0.0,
+                    consultation_fee_lkr=DEFAULT_CONSULTATION_FEE_LKR if hid == ASIRI_ID else 0.0,
                     badge_safe_mins=8,
                     badge_moderate_mins=15,
                     auto_assign_waitlist=False,

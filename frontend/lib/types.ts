@@ -6,6 +6,7 @@ export type Patient = {
   gender: string | null;
   phone: string | null;
   email: string | null;
+  preferred_language?: InterventionLanguage | null;
   city: string | null;
   distance_km: number | null;
   latitude: number | null;
@@ -32,6 +33,8 @@ export type Appointment = {
   scheduled_day: string;
   appointment_day: string;
   department: string | null;
+  doctor_id?: string | null;
+  clinic_session_id?: string | null;
   doctor_name: string | null;
   booking_channel: string | null;
   payment_mode: string | null;
@@ -42,6 +45,8 @@ export type Appointment = {
   status: string;
   no_show: boolean | null;
   created_at: string;
+  /** "holdout" when this appointment is in the no-contact control group (only when hold-out is switched on). */
+  outreach_arm?: "contact" | "holdout";
 };
 
 export type AppointmentInput = Omit<
@@ -139,6 +144,7 @@ export type Intervention = {
   patient_reply: string | null;
   intent_detected: string | null;
   offered_slot: string | null;
+  message_text?: string | null;
   created_at: string;
 };
 
@@ -149,6 +155,28 @@ export type AgentSimulateResult = {
   language: InterventionLanguage;
   suggested_action: string;
   status_updated: string;
+  /** A concrete slot proposed to the patient; a "yes" reply books it. */
+  offered_slot?: SlotOption | null;
+};
+
+export type SlotOption = {
+  doctor_id: string;
+  doctor_name: string;
+  session_id: string;
+  label: string;
+  date: string;
+  start_time: string;
+  end_time: string;
+  room: string;
+  remaining: number;
+  max_patients: number;
+  same_doctor: boolean;
+  next_token: number;
+};
+
+export type RescheduleResult = {
+  appointment: Appointment;
+  message: string | null;
 };
 
 export type OutreachDraft = {
@@ -158,6 +186,8 @@ export type OutreachDraft = {
   source: "gemini" | "template";
   reasons: string[];
   model: string | null;
+  /** The specialty was left out of the message because it is sensitive (e.g. psychiatry). */
+  discreet?: boolean;
 };
 
 export type WaitlistUrgency = "High" | "Normal" | "Routine";
@@ -544,10 +574,17 @@ export type HospitalExpense = {
 export type SimulatorParams = {
   contact_fraction: number;
   intervention_efficacy: number;
+  reach_rate: number;
   value_multiplier: number;
-  cost_per_contact_lkr: number;
+  sms_cost_lkr: number;
+  call_share: number;
+  call_minutes: number;
+  staff_hourly_cost_lkr: number;
   window_days: number;
 };
+
+/** Parameters echoed back by the server, with the blended cost it derived from the cost parts. */
+export type SimulatorAssumptions = SimulatorParams & { cost_per_contact_lkr: number };
 
 export type RoiScenario = {
   k: number;
@@ -564,10 +601,18 @@ export type RoiScenario = {
 };
 
 export type SimulatorResult =
-  | { empty: true; assumptions: SimulatorParams }
+  | { empty: true; assumptions: SimulatorAssumptions }
   | {
       empty: false;
-      assumptions: SimulatorParams;
+      assumptions: SimulatorAssumptions;
+      evidence: {
+        efficacy_central: number;
+        efficacy_low: number;
+        efficacy_high: number;
+        source: string;
+        break_even_above_evidence: boolean;
+        caveat: string;
+      };
       baseline: {
         source: "database";
         n_appointments: number;
@@ -588,6 +633,7 @@ export type SimulatorResult =
         net_benefit_lkr: number;
         net_benefit_low_lkr: number;
         net_benefit_high_lkr: number;
+        break_even_efficacy: number | null;
         roi_multiple: number | null;
         payback_days: number | null;
         expense_category_breakdown: Record<string, number>;
@@ -668,7 +714,7 @@ export type ActivityResponse = { items: ActivityItem[]; total: number; resolutio
 
 export type NotificationItem = {
   id: string;
-  type: "high_risk" | "delay" | "reply" | "waitlist";
+  type: "high_risk" | "delay" | "reply" | "waitlist" | "approval" | "needs_staff" | "no_reply";
   title: string;
   detail: string;
   href: string;
@@ -1191,3 +1237,175 @@ export type WaitlistAssignResult = WaitlistEntry & {
   start_time: string;
   token: number | null;
 };
+
+
+// ===================================
+// Outreach threads & ask-first rescheduling
+// ===================================
+
+export type ConversationState =
+  | "awaiting_reply"
+  | "offering"
+  | "choosing_doctor"
+  | "pending_approval"
+  | "booked"
+  | "needs_staff"
+  | "no_reply"
+  | "kept";
+
+export type ApptBrief = {
+  id: string;
+  day: string;
+  time: string | null;
+  doctor_name: string | null;
+  department: string | null;
+  token: number | null;
+  status: string;
+};
+
+export type SlotDict = {
+  doctor_id: string;
+  doctor_name: string;
+  session_id: string;
+  label: string;
+  date: string;
+  start_time: string;
+  end_time: string;
+  room: string;
+  remaining: number;
+  max_patients: number;
+  same_doctor: boolean;
+  next_token: number;
+};
+
+export type RescheduleConversation = {
+  id: string;
+  patient_id: string;
+  patient_name: string;
+  appointment_id: string;
+  origin_appointment_id: string;
+  state: ConversationState;
+  language: InterventionLanguage;
+  initiated_by: "staff" | "patient";
+  requested_date: string | null;
+  offer: SlotDict | null;
+  options: SlotDict[];
+  handled_by_staff: boolean;
+  approved_by: string | null;
+  expires_at: string | null;
+  updated_at: string | null;
+  appointment: ApptBrief | null;
+};
+
+export type ChatBubble = {
+  id: string;
+  direction: "in" | "out" | "note";
+  text: string;
+  at: string;
+  kind: string | null;
+  channel: string | null;
+  offer: SlotDict | null;
+};
+
+export type ThreadSummary = {
+  patient_id: string;
+  patient_name: string;
+  phone: string | null;
+  last_text: string;
+  last_at: string;
+  state: ConversationState | null;
+  needs_attention: boolean;
+  conversation_id: string | null;
+  appointment_id: string | null;
+};
+
+export type ThreadDetail = {
+  patient: { id: string; name: string; phone: string | null; uhid: string | null; language: InterventionLanguage };
+  conversation: RescheduleConversation | null;
+  messages: ChatBubble[];
+  appointment: ApptBrief | null;
+};
+
+export type AttentionSummary = {
+  pending_approval: number;
+  needs_staff: number;
+  no_reply: number;
+  in_progress: number;
+  items: { conversation_id: string; patient_name: string; state: ConversationState; detail: string; at: string; href: string }[];
+};
+
+export type HistoryStep = { appointment: ApptBrief; current: boolean };
+
+// ===================================
+// Post-miss recall and the outreach hold-out (backend app/recall.py, app/holdout.py)
+// ===================================
+
+export type RecallState = "not_contacted" | "contacted" | "rebooked";
+export type RecallChannel = "Call" | "SMS" | "WhatsApp" | "Letter";
+
+export type RecallItem = {
+  appointment_id: string;
+  patient_id: string;
+  patient_name: string;
+  phone: string | null;
+  preferred_language: string;
+  department: string | null;
+  doctor_name: string | null;
+  missed_day: string;
+  days_since: number;
+  risk_category: RiskCategory | null;
+  no_show_reason: string | null;
+  state: RecallState;
+  suggested_channel: "Call" | "Letter" | "none";
+  /** Sensitive department: messages must not name it. */
+  discreet: boolean;
+  contacts: number;
+  last_contact_channel: string | null;
+  last_contact_at: string | null;
+  rebooked_appointment_id: string | null;
+  rebooked_day: string | null;
+};
+
+export type RecallQueue = {
+  window_days: number;
+  items: RecallItem[];
+  not_contacted: number;
+  contacted: number;
+  rebooked: number;
+};
+
+export type RecallDraft = { appointment_id: string; language: string; message: string; discreet: boolean };
+
+export type RecallSummary = {
+  window_days: number;
+  missed: number;
+  contacted: number;
+  contact_rate: number | null;
+  returned_contacted: number;
+  returned_not_contacted: number;
+  attended_contacted: number;
+  return_rate_contacted: number | null;
+  return_rate_contacted_ci: [number, number] | null;
+  return_rate_not_contacted: number | null;
+  benchmark: { recovered: number; contacted: number; rate: number; ci: [number, number]; source: string };
+  synthetic: boolean;
+  caveat: string;
+};
+
+export type HoldoutArm = { n: number; no_shows: number; rate: number | null; contacted_share: number | null };
+
+export type HoldoutReport =
+  | { enabled: false; holdout_pct: number; message: string }
+  | {
+      enabled: true;
+      holdout_pct: number;
+      days: number;
+      tiers: string[];
+      arms: { contact: HoldoutArm; holdout: HoldoutArm };
+      difference: { absolute: number; ci: [number, number]; significant: boolean } | null;
+      implied_efficacy: { point: number; ci: [number, number] } | null;
+      required_n_per_arm: number | null;
+      synthetic: boolean;
+      contamination_warning: boolean;
+      caveat: string;
+    };

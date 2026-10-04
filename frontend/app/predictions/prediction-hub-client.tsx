@@ -703,7 +703,7 @@ export function PredictionHubClient({
               return (
                 <div
                   key={groupKey}
-                  className="rounded-xl border border-border/80 bg-card flex flex-col justify-between shadow-xs hover:border-border transition-all"
+                  className="rounded-xl border border-border/80 bg-card flex flex-col justify-start self-start w-full shadow-xs hover:border-border transition-all"
                 >
                   <div className="p-4 border-b border-border/60">
                     <div className="flex items-start justify-between gap-2">
@@ -757,7 +757,7 @@ export function PredictionHubClient({
                   </div>
 
                   {/* Appointments list */}
-                  <div className="p-3 flex flex-col gap-2">
+                  <div className="p-3 flex flex-col justify-start gap-2">
                     {group.appointments
                       .slice(0, isExpanded ? undefined : 3)
                       .map((appt) => {

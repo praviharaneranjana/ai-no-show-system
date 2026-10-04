@@ -6,7 +6,9 @@ failing (e.g. 503 high demand), a canned template is returned instead, so the fe
 never breaks. The output is a DRAFT for staff to review; nothing is sent.
 
 Privacy: the prompt contains only the first-name INITIAL, an age band, the department, the
-appointment DATE, the risk tier and coarse reason categories. Names, phone numbers, UHIDs,
+appointment DATE, the risk tier and coarse reason categories. For sensitive departments (psychiatry and similar)
+the department is withheld altogether: a message sent to a phone someone else may read must not reveal the kind
+of care. The Sri Lankan reminder study (Rajasuriya et al. 2010) did the same, naming only the hospital in letters. Names, phone numbers, UHIDs,
 e-mail, times, conditions and exact distances never leave the server: the model is told to
 write the placeholders {NAME} and {TIME}, which are filled in locally afterwards.
 """
@@ -71,6 +73,28 @@ _TEMPLATES = {
 }
 _TELEHEALTH_REASONS = {"distance", "weather"}
 
+# Departments whose name must never appear in a patient-facing message or in a prompt sent to Gemini.
+SENSITIVE_DEPARTMENT_KEYWORDS = (
+    "psychiatr", "psycholog", "mental", "counsel", "psychother", "addiction", "substance", "de-addiction",
+)
+_NEUTRAL_CLINIC = {"en": "clinic", "si": "සායන", "ta": "கிளினிக்"}
+
+
+def is_sensitive_department(department: str | None) -> bool:
+    """True for departments where revealing the specialty in a message could stigmatise or expose the patient."""
+    if not department:
+        return False
+    dept = department.strip().lower()
+    return any(k in dept for k in SENSITIVE_DEPARTMENT_KEYWORDS)
+
+
+def patient_facing_department(department: str | None, language: str = "en") -> str:
+    """The department name to put in a message to the patient: a neutral word for sensitive departments."""
+    if is_sensitive_department(department):
+        return _NEUTRAL_CLINIC.get(language, _NEUTRAL_CLINIC["en"])
+    return department or _NEUTRAL_CLINIC.get(language, _NEUTRAL_CLINIC["en"])
+
+
 TELEHEALTH_ELIGIBLE_SPECIALTIES = {
     "psychiatry", "psychology", "mental health", "counseling",
     "endocrinology", "diabetes", "nutrition", "dietetics",
@@ -83,8 +107,14 @@ TELEHEALTH_INELIGIBLE_SPECIALTIES = {
 }
 
 
-def is_telehealth_eligible(department: str | None) -> bool:
-    """Clinical guardrail: returns True only if specialty is suitable for video teleconsultation."""
+def is_telehealth_eligible(department: str | None, telehealth_ok: bool | None = None) -> bool:
+    """Clinical guardrail for video consults.
+
+    ``telehealth_ok`` is the hospital's own per-department setting and wins when known;
+    the specialty keyword lists are only a fallback when no setting is available.
+    """
+    if telehealth_ok is not None:
+        return telehealth_ok
     if not department:
         return False
     dept = department.strip().lower()
@@ -99,6 +129,7 @@ class Draft:
     source: str  # "gemini" | "template"
     reasons: list[str]
     model: str | None
+    discreet: bool = False  # the department name was withheld because the specialty is sensitive
 
 
 def reasons_from_contributions(contributions: list[dict], limit: int = 3) -> list[str]:
@@ -118,10 +149,10 @@ def reasons_from_contributions(contributions: list[dict], limit: int = 3) -> lis
     return out
 
 
-def template_draft(language: str, first_name: str, department: str, when: str, reasons: list[str]) -> str:
+def template_draft(language: str, first_name: str, department: str, when: str, reasons: list[str], telehealth_ok: bool | None = None) -> str:
     t = _TEMPLATES.get(language, _TEMPLATES["en"])
-    msg = t["base"].format(name=first_name, dept=department, when=when)
-    if is_telehealth_eligible(department) and (_TELEHEALTH_REASONS & set(reasons)):
+    msg = t["base"].format(name=first_name, dept=patient_facing_department(department, language), when=when)
+    if is_telehealth_eligible(department, telehealth_ok) and (_TELEHEALTH_REASONS & set(reasons)):
         msg += t["telehealth"]
     return msg + t["tail"]
 
@@ -135,11 +166,13 @@ def age_band(age: int | None) -> str:
     return "60+"
 
 
-def _prompt(language: str, name_initial: str, band: str, department: str, date_text: str, tier: str, reasons: list[str]) -> str:
-    can_telehealth = is_telehealth_eligible(department) and bool(_TELEHEALTH_REASONS & set(reasons))
+def _prompt(language: str, name_initial: str, band: str, department: str, date_text: str, tier: str, reasons: list[str], telehealth_ok: bool | None = None) -> str:
+    # Eligibility is judged on the real department; only the neutral label is written into the prompt.
+    can_telehealth = is_telehealth_eligible(department, telehealth_ok) and bool(_TELEHEALTH_REASONS & set(reasons))
+    discreet = is_sensitive_department(department)
     adapted_guidance = []
     for r in reasons:
-        if r in _TELEHEALTH_REASONS and not is_telehealth_eligible(department):
+        if r in _TELEHEALTH_REASONS and not is_telehealth_eligible(department, telehealth_ok):
             adapted_guidance.append("travelling or weather may be difficult, so offer an easy way to reschedule to another in-person day")
         else:
             adapted_guidance.append(_GUIDANCE.get(r, ""))
@@ -147,7 +180,12 @@ def _prompt(language: str, name_initial: str, band: str, department: str, date_t
     return (
         f"Write ONE short appointment-reminder message for a Sri Lankan private hospital to send by WhatsApp/SMS.\n"
         f"Language: {LANGUAGES[language]}.\n"
-        f"Patient: first-name initial {name_initial}, age band {band}. Department: {department}. Appointment date: {date_text}.\n"
+        f"Patient: first-name initial {name_initial}, age band {band}. "
+        + (
+            "Department: not disclosed - call it only 'the clinic' and never name or hint at the specialty. "
+            if discreet else f"Department: {department}. "
+        )
+        + f"Appointment date: {date_text}.\n"
         "Write the patient's name as the literal placeholder {NAME} and the appointment time as the literal placeholder {TIME}; "
         "never guess a real name or time.\n"
         f"Priority: {tier}. Tailor the message to this: {guidance}.\n"
@@ -205,16 +243,27 @@ def draft_reminder(
     age: int | None = None,
     date_text: str | None = None,
     time_text: str = "",
+    telehealth_ok: bool | None = None,
 ) -> Draft:
     """``when`` (date and time) is only used for the local template; Gemini sees ``date_text`` (date only)."""
     language = language if language in LANGUAGES else "en"
     reasons = reasons_from_contributions(contributions)
     initial = (first_name[:1].upper() + ".") if first_name else "?"
-    prompt = _prompt(language, initial, age_band(age), department, date_text or when, tier, reasons)
+    discreet = is_sensitive_department(department)
+    prompt = _prompt(language, initial, age_band(age), department, date_text or when, tier, reasons, telehealth_ok)
     text = _call_gemini(prompt)
+    if text and discreet and _mentions_sensitive_term(text, department):
+        logger.warning("Gemini draft named a sensitive specialty; using the discreet template instead")
+        text = None
     if text:
-        return Draft(message=_fill_placeholders(text, first_name, time_text), source="gemini", reasons=reasons, model=GEMINI_MODEL)
+        return Draft(message=_fill_placeholders(text, first_name, time_text), source="gemini", reasons=reasons,
+                     model=GEMINI_MODEL, discreet=discreet)
     return Draft(
-        message=template_draft(language, first_name, department, when, reasons),
-        source="template", reasons=reasons, model=None,
+        message=template_draft(language, first_name, department, when, reasons, telehealth_ok),
+        source="template", reasons=reasons, model=None, discreet=discreet,
     )
+
+
+def _mentions_sensitive_term(text: str, department: str) -> bool:
+    low = text.lower()
+    return department.strip().lower() in low or any(k in low for k in SENSITIVE_DEPARTMENT_KEYWORDS)

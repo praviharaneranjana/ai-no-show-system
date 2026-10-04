@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 import uuid
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, Response
@@ -15,9 +16,9 @@ import pandas as pd
 
 from contextlib import asynccontextmanager
 
-from app import auth, geo, hospital, insights, models, outreach_drafter, schemas, shai_model
+from app import auth, conversations, holdout, recall, geo, hospital, insights, models, outreach_drafter, schemas, shai_model
 from app.his import get_his_connector, connector as his_connector
-from app.services import capacity_service, geo_service, his_sync, model_eval, prediction_runner, roi, scoring, sessions_view
+from app.services import capacity_service, geo_service, his_sync, model_eval, prediction_runner, reschedule_flow as flow, rescheduling, roi, scoring, sessions_view
 from app.services.uhid import LK_TZ
 from app.database import get_db
 
@@ -240,6 +241,9 @@ def _patient_history(db: Session, appointment: models.Appointment) -> tuple[int,
 app.include_router(auth.router)
 # Registered before the CRUD routes so /appointments/register isn't captured by /appointments/{id}
 app.include_router(insights.router)
+app.include_router(conversations.router)
+app.include_router(recall.router)
+app.include_router(holdout.router)
 app.include_router(hospital.router)
 
 
@@ -871,6 +875,55 @@ def record_appointment_outcome(
     db.commit()
     db.refresh(appointment)
     return appointment
+
+
+def _slot_out(o: rescheduling.SlotOption) -> schemas.SlotOptionOut:
+    return schemas.SlotOptionOut(
+        doctor_id=o.doctor_id, doctor_name=o.doctor_name, session_id=o.session_id, label=o.label, date=o.day,
+        start_time=o.start_time, end_time=o.end_time, room=o.room, remaining=o.remaining,
+        max_patients=o.max_patients, same_doctor=o.same_doctor, next_token=o.next_token,
+    )
+
+
+@app.get("/appointments/{appointment_id}/reschedule-options", response_model=List[schemas.SlotOptionOut])
+def reschedule_options(
+    appointment_id: uuid.UUID,
+    request: Request,
+    doctor_id: Optional[uuid.UUID] = None,
+    days: int = Query(rescheduling.HORIZON_DAYS, ge=1, le=60),
+    db: Session = Depends(get_db),
+):
+    """Open sessions this booking could move to: same department, free seat, soonest first."""
+    appt = _in_scope(db.get(models.Appointment, appointment_id), request, "Appointment")
+    opts = rescheduling.find_options(db, appt, _hospital_id(request), doctor_id=doctor_id, horizon_days=days)
+    return [_slot_out(o) for o in opts]
+
+
+@app.post("/appointments/{appointment_id}/reschedule", response_model=schemas.RescheduleResultOut, dependencies=[Depends(auth.require_any_role(*auth.FRONT_LINE))])
+def reschedule_appointment(
+    appointment_id: uuid.UUID,
+    data: schemas.AppointmentRescheduleRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Move a booking to an open session, optionally of another doctor in the same department.
+
+    The old booking is cancelled (freeing its place for the waitlist) and a new one is created,
+    linked through rescheduled_from_id, with a fresh token and risk score. With ``notify`` the
+    patient's confirmation message is logged to the outreach history in the same transaction.
+    """
+    old = _in_scope(db.get(models.Appointment, appointment_id), request, "Appointment")
+    actor = getattr(getattr(request.state, "user", None), "email", None) or "staff"
+    try:
+        new, message = rescheduling.reschedule_booking(
+            db, old,
+            session_id=data.clinic_session_id, day=data.appointment_day, doctor_id=data.doctor_id,
+            hospital_id=_hospital_id(request), actor=actor, reason=data.reason,
+            notify=data.notify, notify_language=data.language, shai_instance=shai,
+        )
+    except rescheduling.RescheduleError as err:  # raised before any write, so nothing to roll back
+        raise HTTPException(status_code=err.status_code, detail=err.detail)
+    return schemas.RescheduleResultOut(appointment=schemas.AppointmentOut.model_validate(new), message=message)
 
 
 def _prediction_out(prediction: models.Prediction) -> schemas.PredictionOut:
@@ -1958,98 +2011,97 @@ def draft_outreach_message(req: schemas.OutreachDraftRequest, request: Request, 
         age=age,
         date_text=date_text,
         time_text=appt.scheduled_time or "",
+        telehealth_ok=(appt.doctor.department.telehealth_ok if appt.doctor and appt.doctor.department else None),
     )
     return schemas.OutreachDraftResponse(
         appointment_id=appt.id, language=language, message=draft.message,
-        source=draft.source, reasons=draft.reasons, model=draft.model,
+        source=draft.source, reasons=draft.reasons, model=draft.model, discreet=draft.discreet,
     )
+
+
+_INPERSON_PREFIX = {
+    "en": "{doctor} ({dept}) needs an in-person examination, so a video call is not possible. ",
+    "si": "{doctor} ({dept}) සඳහා සායනයට පැමිණ පරීක්ෂාවක් අවශ්‍ය බැවින් වීඩියෝ ඇමතුමක් කළ නොහැක. ",
+    "ta": "{doctor} ({dept}) க்கு நேரில் பரிசோதனை தேவை என்பதால் வீடியோ அழைப்பு சாத்தியமில்லை. ",
+}
+_TELEHEALTH_OK = {
+    "en": "Great! We can switch your consultation with {doctor} to a video call. {link}",
+    "si": "නියමයි! {doctor} සමඟ ඔබගේ වෛද්‍ය උපදේශනය වීඩියෝ ඇමතුමකට මාරු කළ හැක. {link}",
+    "ta": "சிறப்பு! {doctor} உடனான உங்கள் ஆலோசனையை வீடியோ அழைப்பாக மாற்ற முடியும். {link}",
+}
+_LINK_PENDING = {
+    "en": "Our team will send your secure video-room link shortly.",
+    "si": "ඔබගේ ආරක්ෂිත වීඩියෝ කාමර සබැඳිය අපගේ කණ්ඩායම ඉක්මනින් එවනු ඇත.",
+    "ta": "உங்கள் பாதுகாப்பான வீடியோ அறை இணைப்பை எங்கள் குழு விரைவில் அனுப்பும்.",
+}
+_LINK_READY = {"en": "Join here: {url}", "si": "මෙතැනින් එක්වන්න: {url}", "ta": "இங்கே இணையவும்: {url}"}
+
+
+def _telehealth_link_text(lang: str, appt: models.Appointment) -> str:
+    base = os.getenv("TELEHEALTH_BASE_URL", "").strip()
+    if not base:
+        return _LINK_PENDING[lang]
+    return _LINK_READY[lang].format(url=f"{base.rstrip('/')}/room/{appt.id.hex[:12]}")
 
 
 @app.post("/outreach/simulate-agent", response_model=schemas.AgentSimulateResponse, dependencies=[Depends(auth.require_any_role(*auth.FRONT_LINE))])
 def simulate_patient_agent(req: schemas.AgentSimulateRequest, request: Request, db: Session = Depends(get_db)):
+    """Answers a patient's message. Rescheduling goes through the ask-first conversation engine, which stops at staff approval."""
     appt = _in_scope(db.get(models.Appointment, req.appointment_id), request, "Appointment")
-
+    hid = _hospital_id(request)
+    lang = req.language if req.language in ("en", "si", "ta") else "en"
     msg = req.patient_message.lower()
-    
-    # Intent extraction across English, Sinhala (Singlish/script), and Tamil
+
     is_reschedule = any(w in msg for w in ["reschedule", "bahe", "enna bahe", "change", "wena dawasak", "mudiyadhu", "vera naal", "next week", "saturday"])
     is_telehealth = any(w in msg for w in ["video", "online", "telehealth", "call", "remote", "gedara indan", "zoom", "paarkka"])
     is_cancel = any(w in msg for w in ["cancel", "epaa", "vendaam", "don't want", "ain karanna"])
     is_prep = any(w in msg for w in ["fasting", "food", "kanna", "test", "prep", "sapadu", "badaginne"])
-    is_confirm = any(w in msg for w in ["confirm", "yes", "hari", "ennam", "varuven", "ok", "coming"])
 
-    if is_reschedule:
-        intent = "reschedule"
-        if req.language == "si":
-            response_text = (
-                f"කමක් නැහැ! {appt.doctor_name} මහතාගේ ලබන සෙනසුරාදා උදෑසන 10:00 ට නව Slot එකක් තිබේ. "
-                "ඔබට එම වේලාව වෙන්කර දීමට කැමතිද? (✅ ඔව් ලෙස පිළිතුරු දෙන්න)"
-            )
-        elif req.language == "ta":
-            response_text = (
-                f"பிரச்சனை இல்லை! {appt.doctor_name} அவர்களுக்கு வரும் சனிக்கிழமை காலை 10:00 மணிக்கு நேரம் உள்ளது. "
-                "உங்களுக்கு இந்த நேரம் வசதியாக இருக்குமா? (✅ ஆம் என பதிலளிக்கவும்)"
-            )
-        else:
-            response_text = (
-                f"No problem! We have an opening with {appt.doctor_name} this Saturday at 10:00 AM. "
-                "Shall I confirm this reschedule for you? (Reply 'Yes' to proceed)"
-            )
-        action_text = "Slot Rescheduled autonomously to Saturday 10:00 AM"
-        appt.ai_action_status = "Rescheduled via AI"
-        new_status = "rescheduled"
+    action_text = ""
+    new_status = "sent"
+    dept = appt.doctor.department if appt.doctor else None
+    telehealth_blocked = is_telehealth and not outreach_drafter.is_telehealth_eligible(appt.department, dept.telehealth_ok if dept else None)
 
-    elif is_telehealth:
+    # A conversation already in progress owns the next message ("yes", "2", a date...).
+    conv = flow.active_for_appointment(db, appt.id)
+    if conv or is_reschedule or telehealth_blocked:
+        prefix = ""
+        if conv is None:
+            try:
+                conv, _ = flow.start(db, appt, hospital_id=hid, actor="patient", language=lang, initiated_by="patient")
+            except rescheduling.RescheduleError as err:
+                raise HTTPException(status_code=err.status_code, detail=err.detail)
+            if telehealth_blocked:
+                prefix = _INPERSON_PREFIX[lang].format(doctor=appt.doctor_name or "the specialist", dept=outreach_drafter.patient_facing_department(appt.department, lang))
+        reply = flow.handle_patient_message(db, conv, req.patient_message, hospital_id=hid, shai=shai, prefix=prefix, force_change=bool(prefix))
+        db.commit()
+        return schemas.AgentSimulateResponse(
+            appointment_id=conv.appointment_id,
+            intent="telehealth" if telehealth_blocked else "reschedule",
+            agent_response=(reply.text if reply else ""),
+            language=conv.language,
+            suggested_action=(reply.intent if reply else "staff handling").replace("_", " "),
+            action_executed=conv.state.replace("_", " "),
+            status_updated=conv.state,
+            offered_slot=schemas.SlotOptionOut(
+                doctor_id=conv.offer["doctor_id"], doctor_name=conv.offer["doctor_name"], session_id=conv.offer["session_id"],
+                label=conv.offer["label"], date=conv.offer["date"], start_time=conv.offer["start_time"], end_time=conv.offer["end_time"],
+                room=conv.offer["room"], remaining=conv.offer["remaining"], max_patients=conv.offer["max_patients"],
+                same_doctor=conv.offer["same_doctor"], next_token=conv.offer["next_token"],
+            ) if conv.offer else None,
+        )
+
+    offered = None
+    response_text = ""
+    intent = "confirm"
+
+    if is_telehealth:  # eligible: ineligible requests were routed to the conversation above
         intent = "telehealth"
-        dept_name = appt.department or "General Medicine"
-        raw_doc = appt.doctor_name or "the specialist"
-        doc_display = raw_doc if raw_doc.startswith("Dr") else f"Dr. {raw_doc}"
-        eligible = outreach_drafter.is_telehealth_eligible(dept_name)
-
-        if not eligible:
-            # Clinical guardrail: Specialty requires physical exam / procedures
-            if req.language == "si":
-                response_text = (
-                    f"{doc_display} මහතාගේ ({dept_name}) පරීක්ෂාව සඳහා රෝගියා පෞද්ගලිකව පැමිණ "
-                    "ශාරීරික පරීක්ෂාවක් (Physical Examination) හෝ X-Ray/පරීක්ෂණ සිදුකිරීම අත්‍යවශ්‍ය බැවින් "
-                    "Video Call මගින් සිදුකළ නොහැක. ලබන සෙනසුරාදා උදෑසන 10:00 ට රෝහලේදී හමුවීමට නව Slot එකක් වෙන්කර දිය හැක. "
-                    "ඔබ ඊට කැමතිද? (✅ ඔව් ලෙස පිළිතුරු දෙන්න)"
-                )
-            elif req.language == "ta":
-                response_text = (
-                    f"{doc_display} அவர்களின் ({dept_name}) ஆலோசனைக்கு நேரடி உடல் பரிசோதனை "
-                    "அல்லது ஸ்கேன்/எக்ஸ்-ரே அவசியம் என்பதால் Video Call மூலம் செய்ய முடியாது. "
-                    "வரும் சனிக்கிழமை காலை 10:00 மணிக்கு மருத்துவமனையில் புதிய நேரம் ஒதுக்க முடியும். "
-                    "உறுதிப்படுத்தவா? (✅ ஆம் என பதிலளிக்கவும்)"
-                )
-            else:
-                response_text = (
-                    f"{doc_display}'s consultation ({dept_name}) requires an in-person physical examination "
-                    "or imaging and cannot be conducted virtually. "
-                    "We have an in-person slot available this Saturday at 10:00 AM. Would you like to reserve this instead? (Reply 'Yes' to confirm)"
-                )
-            action_text = f"Telehealth Ineligible ({dept_name}): Physical Exam Required. In-Person Reschedule Offered."
-            appt.ai_action_status = "In-Person Required (Reschedule Offered)"
-            new_status = "rescheduled"
-        else:
-            if req.language == "si":
-                response_text = (
-                    f"නියමයි! {doc_display} මහතා සමඟ Video Teleconsultation එකක් සූදානම් කළ හැක. "
-                    "අපගේ Asiri MyHealth සබැඳිය ඔස්සේ එක්වන්න: https://telehealth.asirihealth.com/room/4892"
-                )
-            elif req.language == "ta":
-                response_text = (
-                    f"சிறப்பு! {doc_display} அவர்களுடன் Video Teleconsultation செய்ய முடியும். "
-                    "இணைப்பு: https://telehealth.asirihealth.com/room/4892"
-                )
-            else:
-                response_text = (
-                    f"Great! We can switch your consultation with {doc_display} to a Video Telehealth call. "
-                    "Your secure consultation room link: https://telehealth.asirihealth.com/room/4892"
-                )
-            action_text = "Converted to Virtual Video Consultation"
-            appt.ai_action_status = "Telehealth Converted"
-            new_status = "telehealth_requested"
+        doc_display = appt.doctor_name or "the specialist"
+        response_text = _TELEHEALTH_OK[lang].format(doctor=doc_display, link=_telehealth_link_text(lang, appt)).strip()
+        action_text = "Converted to video consultation"
+        appt.ai_action_status = "Telehealth Converted"
+        new_status = "telehealth_requested"
 
     elif is_prep:
         intent = "prep_inquiry"
@@ -2064,46 +2116,58 @@ def simulate_patient_agent(req: schemas.AgentSimulateRequest, request: Request, 
     elif is_cancel:
         intent = "cancel"
         response_text = (
-            "Your appointment has been safely cancelled. If you opted for No-Show Refund (NSR) on Doc990/eChannelling, "
+            "Your appointment has been cancelled and your place released. If you opted for No-Show Refund (NSR) on Doc990/eChannelling, "
             "your refund of hospital & doctor charges will be credited within 2-4 business days."
         )
         action_text = "Appointment Cancelled & Slot Returned to Waitlist Pool"
         appt.ai_action_status = "Cancelled by Patient"
         appt.status = "cancelled"
+        appt.cancelled_at = datetime.now(timezone.utc)
         new_status = "cancelled"
 
     else:
         intent = "confirm"
         response_text = (
-            f"Thank you! Your appointment with {appt.doctor_name} (Token #{appt.queue_number or 1}) is successfully confirmed. "
-            f"Estimated arrival recommendation: {appt.scheduled_time or '17:30'} at Room 204."
+            f"Thank you! Your appointment with {appt.doctor_name} (Token #{appt.queue_number or 1}) is confirmed. "
+            f"Please arrive by {appt.scheduled_time or 'your scheduled time'}."
         )
         action_text = "Appointment Attendance Confirmed on WhatsApp"
         appt.ai_action_status = "Confirmed via WhatsApp"
         new_status = "confirmed"
 
-    # Save intervention record
-    intervention = models.Intervention(
-        hospital_id=appt.hospital_id,
-        appointment_id=appt.id,
+    return _finish_agent(db, req, lang, intent, response_text, action_text, new_status, appt, None, offered=offered)
+
+
+def _finish_agent(db, req, lang, intent, response_text, action_text, new_status, target_appt, _unused, *, booked=False, offered=None):
+    """Logs the exchange on ``target_appt`` (the new booking after a reschedule) and builds the response."""
+    db.add(models.Intervention(
+        hospital_id=target_appt.hospital_id,
+        appointment_id=target_appt.id,
         channel="WhatsApp",
-        language=req.language,
+        language=lang,
         status=new_status,
         patient_reply=req.patient_message,
-        intent_detected=f"{intent.capitalize()} ({req.language.upper()})",
+        intent_detected=f"{intent.capitalize()} ({lang.upper()})",
         offered_slot=action_text,
-    )
-    db.add(intervention)
+        message_text=response_text,
+        offer=(
+            {
+                "doctor_id": str(offered.doctor_id), "session_id": str(offered.session_id), "date": offered.day.isoformat(),
+                "start_time": offered.start_time, "room": offered.room, "doctor_name": offered.doctor_name,
+            }
+            if offered else None
+        ),
+    ))
     db.commit()
-
     return schemas.AgentSimulateResponse(
-        appointment_id=appt.id,
+        appointment_id=target_appt.id,
         intent=intent,
         agent_response=response_text,
-        language=req.language,
+        language=lang,
         suggested_action=action_text,
         action_executed=action_text,
         status_updated=new_status,
+        offered_slot=_slot_out(offered) if offered else None,
     )
 
 
@@ -2241,8 +2305,12 @@ def evaluate_roi_simulation(params: schemas.SimulatorEvaluateRequest, request: R
         hospital_id=getattr(request.state, "hospital_id", None),
         contact_fraction=params.contact_fraction,
         efficacy=params.intervention_efficacy,
+        reach_rate=params.reach_rate,
         value_multiplier=params.value_multiplier,
-        cost_per_contact_lkr=params.cost_per_contact_lkr,
+        sms_cost_lkr=params.sms_cost_lkr,
+        call_share=params.call_share,
+        call_minutes=params.call_minutes,
+        staff_hourly_cost_lkr=params.staff_hourly_cost_lkr,
         window_days=params.window_days,
         custom_expenses=[i.model_dump() for i in params.custom_expenses] if params.custom_expenses is not None else None,
     )

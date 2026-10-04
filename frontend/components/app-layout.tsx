@@ -1,19 +1,49 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useState, useSyncExternalStore, type ReactNode } from "react";
 import { Menu, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { AppSidebar } from "@/components/app-sidebar";
 import { ShaiLogo } from "@/components/shai-logo";
+import { AttentionBanner } from "@/components/attention-banner";
 import { SyntheticDataStrip } from "@/components/synthetic-data-strip";
 import { TopBar } from "@/components/top-bar";
 import { Button } from "@/components/ui/button";
 
+const COLLAPSE_KEY = "shai_sidebar_collapsed";
+const COLLAPSE_EVENT = "shai-sidebar-collapse";
+
+function subscribeCollapsed(cb: () => void) {
+  window.addEventListener(COLLAPSE_EVENT, cb);
+  window.addEventListener("storage", cb);
+  return () => {
+    window.removeEventListener(COLLAPSE_EVENT, cb);
+    window.removeEventListener("storage", cb);
+  };
+}
+
+function readCollapsed() {
+  try {
+    return localStorage.getItem(COLLAPSE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function AppLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Persisted in localStorage; the server snapshot is "expanded" so hydration matches.
+  const collapsed = useSyncExternalStore(subscribeCollapsed, readCollapsed, () => false);
+
+  function toggleCollapsed() {
+    try {
+      localStorage.setItem(COLLAPSE_KEY, collapsed ? "0" : "1");
+    } catch {}
+    window.dispatchEvent(new Event(COLLAPSE_EVENT));
+  }
 
   // Unauthenticated screens (login, setup) render without the dashboard shell
   if (pathname === "/login" || pathname === "/setup") {
@@ -25,8 +55,12 @@ export function AppLayout({ children }: { children: ReactNode }) {
     // sidebar (logo top, model card + profile bottom) always matches the viewport height.
     <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground transition-colors duration-300">
       {/* Desktop Sidebar (lg+) */}
-      <div className="hidden h-full lg:flex lg:w-64 lg:shrink-0">
-        <AppSidebar className="h-full w-full" />
+      <div
+        className={`hidden h-full transition-[width] duration-300 ease-in-out lg:flex lg:shrink-0 ${
+          collapsed ? "lg:w-[84px]" : "lg:w-64"
+        }`}
+      >
+        <AppSidebar className="h-full w-full" collapsed={collapsed} onToggleCollapsed={toggleCollapsed} />
       </div>
 
       {/* Mobile Drawer Backdrop */}
@@ -84,6 +118,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
         <TopBar className="hidden shrink-0 border-b border-border/60 px-6 py-3 lg:flex lg:px-8" />
 
         <SyntheticDataStrip />
+        <AttentionBanner />
 
         {/* The only scrolling region */}
         <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>

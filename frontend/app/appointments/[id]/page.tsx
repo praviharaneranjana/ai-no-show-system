@@ -18,12 +18,18 @@ import {
   getPrediction,
   listAppointmentInterventions,
   getModelInfo,
+  getDoctors,
+  getDepartments,
+  getAppointmentConversation,
+  getAppointmentHistory,
 } from "@/lib/api";
 import { OutcomeActions } from "@/app/appointments/[id]/outcome-actions";
 import { ShapTornadoChart } from "@/components/shap-tornado-chart";
 import { DotRingGauge } from "@/components/dot-ring-gauge";
 import { RiskPill } from "@/components/risk-pill";
 import { JourneyMap } from "@/components/journey-map";
+import { AppointmentActionBar } from "@/components/appointment-action-bar";
+import { BookingHistoryCard } from "@/components/booking-history-card";
 import { OutreachHistory } from "@/components/outreach-history";
 
 function calculateAge(dobStr: string): number {
@@ -39,10 +45,13 @@ function calculateAge(dobStr: string): number {
 
 export default async function AppointmentDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<{ reschedule?: string }>;
 }) {
   const { id } = await params;
+  const openPicker = (await searchParams)?.reschedule === "1";
 
   const appointment = await getAppointment(id).catch((err) => {
     if (err instanceof ApiError && err.status === 404) notFound();
@@ -61,7 +70,42 @@ export default async function AppointmentDetailPage({
   // Outreach history is supplementary: never let it take the page down.
   const interventions = await listAppointmentInterventions(id).catch(() => []);
 
+  // Telehealth rule: only departments flagged telehealth_ok may be offered a video consult.
+  const [doctors, departments] = await Promise.all([getDoctors().catch(() => []), getDepartments().catch(() => [])]);
+  const doctorDeptId = doctors.find((d) => d.id === appointment.doctor_id)?.department_id;
+  const telehealthOk = departments.find((d) => d.id === doctorDeptId)?.telehealth_ok ?? false;
+
+  const [conversation, history] = await Promise.all([
+    getAppointmentConversation(id).catch(() => null),
+    getAppointmentHistory(id).catch(() => []),
+  ]);
+
   const age = calculateAge(patient.date_of_birth);
+
+  const shapCard = (span: string) => (
+    <div className={`${span} rounded-[24px] border border-border bg-card p-6 bento-card-shadow flex flex-col justify-between`}>
+      <div>
+        <div className="pb-3 border-b border-border/60">
+          <h2 className="font-heading text-base font-bold text-foreground">
+            SHAP Attribution Drivers
+          </h2>
+          <p className="text-[11px] text-muted-foreground">
+            Key clinical and logistic factors influencing risk
+          </p>
+        </div>
+
+        <div className="mt-4">
+          <ShapTornadoChart
+            contributions={prediction?.explanation || []}
+          />
+        </div>
+      </div>
+
+      <div className="pt-3 border-t border-border/60 text-[10px] text-muted-foreground">
+        ×N = how much each factor multiplies the odds of a no-show (SHAP log-odds, exponentiated).
+      </div>
+    </div>
+  );
 
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6 lg:p-8">
@@ -87,6 +131,18 @@ export default async function AppointmentDetailPage({
           currentStatus={appointment.status}
         />
       </div>
+
+      <AppointmentActionBar
+        appointment={appointment}
+        patient={patient}
+        riskScore={prediction?.risk_score}
+        category={prediction?.risk_category}
+        explanation={prediction?.explanation ?? []}
+        interventions={interventions}
+        telehealthOk={telehealthOk}
+        conversation={conversation}
+        openPicker={openPicker}
+      />
 
       {/* 12-Col Bento Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
@@ -133,29 +189,8 @@ export default async function AppointmentDetailPage({
           </div>
         </div>
 
-        {/* SHAP Feature Drivers Tornado (4 cols) */}
-        <div className="lg:col-span-4 rounded-[24px] border border-border bg-card p-6 bento-card-shadow flex flex-col justify-between">
-          <div>
-            <div className="pb-3 border-b border-border/60">
-              <h2 className="font-heading text-base font-bold text-foreground">
-                SHAP Attribution Drivers
-              </h2>
-              <p className="text-[11px] text-muted-foreground">
-                Key clinical and logistic factors influencing risk
-              </p>
-            </div>
-
-            <div className="mt-4">
-              <ShapTornadoChart
-                contributions={prediction?.explanation || []}
-              />
-            </div>
-          </div>
-
-          <div className="pt-3 border-t border-border/60 text-[10px] text-muted-foreground">
-            ×N = how much each factor multiplies the odds of a no-show (SHAP log-odds, exponentiated).
-          </div>
-        </div>
+        {/* SHAP drivers sit here until the booking has a reschedule history, which takes this slot */}
+        {history.length > 0 ? <BookingHistoryCard steps={history} /> : shapCard("lg:col-span-4")}
 
         {/* Patient Profile Card (4 cols) */}
         <div className="lg:col-span-4 rounded-[24px] border border-border bg-card p-6 bento-card-shadow flex flex-col justify-between">
@@ -347,6 +382,11 @@ export default async function AppointmentDetailPage({
                 <span className="text-[10px] text-[#8B7CF6] font-semibold block">
                   {appointment.ai_action_status || "Standard Protocol"}
                 </span>
+                {appointment.outreach_arm === "holdout" && (
+                  <span className="mt-1 inline-block rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">
+                    Control group · please do not contact
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -358,6 +398,8 @@ export default async function AppointmentDetailPage({
             </span>
           </div>
         </div>
+
+        {history.length > 0 && shapCard("lg:col-span-12")}
 
         {/* Outreach history (full width) */}
         <OutreachHistory interventions={interventions} className="lg:col-span-12" />

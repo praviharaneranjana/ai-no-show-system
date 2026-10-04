@@ -4,42 +4,31 @@ import {
   CalendarClock,
   Video,
   Languages,
-  History,
-  Bot,
 } from "lucide-react";
 
-import { listConversations } from "@/lib/api";
+import { listConversations, listThreads } from "@/lib/api";
 import { getAppointmentsWithPredictions } from "@/lib/appointments-with-predictions";
 import { BackendUnreachable } from "@/components/backend-unreachable";
 import { AgentSimulator } from "@/app/outreach/agent-simulator";
+import { ThreadsHub } from "@/components/outreach/threads-hub";
+import { SimulatorPanel } from "@/components/outreach/simulator-panel";
 import { StatCard } from "@/components/stat-card";
-import type { InterventionLanguage } from "@/lib/types";
-
-const LANGUAGE_BADGES: Record<InterventionLanguage, { label: string; className: string }> = {
-  en: { label: "EN", className: "bg-muted text-foreground border border-border/80" },
-  si: {
-    label: "SI",
-    className: "bg-violet-500/10 text-violet-700 dark:text-violet-300 border border-violet-500/30",
-  },
-  ta: {
-    label: "TA",
-    className: "bg-sky-500/10 text-sky-700 dark:text-sky-300 border border-sky-500/30",
-  },
-};
 
 export default async function OutreachPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ appointmentId?: string }>;
+  searchParams?: Promise<{ appointmentId?: string; patient?: string }>;
 }) {
   const resolvedSearchParams = searchParams ? await searchParams : undefined;
   const targetAppointmentId = resolvedSearchParams?.appointmentId;
+  const targetPatientId = resolvedSearchParams?.patient;
 
-  let conversations, records;
+  let conversations, records, threads;
   try {
-    [conversations, records] = await Promise.all([
+    [conversations, records, threads] = await Promise.all([
       listConversations(),
       getAppointmentsWithPredictions(),
+      listThreads(),
     ]);
   } catch (err) {
     return <BackendUnreachable error={err} />;
@@ -112,89 +101,13 @@ export default async function OutreachPage({
         />
       </div>
 
-      {/* Live Agent Simulator Bento Card */}
-      <div className="rounded-[24px] bg-card p-5 sm:p-6 shadow-xs border border-border/60 flex flex-col gap-4">
-        <div className="flex items-center justify-between pb-2 border-b border-border/40">
-          <div className="flex items-center gap-2.5">
-            <div className="size-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-              <Bot className="size-4" />
-            </div>
-            <div>
-              <h2 className="text-base font-semibold text-foreground">Interactive Outreach Simulator</h2>
-              <p className="text-xs text-muted-foreground">
-                Trigger inbound messages across Sinhala, Tamil, or English to test classification and automated actions.
-              </p>
-            </div>
-          </div>
-        </div>
+      {/* Patient conversations: list, search and WhatsApp-style chat */}
+      <ThreadsHub initialThreads={threads} initialPatientId={targetPatientId} />
 
-        <AgentSimulator
-          appointments={appointmentOptions}
-          initialAppointmentId={targetAppointmentId}
-        />
-      </div>
-
-      {/* Recent Conversation Log Bento Card */}
-      <div className="rounded-[24px] bg-card p-5 sm:p-6 shadow-xs border border-border/60 flex flex-col gap-4">
-        <div className="flex items-center justify-between pb-2 border-b border-border/40">
-          <div className="flex items-center gap-2.5">
-            <div className="size-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-              <History className="size-4" />
-            </div>
-            <div>
-              <h2 className="text-base font-semibold text-foreground">Recent Conversation History</h2>
-              <p className="text-xs text-muted-foreground">
-                Auditable log of all conversational triage dispatches handled by the outreach engine.
-              </p>
-            </div>
-          </div>
-          <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-muted text-muted-foreground">
-            {conversations.length} Logs
-          </span>
-        </div>
-
-        {conversations.length === 0 ? (
-          <div className="py-8 text-center text-sm text-muted-foreground flex flex-col items-center justify-center gap-2">
-            <MessagesSquare className="size-8 text-muted-foreground/40" />
-            <span>No conversations recorded yet. Use the simulator above to initiate interactions.</span>
-          </div>
-        ) : (
-          <div className="flex flex-col divide-y divide-border/40">
-            {conversations.map((c) => {
-              const lang = LANGUAGE_BADGES[c.language] ?? LANGUAGE_BADGES.en;
-              return (
-                <div key={c.id} className="flex flex-col gap-2 py-3.5 hover:bg-muted/15 px-2 rounded-xl transition-colors">
-                  <div className="flex items-center gap-2">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${lang.className}`}>
-                      {lang.label}
-                    </span>
-                    <span className="text-xs font-semibold text-foreground">
-                      Intent: {c.intent_detected ?? c.status}
-                    </span>
-                    <span className="text-[11px] text-muted-foreground ml-auto">
-                      {new Date(c.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} ·{" "}
-                      {new Date(c.created_at).toLocaleDateString()}
-                    </span>
-                  </div>
-
-                  {c.patient_reply && (
-                    <p className="text-xs text-muted-foreground italic pl-3 border-l-2 border-border/80">
-                      &ldquo;{c.patient_reply}&rdquo;
-                    </p>
-                  )}
-
-                  {c.offered_slot && (
-                    <div className="text-xs text-foreground flex items-center gap-1.5 pl-3">
-                      <span className="text-primary font-semibold text-[11px]">System Action:</span>
-                      <span className="text-muted-foreground">{c.offered_slot}</span>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      {/* Original simulator, kept for demos */}
+      <SimulatorPanel>
+        <AgentSimulator appointments={appointmentOptions} initialAppointmentId={targetAppointmentId} />
+      </SimulatorPanel>
     </div>
   );
 }

@@ -20,6 +20,8 @@ const STATUS_LABELS: Record<string, { label: string; className: string }> = {
   confirmed: { label: "Confirmed", className: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" },
   rescheduled: { label: "Rescheduled", className: "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300" },
   telehealth_requested: { label: "Telehealth requested", className: "bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300" },
+  slot_offered: { label: "Slot offered", className: "bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300" },
+  needs_staff: { label: "Needs desk", className: "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300" },
   cancelled: { label: "Cancelled", className: "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300" },
 };
 
@@ -96,6 +98,12 @@ export function OutreachHistory({
                   <p className="text-xs text-foreground">
                     <span className="text-muted-foreground">Patient: </span>
                     {c.patient_reply}
+                  </p>
+                )}
+                {c.message_text && (
+                  <p className="rounded-lg bg-muted/40 p-2 text-xs text-foreground">
+                    <span className="text-muted-foreground">Message: </span>
+                    {c.message_text}
                   </p>
                 )}
                 {(c.intent_detected || c.offered_slot) && (

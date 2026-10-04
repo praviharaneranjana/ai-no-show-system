@@ -3,7 +3,7 @@ import uuid
 
 import pytest
 
-from app import models
+from app import economics, models
 from app.services import roi
 
 
@@ -75,6 +75,47 @@ def test_evaluate_from_db_rows(db_session):
     assert out["replay"]["recall_model"] == pytest.approx(1.0)  # perfect ranking
     assert out["annual"]["fixed_expenses_lkr"] == 0.0
     assert len(out["sensitivity"]["cells"]) == 12
+    assert out["assumptions"]["cost_per_contact_lkr"] == pytest.approx(economics.DEFAULT_COST_PER_CONTACT_LKR)
     assert out["annual"]["net_benefit_low_lkr"] <= out["annual"]["net_benefit_lkr"] <= out["annual"]["net_benefit_high_lkr"]
     # random contact never beats a perfect ranking
     assert out["replay"]["recovered_lkr_model"] >= out["replay"]["recovered_lkr_random"]
+
+
+def test_cost_per_contact_is_sms_plus_call_share():
+    assert economics.cost_per_contact(1.0, 0.0, 3.5, 850.0) == 1.0  # SMS only
+    assert economics.cost_per_contact(1.0, 1.0, 6.0, 600.0) == pytest.approx(1.0 + 60.0)  # always a 6 min call
+    assert 5 < economics.DEFAULT_COST_PER_CONTACT_LKR < 25  # nowhere near the old flat LKR 50
+
+
+def test_break_even_efficacy_closes_the_gap(db_session):
+    today = date.today()
+    pat = models.Patient(uhid=f"T-{uuid.uuid4().hex[:8]}", full_name="T", date_of_birth=date(1990, 1, 1))
+    db_session.add(pat)
+    db_session.flush()
+    for i in range(40):
+        day = today - timedelta(days=1 + i % 8)
+        ns = i % 4 == 0
+        appt = models.Appointment(patient_id=pat.id, scheduled_day=day - timedelta(days=2), appointment_day=day,
+                                  status="no_show" if ns else "completed", no_show=ns, fee_lkr=2500.0, data_source="synthetic")
+        db_session.add(appt)
+        db_session.flush()
+        db_session.add(models.Prediction(appointment_id=appt.id, risk_score=0.5 if ns else 0.1,
+                                         risk_category="High" if ns else "Low", explanation={}, recommendation="x"))
+    db_session.flush()
+    fixed = [{"amount_lkr": 20000, "recurrence": "annual", "category_key": "platform"}]
+    base = roi.evaluate(db_session, hospital_id=None, window_days=30, custom_expenses=fixed)
+    be = base["annual"]["break_even_efficacy"]
+    assert be is not None and 0 < be
+    # Running at the break-even efficacy makes the annual net benefit zero.
+    at_be = roi.evaluate(db_session, hospital_id=None, window_days=30, custom_expenses=fixed, efficacy=min(be, 1.0))
+    assert at_be["annual"]["net_benefit_lkr"] == pytest.approx(0.0, abs=1.0)
+    assert base["evidence"]["efficacy_central"] == economics.EFFICACY_CENTRAL
+    assert base["evidence"]["break_even_above_evidence"] == (be > economics.EFFICACY_HIGH)
+    # A lower reach rate raises the efficacy needed to break even.
+    low_reach = roi.evaluate(db_session, hospital_id=None, window_days=30, custom_expenses=fixed, reach_rate=0.5)
+    assert low_reach["annual"]["break_even_efficacy"] == pytest.approx(be * 2, rel=1e-6)
+
+
+def test_synthetic_fee_scale_hits_the_target_average():
+    assert economics.scale_synthetic_fee(economics.CSV_MEAN_FEE_LKR) == pytest.approx(economics.DEFAULT_CONSULTATION_FEE_LKR, abs=25)
+    assert economics.scale_synthetic_fee(7450) % 50 == 0

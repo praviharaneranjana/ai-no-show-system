@@ -1,11 +1,14 @@
 import { Calculator, Sparkles } from "lucide-react";
 import { fetchExpenseDataAction } from "@/app/simulator/actions";
 import { RoiSimulator } from "@/app/simulator/roi-simulator";
+import { HoldoutPanel } from "@/app/simulator/holdout-panel";
+import { getHoldoutReport } from "@/lib/api";
 import { requireRole } from "@/lib/session";
 
 export default async function SimulatorPage() {
   await requireRole("manager");
   const { categories, expenses } = await fetchExpenseDataAction();
+  const holdout = await getHoldoutReport().catch(() => null);
 
   return (
     <div className="flex w-full flex-col gap-6 p-4 sm:p-6 lg:p-8 max-w-[1400px] mx-auto animate-in fade-in duration-300">
@@ -34,6 +37,7 @@ export default async function SimulatorPage() {
       </div>
 
       <RoiSimulator initialCategories={categories} initialExpenses={expenses} />
+      <HoldoutPanel report={holdout} />
     </div>
   );
 }

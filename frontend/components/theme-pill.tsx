@@ -26,9 +26,11 @@ function getServerSnapshot() {
 interface ThemePillProps {
   className?: string;
   size?: "sm" | "default";
+  /** Single icon button that flips the theme (collapsed sidebar). */
+  compact?: boolean;
 }
 
-export function ThemePill({ className, size = "default" }: ThemePillProps) {
+export function ThemePill({ className, size = "default", compact = false }: ThemePillProps) {
   const isDark = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
   function setTheme(dark: boolean) {
@@ -46,6 +48,23 @@ export function ThemePill({ className, size = "default" }: ThemePillProps) {
   }
 
   const isSmall = size === "sm";
+
+  if (compact) {
+    return (
+      <button
+        type="button"
+        onClick={() => setTheme(!isDark)}
+        aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
+        title={isDark ? "Switch to light theme" : "Switch to dark theme"}
+        className={cn(
+          "flex size-10 items-center justify-center rounded-full bg-[#F3F3F7] text-[#8C8CA1] transition-colors hover:text-[#171725] dark:bg-[#12121C] dark:hover:text-white",
+          className
+        )}
+      >
+        {isDark ? <Moon className="size-4 text-[#C4B5FD]" /> : <Sun className="size-4 text-amber-500" />}
+      </button>
+    );
+  }
 
   return (
     <div

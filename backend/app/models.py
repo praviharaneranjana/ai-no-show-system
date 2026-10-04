@@ -7,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from app.database import Base
+from app.economics import DEFAULT_CONSULTATION_FEE_LKR
 
 
 # ===================================
@@ -204,7 +205,7 @@ class Department(Base):
     telehealth_ok: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
-    default_consultation_fee_lkr: Mapped[float] = mapped_column(Float, nullable=False, default=4500.0)
+    default_consultation_fee_lkr: Mapped[float] = mapped_column(Float, nullable=False, default=DEFAULT_CONSULTATION_FEE_LKR)
     doctors: Mapped[list["Doctor"]] = relationship(back_populates="department")
 
 
@@ -218,7 +219,7 @@ class Doctor(Base):
     department_id: Mapped[int] = mapped_column(ForeignKey("departments.id"), nullable=False)
     his_doctor_code: Mapped[str | None] = mapped_column(Text, unique=True, nullable=True)
     default_room: Mapped[str | None] = mapped_column(Text, nullable=True)
-    consultation_fee_lkr: Mapped[float] = mapped_column(Float, nullable=False, default=4500.0)
+    consultation_fee_lkr: Mapped[float] = mapped_column(Float, nullable=False, default=DEFAULT_CONSULTATION_FEE_LKR)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     needs_review: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -407,9 +408,45 @@ class Intervention(Base):
     patient_reply: Mapped[str | None] = mapped_column(String, nullable=True)
     intent_detected: Mapped[str | None] = mapped_column(String, nullable=True)
     offered_slot: Mapped[str | None] = mapped_column(String, nullable=True)
+    # A concrete, bookable slot proposed in this message (doctor_id, session_id, date, time, room).
+    # A later "yes" reply books exactly this slot.
+    offer: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    message_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # outbound text, when staff or the system sent one
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("reschedule_conversations.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     appointment: Mapped["Appointment"] = relationship(back_populates="interventions")
+
+
+class RescheduleConversation(Base):
+    """One ask-first rescheduling exchange with a patient, from the first message to a staff-approved booking."""
+    __tablename__ = "reschedule_conversations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hospital_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=True, index=True)
+    patient_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("patients.id", ondelete="CASCADE"), nullable=False, index=True)
+    appointment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("appointments.id", ondelete="CASCADE"), nullable=False, index=True)  # the booking being moved; the new one once booked
+    origin_appointment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("appointments.id", ondelete="CASCADE"), nullable=False)
+    language: Mapped[str] = mapped_column(String, nullable=False, default="en")
+    # awaiting_reply, offering, choosing_doctor, pending_approval, booked, needs_staff, no_reply, kept
+    state: Mapped[str] = mapped_column(String, nullable=False, default="awaiting_reply", index=True)
+    initiated_by: Mapped[str] = mapped_column(String, nullable=False, default="staff")  # staff, patient
+    requested_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    offer: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # the single slot the patient is being asked about
+    options: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # numbered slots shown to the patient
+    shown_keys: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # session|date keys already offered
+    declines: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    unclear: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    handled_by_staff: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # staff took over: no automatic replies
+    approved_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_inbound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_outbound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)  # patient reply deadline
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    patient: Mapped["Patient"] = relationship()
 
 
 class WaitlistEntry(Base):
@@ -582,7 +619,7 @@ class CapacitySetting(Base):
     max_overbook_per_slot: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
     max_overbook_per_session: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
     wait_tolerance_mins: Mapped[int] = mapped_column(Integer, nullable=False, default=15)
-    consultation_fee_lkr: Mapped[float] = mapped_column(Float, nullable=False, default=4500.0)
+    consultation_fee_lkr: Mapped[float] = mapped_column(Float, nullable=False, default=DEFAULT_CONSULTATION_FEE_LKR)
     badge_safe_mins: Mapped[int] = mapped_column(Integer, nullable=False, default=8)
     badge_moderate_mins: Mapped[int] = mapped_column(Integer, nullable=False, default=15)
     auto_assign_waitlist: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

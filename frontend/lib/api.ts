@@ -1,4 +1,15 @@
 import type {
+  HoldoutReport,
+  RecallDraft,
+  RecallQueue,
+  RecallSummary,
+  RescheduleConversation,
+  ThreadSummary,
+  ThreadDetail,
+  AttentionSummary,
+  HistoryStep,
+  SlotOption,
+  RescheduleResult,
   ActivityResponse,
   GeoResponse,
   NotificationItem,
@@ -193,6 +204,20 @@ export function updateAppointmentOutcome(
   return apiFetch<Appointment>(`/appointments/${appointmentId}/outcome`, {
     method: "PATCH",
     body: JSON.stringify({ no_show: noShow, reason, cancelled }),
+  });
+}
+
+export function getRescheduleOptions(appointmentId: string, doctorId?: string) {
+  return apiFetch<SlotOption[]>(`/appointments/${appointmentId}/reschedule-options${qs({ doctor_id: doctorId })}`);
+}
+
+export function rescheduleAppointment(
+  appointmentId: string,
+  body: { appointment_day: string; clinic_session_id: string; doctor_id?: string; notify?: boolean; language?: string }
+) {
+  return apiFetch<RescheduleResult>(`/appointments/${appointmentId}/reschedule`, {
+    method: "POST",
+    body: JSON.stringify(body),
   });
 }
 
@@ -697,3 +722,90 @@ export function switchHospital(hospitalId: string) {
 }
 
 
+
+
+// ===================================
+// Outreach threads & reschedule conversations
+// ===================================
+
+const post = (path: string, body?: unknown) =>
+  apiFetch<RescheduleConversation>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
+
+export function listThreads(q = "", status = "all") {
+  return apiFetch<ThreadSummary[]>(`/outreach/threads${qs({ q: q || undefined, status })}`);
+}
+export function getThread(patientId: string) {
+  return apiFetch<ThreadDetail>(`/outreach/threads/${patientId}`);
+}
+export function getAttention() {
+  return apiFetch<AttentionSummary>("/outreach/attention");
+}
+export function getAppointmentConversation(appointmentId: string) {
+  return apiFetch<RescheduleConversation | null>(`/appointments/${appointmentId}/conversation`);
+}
+export function getAppointmentHistory(appointmentId: string) {
+  return apiFetch<HistoryStep[]>(`/appointments/${appointmentId}/history`);
+}
+export function startConversation(appointmentId: string, language?: string) {
+  return post("/outreach/conversations", { appointment_id: appointmentId, language });
+}
+export function sendIncoming(id: string, text: string) {
+  return post(`/outreach/conversations/${id}/incoming`, { text });
+}
+export function sendStaffMessage(id: string, text: string) {
+  return post(`/outreach/conversations/${id}/staff-message`, { text });
+}
+export function approveConversation(id: string) {
+  return apiFetch<{ booked: boolean; message: string; conversation: RescheduleConversation }>(
+    `/outreach/conversations/${id}/approve`,
+    { method: "POST" }
+  );
+}
+export function rejectConversation(id: string, note?: string) {
+  return post(`/outreach/conversations/${id}/reject`, { note });
+}
+export function takeOverConversation(id: string) {
+  return post(`/outreach/conversations/${id}/take-over`);
+}
+export function resumeConversation(id: string) {
+  return post(`/outreach/conversations/${id}/resume`);
+}
+export function bookConversation(
+  id: string,
+  body: { clinic_session_id: string; appointment_day: string; doctor_id?: string; notify?: boolean; language?: string }
+) {
+  return post(`/outreach/conversations/${id}/book`, body);
+}
+
+
+// ---- Post-miss recall and the outreach hold-out ----
+
+export function getRecallQueue(days = 14) {
+  return apiFetch<RecallQueue>(`/recall/queue${qs({ days })}`);
+}
+
+export function getRecallSummary(days = 90) {
+  return apiFetch<RecallSummary>(`/recall/summary${qs({ days })}`);
+}
+
+export function draftRecall(appointmentId: string, language: string) {
+  return apiFetch<RecallDraft>(`/recall/${appointmentId}/draft${qs({ language })}`, { method: "POST" });
+}
+
+export function logRecallContact(appointmentId: string, body: { channel: string; language?: string; message_text?: string; note?: string }) {
+  return apiFetch<{ ok: boolean }>(`/recall/${appointmentId}/contact`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export function rebookRecall(
+  appointmentId: string,
+  body: { clinic_session_id: string; appointment_day: string; doctor_id?: string; notify?: boolean; language?: string }
+) {
+  return apiFetch<{ appointment_id: string; appointment_day: string; message: string | null }>(`/recall/${appointmentId}/rebook`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function getHoldoutReport(days = 90, tiers = "High") {
+  return apiFetch<HoldoutReport>(`/outreach/holdout/report${qs({ days, tiers })}`);
+}

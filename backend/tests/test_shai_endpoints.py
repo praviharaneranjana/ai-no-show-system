@@ -141,8 +141,9 @@ def test_agent_detects_telehealth_intent(client):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["intent"] == "telehealth"
-    assert "video telehealth" in body["agent_response"].lower()
-    assert "https://telehealth" in body["agent_response"]
+    assert body["status_updated"] == "telehealth_requested"
+    assert "video call" in body["agent_response"].lower()
+    assert "https://" not in body["agent_response"]  # no invented room link when none is configured
 
 
 def test_agent_guards_against_telehealth_for_physical_specialties(client):
@@ -157,10 +158,9 @@ def test_agent_guards_against_telehealth_for_physical_specialties(client):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["intent"] == "telehealth"
-    # Clinical guardrail must explain physical exam requirement and offer in-person reschedule
-    assert "physical examination" in body["agent_response"].lower()
-    assert "cannot be conducted virtually" in body["agent_response"].lower()
-    assert "Telehealth Ineligible" in body["action_executed"]
+    # Clinical guardrail: explain the in-person requirement; never convert to video
+    assert "in-person examination" in body["agent_response"].lower()
+    assert body["status_updated"] != "telehealth_requested"
 
 
 def test_agent_detects_prep_inquiry_intent(client):
@@ -237,7 +237,8 @@ def test_simulator_evaluate_is_empty_without_history(client):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["empty"] is True
-    assert body["assumptions"]["intervention_efficacy"] == 0.3
+    assert body["assumptions"]["intervention_efficacy"] == 0.26
+    assert 5 < body["assumptions"]["cost_per_contact_lkr"] < 25
 
 
 def test_simulator_evaluate_rejects_out_of_range_params(client):

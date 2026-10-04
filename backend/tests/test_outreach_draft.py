@@ -99,3 +99,29 @@ def test_gemini_failure_falls_back_to_the_template(client, monkeypatch):
 def test_draft_unknown_appointment_404s(client):
     resp = client.post("/outreach/draft", json={"appointment_id": "00000000-0000-0000-0000-000000000000"})
     assert resp.status_code == 404
+
+
+def test_sensitive_departments_are_never_named_in_the_template():
+    for dept in ("Psychiatry", "Clinical Psychology", "Mental Health", "Counselling"):
+        for lang in ("en", "si", "ta"):
+            msg = outreach_drafter.template_draft(lang, "Nimal", dept, "05 Oct 2026", ["long_wait"])
+            assert dept.lower() not in msg.lower()
+    assert "Cardiology" in outreach_drafter.template_draft("en", "Nimal", "Cardiology", "05 Oct 2026", [])
+    assert outreach_drafter.patient_facing_department("Psychiatry", "en") == "clinic"
+    assert outreach_drafter.patient_facing_department("ENT", "en") == "ENT"
+
+
+def test_the_gemini_prompt_withholds_a_sensitive_specialty():
+    prompt = outreach_drafter._prompt("en", "N.", "30-44", "Psychiatry", "05 Oct 2026", "High", ["distance"])
+    assert "psychiatr" not in prompt.lower()
+    assert "not disclosed" in prompt
+
+
+def test_a_gemini_draft_that_names_the_specialty_is_replaced_by_the_template(monkeypatch):
+    monkeypatch.setattr(outreach_drafter, "_call_gemini", lambda prompt, attempts=2: "Hi {NAME}, your psychiatry visit is on {TIME}.")
+    d = outreach_drafter.draft_reminder(
+        language="en", first_name="Nimal", department="Psychiatry", when="05 Oct 2026 at 10:00", tier="High",
+        contributions=[], date_text="05 Oct 2026",
+    )
+    assert d.source == "template" and d.discreet is True
+    assert "psychiatr" not in d.message.lower()

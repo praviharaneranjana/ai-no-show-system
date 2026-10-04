@@ -18,7 +18,7 @@ import {
 import { getCapacityAccuracyAction } from "@/app/capacity/actions";
 import { EmptyState } from "@/components/empty-state";
 import { SharedKpiCard } from "@/components/shared-kpi-card";
-import { SyntheticBadgeStatic } from "@/components/synthetic-badge";
+import { SyntheticBadgeStatic } from "@/components/synthetic-badge-static";
 import { cn } from "@/lib/utils";
 import type { AccuracyResponse } from "@/lib/types";
 

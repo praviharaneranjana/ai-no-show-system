@@ -28,8 +28,9 @@ export function DotRingGauge({
   const dots = Array.from({ length: dotCount }).map((_, i) => {
     // Start angle at top (-90 deg), sweep 360 deg
     const angle = ((i / dotCount) * 360 - 90) * (Math.PI / 180);
-    const x = center + radius * Math.cos(angle);
-    const y = center + radius * Math.sin(angle);
+    // Round so server/client trig precision differences can't cause hydration mismatches.
+    const x = Number((center + radius * Math.cos(angle)).toFixed(3));
+    const y = Number((center + radius * Math.sin(angle)).toFixed(3));
     const isActive = i < activeDots;
     return { x, y, isActive, index: i };
   });

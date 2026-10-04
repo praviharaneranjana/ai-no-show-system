@@ -1,16 +1,18 @@
 "use client";
 
-import { useState, useEffect, useTransition } from "react";
-import { Sliders, BookmarkPlus, Trash2, FolderOpen } from "lucide-react";
+import { useState, useEffect, useRef, useTransition } from "react";
+import { Sliders, BookmarkPlus, Trash2, FolderOpen, CalendarDays, RotateCcw } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
 import {
   evaluateWhatIfAction,
   getCapacityScenariosAction,
+  getCapacitySettingsAction,
   saveCapacityScenarioAction,
   deleteCapacityScenarioAction,
 } from "@/app/capacity/actions";
-import { formatLkr } from "@/lib/utils";
+import { Slider } from "@/components/ui/slider";
+import { cn, formatLkr } from "@/lib/utils";
 import type { WhatIfRequest, WhatIfResponse, CapacityScenario, DoctorSession } from "@/lib/types";
 
 interface WhatIfViewProps {
@@ -18,23 +20,130 @@ interface WhatIfViewProps {
   onBack?: () => void;
 }
 
-function Field({ label, hint, children }: { label: string; hint: string; children: React.ReactNode }) {
+const inputCls = "h-10 rounded-xl border border-border bg-background px-3 text-xs font-semibold text-foreground";
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Typeable YYYY-MM-DD field with a calendar button for the native picker. */
+function DateField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  const nativeRef = useRef<HTMLInputElement>(null);
+
+  // Re-sync when the parent changes the value (e.g. a loaded scenario).
+  const [seen, setSeen] = useState(value);
+  if (seen !== value) {
+    setSeen(value);
+    setDraft(value);
+  }
+
+  function type(raw: string) {
+    // Keep digits only and re-insert the dashes as the user types.
+    const d = raw.replace(/\D/g, "").slice(0, 8);
+    const masked = d.length > 6 ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6)}` : d.length > 4 ? `${d.slice(0, 4)}-${d.slice(4)}` : d;
+    setDraft(masked);
+    if (masked === "") onChange("");
+    else if (ISO_DATE.test(masked) && !Number.isNaN(Date.parse(masked))) onChange(masked);
+  }
+
+  const invalid = draft !== "" && !ISO_DATE.test(draft);
+
   return (
     <div className="flex flex-col gap-1.5">
-      <label className="text-xs font-semibold text-foreground">{label}</label>
-      {children}
-      <span className="text-[10px] text-muted-foreground">{hint}</span>
+      <label className="text-xs font-semibold text-foreground">Date</label>
+      <div className="relative">
+        <input
+          type="text"
+          inputMode="numeric"
+          autoComplete="off"
+          placeholder="yyyy-mm-dd"
+          value={draft}
+          onChange={(e) => type(e.target.value)}
+          aria-invalid={invalid}
+          className={cn(inputCls, "w-full pr-10", invalid && "border-rose-500/60")}
+        />
+        <button
+          type="button"
+          aria-label="Pick a date"
+          onClick={() => nativeRef.current?.showPicker?.()}
+          className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <CalendarDays className="size-4" />
+        </button>
+        <input
+          ref={nativeRef}
+          type="date"
+          tabIndex={-1}
+          aria-hidden
+          value={ISO_DATE.test(value) ? value : ""}
+          onChange={(e) => onChange(e.target.value)}
+          className="pointer-events-none absolute right-2 top-full h-0 w-0 opacity-0"
+        />
+      </div>
+      <span className="text-[10px] text-muted-foreground">{invalid ? "Use yyyy-mm-dd" : "Type a date or pick one · empty = today"}</span>
     </div>
   );
 }
 
-const inputCls = "h-10 rounded-xl border border-border bg-background px-3 text-xs font-semibold text-foreground";
+/** Draggable lever (1-unit steps) plus an exact number box. `value === null` means "use the saved setting". */
+function LeverField({
+  label,
+  hint,
+  value,
+  fallback,
+  min,
+  max,
+  step = 1,
+  format,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  value: number | null;
+  fallback: number;
+  min: number;
+  max: number;
+  step?: number;
+  format: (v: number) => string;
+  onChange: (v: number | null) => void;
+}) {
+  const shown = value ?? fallback;
+  return (
+    <div className="flex flex-col gap-1.5 rounded-2xl border border-border/40 bg-muted/20 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <label className="text-xs font-semibold text-foreground">{label}</label>
+        <span className="rounded-full border border-primary/20 bg-primary/10 px-2.5 py-0.5 text-xs font-semibold tabular-nums text-primary">
+          {format(shown)}
+        </span>
+      </div>
+      <Slider value={shown} min={min} max={max} step={step} onValueChange={(v) => onChange(v as number)} className="cursor-pointer py-1" />
+      <div className="flex items-center gap-2">
+        <input
+          type="number"
+          min={min}
+          max={max}
+          step={step}
+          value={value ?? ""}
+          placeholder={format(fallback)}
+          onChange={(e) => onChange(e.target.value === "" ? null : Math.min(max, Math.max(min, Number(e.target.value))))}
+          className={cn(inputCls, "h-8 w-full text-[11px]")}
+        />
+        {value !== null && (
+          <button type="button" onClick={() => onChange(null)} aria-label="Use saved setting" className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground">
+            <RotateCcw className="size-3.5" />
+          </button>
+        )}
+      </div>
+      <span className="text-[10px] text-muted-foreground">{value === null ? `${hint} · using saved setting` : hint}</span>
+    </div>
+  );
+}
 
 export function WhatIfView({ onBack }: WhatIfViewProps) {
   const [targetDate, setTargetDate] = useState<string>("");
-  const [waitCost, setWaitCost] = useState<string>("");
-  const [maxOverbook, setMaxOverbook] = useState<string>("");
-  const [fee, setFee] = useState<string>("");
+  const [waitCost, setWaitCost] = useState<number | null>(null);
+  const [maxOverbook, setMaxOverbook] = useState<number | null>(null);
+  const [fee, setFee] = useState<number | null>(null);
+  const [saved, setSaved] = useState<{ wait: number; overbook: number; fee: number }>({ wait: 0, overbook: 0, fee: 0 });
 
   const [result, setResult] = useState<WhatIfResponse | null>(null);
   const [scenarios, setScenarios] = useState<CapacityScenario[]>([]);
@@ -43,6 +152,9 @@ export function WhatIfView({ onBack }: WhatIfViewProps) {
 
   useEffect(() => {
     getCapacityScenariosAction().then(setScenarios);
+    getCapacitySettingsAction().then((c) => {
+      if (c) setSaved({ wait: c.wait_cost_lkr, overbook: c.max_overbook_per_session, fee: c.consultation_fee_lkr });
+    });
   }, []);
 
   useEffect(() => {
@@ -50,9 +162,9 @@ export function WhatIfView({ onBack }: WhatIfViewProps) {
       startTransition(async () => {
         const payload: WhatIfRequest = {
           target_date: targetDate || undefined,
-          wait_cost_lkr: waitCost === "" ? undefined : Number(waitCost),
-          max_overbook_per_session: maxOverbook === "" ? undefined : Number(maxOverbook),
-          consultation_fee_lkr: fee === "" ? undefined : Number(fee),
+          wait_cost_lkr: waitCost ?? undefined,
+          max_overbook_per_session: maxOverbook ?? undefined,
+          consultation_fee_lkr: fee ?? undefined,
         };
         const res = await evaluateWhatIfAction(payload);
         if (res) setResult(res);
@@ -65,7 +177,12 @@ export function WhatIfView({ onBack }: WhatIfViewProps) {
     if (!scenarioName.trim() || !result) return;
     const sc = await saveCapacityScenarioAction({
       name: scenarioName.trim(),
-      params: { target_date: targetDate, wait_cost_lkr: waitCost, max_overbook_per_session: maxOverbook, consultation_fee_lkr: fee },
+      params: {
+        target_date: targetDate,
+        wait_cost_lkr: waitCost == null ? "" : String(waitCost),
+        max_overbook_per_session: maxOverbook == null ? "" : String(maxOverbook),
+        consultation_fee_lkr: fee == null ? "" : String(fee),
+      },
       results: { current_policy: result.current_policy, what_if_policy: result.what_if_policy },
     });
     if (sc) {
@@ -77,9 +194,10 @@ export function WhatIfView({ onBack }: WhatIfViewProps) {
   function loadScenario(sc: CapacityScenario) {
     const p = sc.params as Record<string, string | undefined>;
     setTargetDate(p.target_date ?? "");
-    setWaitCost(p.wait_cost_lkr ?? "");
-    setMaxOverbook(p.max_overbook_per_session ?? "");
-    setFee(p.consultation_fee_lkr ?? "");
+    const num = (v?: string) => (v == null || v === "" ? null : Number(v));
+    setWaitCost(num(p.wait_cost_lkr));
+    setMaxOverbook(num(p.max_overbook_per_session));
+    setFee(num(p.consultation_fee_lkr));
   }
 
   const rows: Array<[string, (p: WhatIfResponse["current_policy"]) => string]> = [
@@ -110,31 +228,53 @@ export function WhatIfView({ onBack }: WhatIfViewProps) {
           (or each session&apos;s recorded fee).
         </p>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Field label="Date" hint="Empty = today">
-            <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className={inputCls} />
-          </Field>
-          <Field label="Cost per overflow patient (LKR)" hint="Assumption">
-            <input type="number" min={0} step={500} value={waitCost} onChange={(e) => setWaitCost(e.target.value)} className={inputCls} placeholder="saved setting" />
-          </Field>
-          <Field label="Max overbooking per session" hint="Beyond capacity">
-            <input type="number" min={0} max={20} value={maxOverbook} onChange={(e) => setMaxOverbook(e.target.value)} className={inputCls} placeholder="saved setting" />
-          </Field>
-          <Field label="Fee per patient (LKR)" hint="Empty = recorded fees">
-            <input type="number" min={0} step={100} value={fee} onChange={(e) => setFee(e.target.value)} className={inputCls} placeholder="recorded" />
-          </Field>
+          <DateField value={targetDate} onChange={setTargetDate} />
+          <LeverField
+            label="Cost per overflow patient"
+            hint="Assumption"
+            value={waitCost}
+            fallback={saved.wait}
+            min={0}
+            max={20000}
+            format={(v) => `LKR ${v.toLocaleString("en-US")}`}
+            onChange={setWaitCost}
+          />
+          <LeverField
+            label="Max overbooking per session"
+            hint="Beyond capacity"
+            value={maxOverbook}
+            fallback={saved.overbook}
+            min={0}
+            max={20}
+            format={(v) => `+${v}`}
+            onChange={setMaxOverbook}
+          />
+          <LeverField
+            label="Fee per patient"
+            hint="Recorded fees when unset"
+            value={fee}
+            fallback={saved.fee}
+            min={0}
+            max={20000}
+            format={(v) => `LKR ${v.toLocaleString("en-US")}`}
+            onChange={setFee}
+          />
         </div>
       </div>
 
       {result && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <div className="rounded-[24px] border border-border/60 bg-card p-5 shadow-xs">
-            <h3 className="mb-3 text-sm font-bold text-foreground">Saved policy vs. what-if</h3>
+          <div className="rounded-[24px] border border-primary/40 bg-gradient-to-br from-primary/10 via-card to-card p-5 shadow-md shadow-primary/10 ring-1 ring-primary/20">
+            <h3 className="mb-3 flex items-center gap-2 text-sm font-bold text-foreground">
+              Saved policy vs. what-if
+              <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary">live</span>
+            </h3>
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-border text-left text-muted-foreground">
                   <th className="py-2 font-semibold" />
                   <th className="font-semibold">Saved</th>
-                  <th className="font-semibold">What-if</th>
+                  <th className="font-bold text-primary">What-if</th>
                 </tr>
               </thead>
               <tbody className="font-mono">
@@ -142,7 +282,7 @@ export function WhatIfView({ onBack }: WhatIfViewProps) {
                   <tr key={label} className="border-b border-border/50 last:border-none">
                     <td className="py-2 pr-2 font-sans text-foreground">{label}</td>
                     <td>{fmt(result.current_policy)}</td>
-                    <td className="font-bold">{fmt(result.what_if_policy)}</td>
+                    <td className="rounded-md bg-primary/10 px-2 font-bold text-primary">{fmt(result.what_if_policy)}</td>
                   </tr>
                 ))}
               </tbody>

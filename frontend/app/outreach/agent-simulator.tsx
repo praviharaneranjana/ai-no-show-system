@@ -25,6 +25,8 @@ const QUICK_MESSAGES: Record<InterventionLanguage, { label: string; text: string
     { label: "Ask about prep", text: "What should I do before the fasting test?" },
     { label: "Confirm attendance", text: "Yes, I'll be coming, thank you" },
     { label: "Cancel visit", text: "Please cancel my appointment" },
+    { label: "Yes, book that slot", text: "Yes please, book it" },
+    { label: "No, another time", text: "No, another time please" },
   ],
   si: [
     { label: "Can't make it", text: "Mata heta enna bahe, wena dawasak thiyenawada?" },
@@ -32,6 +34,8 @@ const QUICK_MESSAGES: Record<InterventionLanguage, { label: string; text: string
     { label: "Ask about prep", text: "Test eken kalin monawada kanna one?" },
     { label: "Confirm attendance", text: "Hari, mama enawa heta." },
     { label: "Cancel visit", text: "Mata me appointment eka epaa, ain karanna." },
+    { label: "Yes, book that slot", text: "Ow, hari, eka book karanna." },
+    { label: "No, another time", text: "Naa, wena welawak denna." },
   ],
   ta: [
     { label: "Can't make it", text: "Naan naalai varamudiyadhu, vera naal kidaikuma?" },
@@ -39,6 +43,8 @@ const QUICK_MESSAGES: Record<InterventionLanguage, { label: string; text: string
     { label: "Ask about prep", text: "Test edukka munnadi naan enna pannanum?" },
     { label: "Confirm attendance", text: "Sari, naan varuven." },
     { label: "Cancel visit", text: "Vendaam, appointment ah cancel pannunga." },
+    { label: "Yes, book that slot", text: "Aam, adhai book pannunga." },
+    { label: "No, another time", text: "Illai, vera neram kudunga." },
   ],
 };
 
@@ -55,6 +61,7 @@ export function AgentSimulator({
       ? initialAppointmentId
       : appointments[0]?.id ?? ""
   );
+  const [extraOptions, setExtraOptions] = useState<AppointmentOption[]>([]);
   const [language, setLanguage] = useState<InterventionLanguage>("en");
   const [message, setMessage] = useState("");
   const [lastPatientMessage, setLastPatientMessage] = useState<string | null>(null);
@@ -109,6 +116,11 @@ export function AgentSimulator({
         const res = await simulateAgentAction(appointmentId, text, language);
         setResult(res);
         setMessage("");
+        // A confirmed reschedule creates a new booking: keep the chat on it so the next reply is about the new slot.
+        if (res.appointment_id !== appointmentId) {
+          setExtraOptions((prev) => [...prev, { id: res.appointment_id, label: `${res.offered_slot?.doctor_name ?? "Rescheduled booking"} — rebooked` }]);
+          setAppointmentId(res.appointment_id);
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Simulation failed.");
       }
@@ -135,7 +147,7 @@ export function AgentSimulator({
             disabled={isPending}
             className="h-10 w-full rounded-xl border border-border/80 bg-background/90 px-3 text-xs outline-none transition-all focus:border-primary focus:ring-2 focus:ring-primary/20 text-foreground"
           >
-            {appointments.map((a) => (
+            {[...appointments, ...extraOptions.filter((e) => !appointments.some((a) => a.id === e.id))].map((a) => (
               <option key={a.id} value={a.id}>
                 {a.label}
               </option>
@@ -200,6 +212,14 @@ export function AgentSimulator({
                 >
                   {draft.source === "gemini" ? "Drafted by Gemini" : "Template (AI unavailable)"}
                 </span>
+                {draft.discreet && (
+                  <span
+                    title="This clinic is sensitive, so the message says only 'clinic' and does not name the specialty."
+                    className="rounded-full bg-sky-100 px-2 py-0.5 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300"
+                  >
+                    Specialty hidden
+                  </span>
+                )}
                 {draft.reasons.map((r) => (
                   <span key={r} className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">
                     {r.replace(/_/g, " ")}
@@ -297,6 +317,11 @@ export function AgentSimulator({
                 <div className="rounded-2xl rounded-tl-xs bg-card border border-border/60 p-3.5 text-xs text-foreground whitespace-pre-line shadow-xs">
                   {result.agent_response}
                 </div>
+                {result.offered_slot && (
+                  <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 p-2.5 text-[11px] text-violet-700 dark:text-violet-300">
+                    Held offer: <strong>{result.offered_slot.doctor_name}</strong>, {result.offered_slot.date} {result.offered_slot.start_time}, Room {result.offered_slot.room}. Reply &quot;Yes&quot; to book it or &quot;No&quot; for another time.
+                  </div>
+                )}
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-primary/10 text-primary border border-primary/20">
                     <Sparkles className="size-3" />

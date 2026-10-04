@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState, useTransition } from "react";
 import { Plus, Trash2, Receipt, Info } from "lucide-react";
 
 import { EmptyState } from "@/components/empty-state";
-import { SyntheticBadgeStatic } from "@/components/synthetic-badge";
+import { SyntheticBadgeStatic } from "@/components/synthetic-badge-static";
 import { Slider } from "@/components/ui/slider";
 import { cn, formatLkr } from "@/lib/utils";
 import type { ExpenseCategory, ExpenseRecurrence, HospitalExpense, SimulatorParams, SimulatorResult } from "@/lib/types";
@@ -17,14 +17,26 @@ import {
 
 const DEFAULTS: SimulatorParams = {
   contact_fraction: 0.2,
-  intervention_efficacy: 0.3,
+  intervention_efficacy: 0.26,
+  reach_rate: 1.0,
   value_multiplier: 1.0,
-  cost_per_contact_lkr: 50,
+  sms_cost_lkr: 1,
+  call_share: 0.25,
+  call_minutes: 3.5,
+  staff_hourly_cost_lkr: 850,
   window_days: 90,
 };
 
+const KPI_TONE: Record<string, string> = {
+  emerald: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  amber: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  sky: "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+  violet: "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300",
+};
+
 const pct = (v: number | null | undefined, d = 1) => (v == null ? "—" : `${(v * 100).toFixed(d)}%`);
-const lkr = (v: number) => `LKR ${formatLkr(Math.round(v))}`;
+// formatLkr already prefixes "LKR"; negatives keep the sign in front of it.
+const lkr = (v: number) => (v < 0 ? `-${formatLkr(Math.round(-v))}` : formatLkr(Math.round(v)));
 
 function Assumption({
   label,
@@ -196,7 +208,7 @@ export function RoiSimulator({
 
           <section className="rounded-[24px] border border-border/60 bg-card p-5 shadow-xs">
             <h3 className="text-sm font-bold text-foreground">Annual net benefit of risk-ranked outreach</h3>
-            <div className="mt-2 flex flex-wrap items-end gap-x-8 gap-y-2">
+            <div className="mt-3 flex flex-col gap-5 lg:flex-row lg:items-center lg:gap-8">
               <div>
                 <div
                   className={cn(
@@ -210,69 +222,138 @@ export function RoiSimulator({
                   range across the sensitivity table: {lkr(result.annual.net_benefit_low_lkr)} to {lkr(result.annual.net_benefit_high_lkr)}
                 </div>
               </div>
-              <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs sm:grid-cols-4">
-                <div><dt className="text-muted-foreground">Recovered revenue</dt><dd className="font-mono font-semibold">{lkr(result.annual.recovered_lkr)}</dd></div>
-                <div><dt className="text-muted-foreground">Contact cost</dt><dd className="font-mono font-semibold">{lkr(result.annual.contact_cost_lkr)}</dd></div>
-                <div><dt className="text-muted-foreground">Platform costs</dt><dd className="font-mono font-semibold">{lkr(result.annual.fixed_expenses_lkr)}</dd></div>
-                <div>
-                  <dt className="text-muted-foreground">Return on cost</dt>
-                  <dd className="font-mono font-semibold">
-                    {result.annual.roi_multiple == null ? "—" : `${result.annual.roi_multiple.toFixed(2)}×`}
-                    {result.annual.payback_days != null && (
-                      <span className="ml-1 font-sans text-muted-foreground">· payback {Math.round(result.annual.payback_days)} d</span>
-                    )}
-                  </dd>
-                </div>
+              <dl className="grid w-full grid-cols-2 gap-3 lg:w-auto lg:flex-1 lg:grid-cols-4">
+                {[
+                  { k: "Recovered revenue", v: lkr(result.annual.recovered_lkr), tone: "emerald" },
+                  { k: "Contact cost", v: lkr(result.annual.contact_cost_lkr), tone: "amber" },
+                  { k: "Platform costs", v: lkr(result.annual.fixed_expenses_lkr), tone: "sky" },
+                  {
+                    k: "Return on cost",
+                    v: result.annual.roi_multiple == null ? "—" : `${result.annual.roi_multiple.toFixed(2)}×`,
+                    sub: result.annual.payback_days != null ? `payback ${Math.round(result.annual.payback_days)} days` : undefined,
+                    tone: "violet",
+                  },
+                ].map((m) => (
+                  <div key={m.k} className={cn("rounded-2xl border p-4 shadow-xs", KPI_TONE[m.tone])}>
+                    <dt className="text-[11px] font-bold uppercase tracking-wider opacity-80">{m.k}</dt>
+                    <dd className="mt-1 font-mono text-2xl font-extrabold tabular-nums text-foreground">{m.v}</dd>
+                    {m.sub && <div className="mt-0.5 text-[11px] font-semibold opacity-80">{m.sub}</div>}
+                  </div>
+                ))}
               </dl>
             </div>
             <p className="mt-2 text-[11px] text-muted-foreground">
               Annualised from a {result.baseline.window_calendar_days}-day replay (×{result.annual.scale.toFixed(2)}). Net = recovered revenue − contact cost − recorded platform costs.
             </p>
           </section>
+
+          <section
+            className={cn(
+              "rounded-[24px] border p-5 shadow-xs",
+              result.evidence.break_even_above_evidence ? "border-rose-500/30 bg-rose-500/5" : "border-emerald-500/30 bg-emerald-500/5"
+            )}
+          >
+            <h3 className="text-sm font-bold text-foreground">What efficacy do you need?</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              The benefit covers its costs only if outreach recovers at least{" "}
+              <b className="font-mono text-foreground">{pct(result.annual.break_even_efficacy, 0)}</b> of the no-shows it reaches.
+              The only Sri Lankan estimate is {pct(result.evidence.efficacy_central, 0)} (plausible range{" "}
+              {pct(result.evidence.efficacy_low, 0)}–{pct(result.evidence.efficacy_high, 0)}).{" "}
+              {result.evidence.break_even_above_evidence
+                ? "The break-even is above that range, so on these inputs the case is not proven."
+                : "The break-even is inside that range."}
+            </p>
+            <p className="mt-2 text-[11px] text-muted-foreground">{result.evidence.source} {result.evidence.caveat}</p>
+          </section>
         </>
       )}
 
       <section className="rounded-[24px] border border-border/60 bg-card p-5 shadow-xs">
-        <h3 className="mb-3 text-sm font-bold text-foreground">Assumptions</h3>
+        <h3 className="text-sm font-bold text-foreground">Assumptions</h3>
+        <p className="mb-3 text-xs text-muted-foreground">
+          {result && !result.empty
+            ? `Cost per contact works out to LKR ${result.assumptions.cost_per_contact_lkr.toFixed(2)}: one SMS plus a call for ${pct(result.assumptions.call_share, 0)} of contacts.`
+            : "Cost per contact is one SMS plus a phone call for the share that needs one."}
+        </p>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <Assumption
             label="Contact top share"
             hint="Of each day's bookings, contact the riskiest this share"
             display={pct(params.contact_fraction, 0)}
             value={params.contact_fraction}
-            min={0.05}
+            min={0.01}
             max={0.5}
-            step={0.05}
+            step={0.01}
             onChange={(v) => set("contact_fraction", v)}
           />
           <Assumption
             label="Efficacy"
-            hint="Chance a contacted would-be no-show is recovered"
+            hint="Chance a contacted would-be no-show attends. Sri Lankan study: 26% (16 of 61), uncontrolled"
             display={pct(params.intervention_efficacy, 0)}
             value={params.intervention_efficacy}
-            min={0.05}
+            min={0.01}
             max={0.6}
-            step={0.05}
+            step={0.01}
             onChange={(v) => set("intervention_efficacy", v)}
           />
           <Assumption
-            label="Cost per contact"
-            hint="Staff time and message cost per call or message"
-            display={`LKR ${params.cost_per_contact_lkr}`}
-            value={params.cost_per_contact_lkr}
+            label="Reach rate"
+            hint="Share of the contact list that can be reached. Keep 100% unless your phone numbers are worse than the study's"
+            display={pct(params.reach_rate, 0)}
+            value={params.reach_rate}
+            min={0.1}
+            max={1}
+            step={0.01}
+            onChange={(v) => set("reach_rate", v)}
+          />
+          <Assumption
+            label="SMS cost"
+            hint="Bulk SMS is quoted under LKR 1 each; check your provider's tariff"
+            display={`LKR ${params.sms_cost_lkr.toFixed(2)}`}
+            value={params.sms_cost_lkr}
             min={0}
-            max={300}
-            step={5}
-            onChange={(v) => set("cost_per_contact_lkr", v)}
+            max={5}
+            step={0.05}
+            onChange={(v) => set("sms_cost_lkr", v)}
+          />
+          <Assumption
+            label="Contacts that also need a call"
+            hint="Share where staff phone the patient after the SMS"
+            display={pct(params.call_share, 0)}
+            value={params.call_share}
+            min={0}
+            max={1}
+            step={0.01}
+            onChange={(v) => set("call_share", v)}
+          />
+          <Assumption
+            label="Call length"
+            hint="Minutes of staff time per phone call"
+            display={`${params.call_minutes.toFixed(1)} min`}
+            value={params.call_minutes}
+            min={0.5}
+            max={15}
+            step={0.5}
+            onChange={(v) => set("call_minutes", v)}
+          />
+          <Assumption
+            label="Staff cost per hour"
+            hint="Loaded cost of front-desk time"
+            display={`LKR ${params.staff_hourly_cost_lkr}`}
+            value={params.staff_hourly_cost_lkr}
+            min={200}
+            max={3000}
+            step={50}
+            onChange={(v) => set("staff_hourly_cost_lkr", v)}
           />
           <Assumption
             label="Revenue per LKR of fee"
             hint="1.0 = consultation fee only; above 1 adds lab / pharmacy revenue"
-            display={`${params.value_multiplier.toFixed(1)}×`}
+            display={`${params.value_multiplier.toFixed(2)}×`}
             value={params.value_multiplier}
             min={0.3}
             max={2}
-            step={0.1}
+            step={0.01}
             onChange={(v) => set("value_multiplier", v)}
           />
           <Assumption
@@ -280,9 +361,9 @@ export function RoiSimulator({
             hint="Most recent days of recorded outcomes"
             display={`${params.window_days} days`}
             value={params.window_days}
-            min={30}
+            min={14}
             max={365}
-            step={30}
+            step={1}
             onChange={(v) => set("window_days", v)}
           />
         </div>
