@@ -74,6 +74,7 @@ export type RiskCategory = "Low" | "Medium" | "High";
 
 export type FeatureContribution = {
   feature: string;
+  feature_label?: string;
   contribution: number;
   value: number;
 };
@@ -182,6 +183,7 @@ export type RescheduleResult = {
 export type OutreachDraft = {
   appointment_id: string;
   language: InterventionLanguage;
+  occasion?: string;
   message: string;
   source: "gemini" | "template";
   reasons: string[];
@@ -1012,6 +1014,30 @@ export type PredictionTodayResponse = {
   last_run: PredictionRunResponse | null;
 };
 
+export type HISTestCheck = {
+  name: string;
+  status: "passed" | "failed" | "warning";
+  latency_ms?: number | null;
+  detail: string;
+};
+
+export type HISTestConnectionResponse = {
+  ok: boolean;
+  latency_ms: number;
+  mode: string;
+  system_name: string;
+  endpoint: string;
+  protocol: string;
+  status_code: number;
+  version?: string | null;
+  tls_active: boolean;
+  auth_status: string;
+  total_records: number;
+  detail: string;
+  tested_at: string;
+  checks: HISTestCheck[];
+};
+
 export type HISStatusResponse = {
   connector_type: string;
   connector_healthy: boolean;
@@ -1030,6 +1056,12 @@ export type HISStatusResponse = {
   } | null;
   total_his_records: number;
   synced_appointments_today: number;
+  system_name?: string;
+  endpoint?: string | null;
+  protocol?: string | null;
+  latency_ms?: number | null;
+  auth_status?: string | null;
+  version?: string | null;
 };
 
 // ===================================

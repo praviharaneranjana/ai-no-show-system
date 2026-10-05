@@ -113,11 +113,11 @@ export default async function AppointmentDetailPage({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-border/60">
         <div className="flex items-center gap-3">
           <Link
-            href="/"
+            href="/appointments"
             className="flex items-center gap-1.5 text-xs font-semibold text-[#8B7CF6] hover:underline"
           >
             <ArrowLeft className="size-4" />
-            <span>Dashboard</span>
+            <span>Appointments</span>
           </Link>
           <span className="text-muted-foreground">/</span>
           <h1 className="font-heading text-lg font-bold text-foreground sm:text-xl">

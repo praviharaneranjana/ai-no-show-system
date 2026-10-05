@@ -17,7 +17,8 @@ export async function simulateAgentAction(
 
 export async function draftOutreachAction(
   appointmentId: string,
-  language: InterventionLanguage
+  language: InterventionLanguage,
+  occasion = "reminder"
 ): Promise<OutreachDraft> {
-  return draftOutreach(appointmentId, language);
+  return draftOutreach(appointmentId, language, occasion);
 }

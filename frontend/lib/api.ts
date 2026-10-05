@@ -60,6 +60,7 @@ import type {
   PredictionRunResponse,
   PredictionTodayResponse,
   HISStatusResponse,
+  HISTestConnectionResponse,
   ModelInfo,
   DataSourceInfo,
   HospitalBasic,
@@ -415,10 +416,10 @@ export function simulateAgent(
   });
 }
 
-export function draftOutreach(appointmentId: string, language: InterventionLanguage) {
+export function draftOutreach(appointmentId: string, language: InterventionLanguage, occasion = "reminder") {
   return apiFetch<OutreachDraft>("/outreach/draft", {
     method: "POST",
-    body: JSON.stringify({ appointment_id: appointmentId, language }),
+    body: JSON.stringify({ appointment_id: appointmentId, language, occasion }),
   });
 }
 
@@ -638,6 +639,13 @@ export function triggerHisSync(date?: string) {
 export function simulateHisArrivals(count = 5) {
   return apiFetch<{ marked_arrived_count: number; external_refs: string[] }>(
     `/his/simulate/arrivals${qs({ count })}`,
+    { method: "POST" }
+  );
+}
+
+export function testHisConnection(simulateError = false) {
+  return apiFetch<HISTestConnectionResponse>(
+    `/his/test-connection${qs({ simulate_error: simulateError ? "true" : undefined })}`,
     { method: "POST" }
   );
 }

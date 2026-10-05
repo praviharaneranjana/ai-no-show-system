@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   Clock,
   CheckCircle2,
+  TrendingUp,
 } from "lucide-react";
 
 import type { AppointmentRecord } from "@/lib/appointments-with-predictions";
@@ -19,6 +20,7 @@ import { RingProgress } from "@/components/ring-progress";
 import { ShapDriverBars } from "@/components/shap-driver-bars";
 import { JourneyMap } from "@/components/journey-map";
 import { useStaffName } from "@/components/use-staff-name";
+import { RiskDistributionChart } from "@/components/charts/risk-distribution-chart";
 import { NoShowTrendChart } from "@/components/charts/no-show-trend-chart";
 import { AppointmentRows } from "@/components/appointment-rows";
 import { INTERVENTION_STATUS_LABEL, LANGUAGE_LABEL, timeAgo } from "@/lib/format";
@@ -393,13 +395,31 @@ export function DashboardBento({ records, doctorSessions, trend, activity, regis
       {/* ROW 3: BENTO LOWER ROW */}
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         
-        {/* Trend Area Chart (6 cols) */}
-        <div className="lg:col-span-6 rounded-[24px] border border-border bg-card p-5 bento-card-shadow flex flex-col justify-between">
+        {/* Predicted Risk Distribution (5 cols) — same card as Analytics */}
+        <div className="lg:col-span-5 rounded-[24px] border border-border bg-card p-5 bento-card-shadow flex flex-col gap-4">
+          <div className="flex items-center gap-2 pb-2 border-b border-border/40">
+            <div className="size-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+              <TrendingUp className="size-4" />
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-foreground">Predicted Risk Distribution</h2>
+              <p className="text-xs text-muted-foreground">
+                Breakdown across {records.filter((r) => r.prediction).length} scored appointments
+              </p>
+            </div>
+          </div>
+          <div className="pt-1">
+            <RiskDistributionChart records={records} />
+          </div>
+        </div>
+
+        {/* Trend Area Chart (7 cols) */}
+        <div className="lg:col-span-7 rounded-[24px] border border-border bg-card p-5 bento-card-shadow flex flex-col justify-between">
           <NoShowTrendChart initial={trend} compact />
         </div>
 
         {/* Capacity Utilization Ring (3 cols) */}
-        <div className="lg:col-span-3 rounded-[24px] border border-border bg-card p-5 bento-card-shadow flex flex-col items-center justify-between text-center">
+        <div className="lg:col-span-6 rounded-[24px] border border-border bg-card p-5 bento-card-shadow flex flex-col items-center justify-between text-center">
           <div className="w-full flex items-center justify-between pb-3 border-b border-border/60">
             <div>
               <h3 className="font-heading text-base font-bold text-foreground text-left">
@@ -428,8 +448,8 @@ export function DashboardBento({ records, doctorSessions, trend, activity, regis
           </div>
         </div>
 
-        {/* Autonomous Outreach Feed (3 cols) */}
-        <div className="lg:col-span-3 rounded-[24px] border border-border bg-card p-5 bento-card-shadow flex flex-col justify-between">
+        {/* Autonomous Outreach Feed (6 cols) */}
+        <div className="lg:col-span-6 rounded-[24px] border border-border bg-card p-5 bento-card-shadow flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between pb-3 border-b border-border/60">
               <div>

@@ -179,7 +179,7 @@ def upgrade() -> None:
         sa.Column('model_version', sa.Text(), nullable=False),
         sa.Column('prediction_run_id', postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.CheckConstraint("stage IN ('booking','import','rescore')", name='ck_predlog_stage'),
+        sa.CheckConstraint("stage IN ('booking','import','rescore','day_of','preview')", name='ck_predlog_stage'),
     )
     op.create_index('ix_predlog_appt', 'prediction_log', ['appointment_id', 'created_at'])
 

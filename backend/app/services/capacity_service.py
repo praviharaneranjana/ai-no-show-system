@@ -12,7 +12,7 @@ import uuid
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app import models, schemas
@@ -671,9 +671,21 @@ def act_on_slot_offer(
 # ---------------------------------------------------------------------------
 # Forecast
 # ---------------------------------------------------------------------------
-def get_capacity_forecast(db: Session, horizon_days: int = 7, hospital_id: Optional[uuid.UUID] = None) -> schemas.ForecastResponse:
+def get_capacity_forecast(
+    db: Session,
+    horizon_days: int = 7,
+    hospital_id: Optional[uuid.UUID] = None,
+    department: Optional[str] = None,
+) -> schemas.ForecastResponse:
     """Forward view over days that already have bookings: expected no-shows and revenue at risk from stored risk and fees."""
     today = date.today()
+    department_id: Optional[int] = None
+    if department:
+        dq = db.query(models.Department.id).filter(func.lower(models.Department.name) == department.strip().lower())
+        if hospital_id:
+            dq = dq.filter(or_(models.Department.hospital_id == hospital_id, models.Department.hospital_id.is_(None)))
+        row = dq.first()
+        department_id = row[0] if row else -1  # unknown department: nothing matches, so the view is empty
     base_rate = _model_base_rate()
     days_out: List[schemas.ForecastDayOut] = []
     dept_acc: Dict[str, float] = {}
@@ -685,7 +697,7 @@ def get_capacity_forecast(db: Session, horizon_days: int = 7, hospital_id: Optio
 
     for d in range(horizon_days):
         cur = today + timedelta(days=d)
-        groups, _ = _load_groups(db, cur, hospital_id)
+        groups, _ = _load_groups(db, cur, hospital_id, department_id=department_id)
         probs, rev_risk, overbooks = [], 0.0, 0
         for g in groups:
             p, _unscored = _group_probs(g, base_rate)
@@ -706,9 +718,10 @@ def get_capacity_forecast(db: Session, horizon_days: int = 7, hospital_id: Optio
                 overbooks += ev["rec"]["recommended_overbook"] if ev["rec"]["free_seats"] == 0 else 0
         exp, _, lo, hi = calculate_poisson_binomial_stats(probs, confidence_level=0.80)
         days_out.append(schemas.ForecastDayOut(
-            date=cur, total_projected_booked=len(probs), expected_no_shows=exp, interval_low=lo, interval_high=hi,
+            date=cur, weekday=cur.strftime("%A"), total_projected_booked=len(probs), expected_no_shows=exp, interval_low=lo, interval_high=hi,
             bufferable_overbooks=overbooks, revenue_at_risk_lkr=round(rev_risk, 2),
             recoverable_revenue_lkr=0.0,
+            heat_intensity=round(min(1.0, (exp / len(probs)) / 0.4), 2) if probs else 0.0,
         ))
         all_probs.extend(probs)
         tot_booked += len(probs)
@@ -736,7 +749,7 @@ def get_capacity_forecast(db: Session, horizon_days: int = 7, hospital_id: Optio
          "revenue_at_risk_lkr": round(dept_rev.get(name, 0.0), 2)}
         for name, v in sorted(dept_acc.items(), key=lambda kv: -kv[1])
     ]
-    return schemas.ForecastResponse(horizon_days=horizon_days, summary=summary, days=days_out, departments=departments)
+    return schemas.ForecastResponse(horizon_days=horizon_days, department=department, summary=summary, days=days_out, departments=departments)
 
 
 def get_capacity_accuracy(db: Session, hospital_id=None, days: int = 30, department: str | None = None) -> dict:

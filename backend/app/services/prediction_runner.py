@@ -12,6 +12,7 @@ import zoneinfo
 from datetime import timedelta, date, datetime, timezone
 from typing import Optional
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import models
@@ -153,8 +154,8 @@ def run_predictions(
             )
 
         if not re_score:
-            scored_subquery = db.query(models.Prediction.appointment_id).subquery()
-            q = q.filter(models.Appointment.id.not_in(scored_subquery))
+            scored_select = select(models.Prediction.appointment_id)
+            q = q.filter(models.Appointment.id.not_in(scored_select))
 
         if department_wise:
             q = q.outerjoin(models.Doctor, models.Appointment.doctor_id == models.Doctor.id).outerjoin(
@@ -178,40 +179,41 @@ def run_predictions(
 
         for appt in appointments:
             try:
-                pred_res = scoring.score_appointment(
-                    db=db,
-                    appointment=appt,
-                    stage="day_of",
-                    run_id=run.id,
-                    heavy_rain=heavy_rain,
-                    persist=True,
-                )
-                score = pred_res["risk_score"]
-                cat = pred_res["risk_category"].lower()
-                expected_sum += score
+                with db.begin_nested():
+                    pred_res = scoring.score_appointment(
+                        db=db,
+                        appointment=appt,
+                        stage="day_of",
+                        run_id=run.id,
+                        heavy_rain=heavy_rain,
+                        persist=True,
+                    )
+                    score = pred_res["risk_score"]
+                    cat = pred_res["risk_category"].lower()
+                    expected_sum += score
 
-                if cat == "high":
-                    high += 1
-                elif cat == "medium":
-                    medium += 1
-                else:
-                    low += 1
+                    if cat == "high":
+                        high += 1
+                    elif cat == "medium":
+                        medium += 1
+                    else:
+                        low += 1
 
-                # Track department-wise counts
-                dept_name = "General"
-                if appt.doctor and appt.doctor.department:
-                    dept_name = appt.doctor.department.name
-                elif appt.department:
-                    dept_name = appt.department
-                dept_breakdown[dept_name] = dept_breakdown.get(dept_name, 0) + 1
+                    # Track department-wise counts
+                    dept_name = "General"
+                    if appt.doctor and appt.doctor.department:
+                        dept_name = appt.doctor.department.name
+                    elif appt.department:
+                        dept_name = appt.department
+                    dept_breakdown[dept_name] = dept_breakdown.get(dept_name, 0) + 1
 
                 scored += 1
             except Exception as e:
                 logger.error("Failed scoring appointment %s: %s", appt.id, e)
                 failed += 1
 
-            # Progress update every 5 items
-            if (scored + failed) % 5 == 0 or (scored + failed) == total_count:
+            # Progress update: immediately on small batches, or every 3 items, or on completion
+            if total_count <= 10 or (scored + failed) % 3 == 0 or (scored + failed) == total_count:
                 run.scored = scored
                 run.failed = failed
                 run.high = high
@@ -234,15 +236,30 @@ def run_predictions(
         return run
 
     except Exception as err:
-        logger.exception("Batch prediction run %s failed: %s", run.id, err)
-        db.rollback()
-        run.status = "failed"
-        run.stage = "failed"
-        run.error = f"Run failed ({type(err).__name__}); see the server log"
-        run.finished_at = datetime.now(timezone.utc)
-        db.commit()
-        db.refresh(run)
-        return run
+        active_run_id = getattr(run, "id", run_id)
+        logger.exception("Batch prediction run %s failed: %s", active_run_id, err)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        if active_run_id:
+            try:
+                run_obj = db.get(models.PredictionRun, active_run_id)
+                if run_obj:
+                    run_obj.status = "failed"
+                    run_obj.stage = "failed"
+                    run_obj.error = f"Run failed ({type(err).__name__}): {err}"
+                    run_obj.finished_at = datetime.now(timezone.utc)
+                    db.commit()
+                    db.refresh(run_obj)
+                    return run_obj
+            except Exception as e:
+                logger.error("Failed to mark run %s as failed: %s", active_run_id, e)
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+        raise
 
 
 def reap_stale_runs(db: Session, older_than_minutes: int = 30) -> int:

@@ -626,11 +626,13 @@ class AgentSimulateResponse(BaseModel):
 class OutreachDraftRequest(BaseModel):
     appointment_id: uuid.UUID
     language: str = "en"
+    occasion: str = "reminder"
 
 
 class OutreachDraftResponse(BaseModel):
     appointment_id: uuid.UUID
     language: str
+    occasion: str = "reminder"
     message: str
     source: str
     reasons: list[str]
@@ -915,6 +917,8 @@ class SlotOfferActionRequest(BaseModel):
 
 class ForecastDayOut(BaseModel):
     date: date
+    weekday: str = ""
+    heat_intensity: float = 0.0
     total_projected_booked: int
     expected_no_shows: float
     interval_low: float
@@ -926,6 +930,7 @@ class ForecastDayOut(BaseModel):
 
 class ForecastResponse(BaseModel):
     horizon_days: int
+    department: str | None = None
     summary: dict
     days: list[ForecastDayOut]
     departments: list[dict]
@@ -1026,12 +1031,42 @@ class HISLastSyncRun(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class HISTestCheck(BaseModel):
+    name: str
+    status: str  # passed | failed | warning
+    latency_ms: float | None = None
+    detail: str
+
+
+class HISTestConnectionResponse(BaseModel):
+    ok: bool
+    latency_ms: float
+    mode: str
+    system_name: str
+    endpoint: str
+    protocol: str
+    status_code: int
+    version: str | None = None
+    tls_active: bool = True
+    auth_status: str
+    total_records: int = 0
+    detail: str
+    tested_at: datetime
+    checks: list[HISTestCheck] = []
+
+
 class HISStatusResponse(BaseModel):
     connector_type: str
     connector_healthy: bool
     last_sync_run: HISLastSyncRun | None = None
     total_his_records: int
     synced_appointments_today: int
+    system_name: str = "Asiri Central Hospital HIS (MedSys Gateway)"
+    endpoint: str | None = "internal://his-gateway.colombo-general.local:5432/his_core"
+    protocol: str | None = "PostgreSQL Wire / FHIR R4 Bridge"
+    latency_ms: float | None = 18.5
+    auth_status: str | None = "Authenticated (Mutual TLS)"
+    version: str | None = "MedSys HIS v4.8.2-LK"
 
 
 class HISSyncResponse(BaseModel):

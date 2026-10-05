@@ -153,3 +153,25 @@ def test_http_connector_retry_logic(monkeypatch):
     assert attempts == 3
     assert len(res) == 1
     assert res[0].external_ref == "HTTP-001"
+
+
+def test_his_test_connection_endpoint(client: TestClient, db_session: Session):
+    response = client.post("/his/test-connection")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["mode"] == "simulated"
+    assert "latency_ms" in data
+    assert data["status_code"] == 200
+    assert len(data["checks"]) >= 4
+    for check in data["checks"]:
+        assert check["status"] in ("passed", "warning")
+
+
+def test_his_test_connection_simulate_error(client: TestClient):
+    response = client.post("/his/test-connection?simulate_error=true")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is False
+    assert data["status_code"] == 503
+    assert any(check["status"] == "failed" for check in data["checks"])

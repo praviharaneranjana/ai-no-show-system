@@ -320,7 +320,7 @@
   to { transform: translateX(0); }
 }
 .shai-marquee {
-  animation: shai-marquee 40s linear infinite;
+  animation: shai-marquee 80s linear infinite;
   padding-right: 0.5rem;
 }
 @media (prefers-reduced-motion: reduce) {

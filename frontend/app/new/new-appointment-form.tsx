@@ -36,6 +36,7 @@ import { RiskPill } from "@/components/risk-pill";
 import { JourneyMap } from "@/components/journey-map";
 import { cn } from "@/lib/utils";
 import { estimateTravelMinutes, formatTravel } from "@/lib/geo";
+import { formatDriverFeature } from "@/lib/format";
 import { approveConversationAction, bookConversationAction } from "@/app/outreach/thread-actions";
 import type {
   SlotDict,
@@ -91,6 +92,10 @@ export function NewAppointmentForm({ prefill = null }: { prefill?: ConversationP
   const [currentStage, setCurrentStage] = useState(prefill ? 3 : 0);
   // The agreed doctor/session must survive the "first doctor / first session" defaults on first load
   const keepOffer = useRef(!!prefill);
+  // The approve action revalidates this page; once the conversation is booked the server stops sending
+  // `prefill`, so remember the original to keep the success view (and avoid falling back to the intake buttons).
+  const prefillRef = useRef(prefill);
+  if (prefill) prefillRef.current = prefill;
   const [approved, setApproved] = useState<{ appointmentId: string; token: number | null; message: string } | null>(null);
 
   // Reference data lists
@@ -350,6 +355,37 @@ export function NewAppointmentForm({ prefill = null }: { prefill?: ConversationP
     }
   }
 
+  // Geocode free-typed town name on blur if user does not use Combobox
+  async function handleCityBlur() {
+    const q = city.trim();
+    if (!q) return;
+    try {
+      const res = await fetch(`/api/locations?q=${encodeURIComponent(q)}&limit=1`);
+      if (res.ok) {
+        const matches: LocationItem[] = await res.json();
+        if (matches.length > 0) {
+          const loc = matches[0];
+          setSelectedLocationId(loc.id);
+          if (loc.district) setDistrict(loc.district);
+          setLatitude(loc.latitude);
+          setLongitude(loc.longitude);
+          const dRes = await fetch("/api/distance", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ latitude: loc.latitude, longitude: loc.longitude }),
+          });
+          if (dRes.ok) {
+            const dData = await dRes.json();
+            setDistanceKm(dData.distance_km);
+            setDistanceSource(dData.source);
+          }
+        }
+      }
+    } catch (e) {
+      console.error("City blur geocoding error", e);
+    }
+  }
+
   // Live Ephemeral Prediction Preview Trigger
   useEffect(() => {
     if (!fullName || !dob || !selectedDoctorId) return;
@@ -362,24 +398,22 @@ export function NewAppointmentForm({ prefill = null }: { prefill?: ConversationP
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             patient_id: selectedPatientId || undefined,
-            patient: !selectedPatientId
-              ? {
-                  full_name: fullName,
-                  date_of_birth: dob,
-                  gender,
-                  phone,
-                  email: email || undefined,
-                  city,
-                  district,
-                  location_id: selectedLocationId || undefined,
-                  distance_km: distanceKm,
-                  distance_source: distanceSource,
-                  preferred_language: preferredLanguage,
-                  nic: nic || undefined,
-                  hypertension: hasHypertension,
-                  diabetes: hasDiabetes,
-                }
-              : undefined,
+            patient: {
+              full_name: fullName,
+              date_of_birth: dob,
+              gender,
+              phone,
+              email: email || undefined,
+              city,
+              district,
+              location_id: selectedLocationId || undefined,
+              distance_km: distanceKm,
+              distance_source: distanceSource,
+              preferred_language: preferredLanguage,
+              nic: nic || undefined,
+              hypertension: hasHypertension,
+              diabetes: hasDiabetes,
+            },
             doctor_id: selectedDoctorId,
             appointment_day: appointmentDay,
             booking_channel: bookingChannel,
@@ -468,7 +502,7 @@ export function NewAppointmentForm({ prefill = null }: { prefill?: ConversationP
       setConfirmedBooking(result);
 
       if (redirectAfter) {
-        router.push(`/predictions?focus_appointment_id=${result.appointment.id}`);
+        router.push(`/appointments/${result.appointment.id}`);
       }
     } catch (e: unknown) {
       setSubmissionError((e instanceof Error && e.message) || "An unexpected error occurred during intake");
@@ -505,6 +539,8 @@ export function NewAppointmentForm({ prefill = null }: { prefill?: ConversationP
       token: conv.appointment?.token ?? null,
       message: "booked" in res.data ? res.data.message : "Booked and the patient has been notified.",
     });
+    // Back to the patient's thread, where the rescheduled confirmation now shows.
+    router.push(`/outreach?patient=${prefill.patient.id}`);
   }
 
   // Reset Form for another booking
@@ -519,7 +555,8 @@ export function NewAppointmentForm({ prefill = null }: { prefill?: ConversationP
     setPreview(null);
   }
 
-  if (approved && prefill) {
+  const doneFill = prefillRef.current;
+  if (approved && doneFill) {
     return (
       <Card className="border-emerald-500/40 bg-card shadow-xl ring-2 ring-emerald-500/20 max-w-2xl mx-auto animate-in fade-in-0 duration-300">
         <CardContent className="p-8 flex flex-col gap-5">
@@ -546,7 +583,7 @@ export function NewAppointmentForm({ prefill = null }: { prefill?: ConversationP
             <Button className="text-xs font-semibold" onClick={() => router.push(`/appointments/${approved.appointmentId}`)}>
               Open appointment
             </Button>
-            <Button variant="outline" className="text-xs" onClick={() => router.push(`/outreach?patient=${prefill.patient.id}`)}>
+            <Button variant="outline" className="text-xs" onClick={() => router.push(`/outreach?patient=${doneFill.patient.id}`)}>
               Back to outreach hub
             </Button>
           </div>
@@ -634,11 +671,11 @@ export function NewAppointmentForm({ prefill = null }: { prefill?: ConversationP
             </Button>
 
             <Button
-              onClick={() => router.push(`/predictions?focus_appointment_id=${appointment.id}`)}
+              onClick={() => router.push(`/appointments/${appointment.id}`)}
               className="w-full sm:w-1/2 gap-2 text-xs bg-primary text-primary-foreground font-semibold"
             >
               <Sparkles className="size-4" />
-              <span>Triage in Prediction Hub</span>
+              <span>Open in Appointments</span>
             </Button>
           </div>
 
@@ -888,6 +925,7 @@ export function NewAppointmentForm({ prefill = null }: { prefill?: ConversationP
                   <Input
                     value={city}
                     onChange={(e) => setCity(e.target.value)}
+                    onBlur={handleCityBlur}
                     className="h-9 text-xs"
                   />
                 </div>
@@ -1170,49 +1208,50 @@ export function NewAppointmentForm({ prefill = null }: { prefill?: ConversationP
                 </div>
               )}
 
-              {/* DUAL ACTION BUTTONS (As requested by user) */}
-              <div className="pt-4 border-t border-border/60 flex flex-col sm:flex-row items-center gap-3">
+              {/* Action Buttons */}
+              <div className="pt-4 border-t border-border/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 flex-wrap">
                 <Button
                   variant="outline"
                   onClick={() => setCurrentStage(2)}
-                  className="w-full sm:w-auto text-xs gap-1.5"
+                  className="w-full sm:w-auto text-xs gap-1.5 shrink-0"
                 >
                   <ArrowLeft className="size-3.5" />
                   <span>Back to Clinical</span>
                 </Button>
 
-                <div className="flex-1 w-full flex flex-col sm:flex-row items-center justify-end gap-3">
+                <div className="w-full sm:w-auto flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2.5 flex-wrap">
                   {prefill ? (
                     <Button
                       onClick={submitApproval}
                       disabled={isSubmitting || !selectedSessionId}
-                      className="w-full sm:w-auto text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 h-10 px-5 gap-2 shadow-sm"
+                      className="w-full sm:w-auto text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 h-10 px-4 gap-2 shadow-sm"
                     >
                       <CheckCircle2 className="size-3.5" />
                       <span>{isSubmitting ? "Approving..." : "Approve & confirm booking"}</span>
                     </Button>
                   ) : (
-                  <>
-                  {/* Button 1: Confirm Booking only */}
-                  <Button
-                    onClick={() => submitIntake(false)}
-                    disabled={isSubmitting}
-                    variant="secondary"
-                    className="w-full sm:w-auto text-xs font-semibold h-10 px-5"
-                  >
-                    <span>{isSubmitting ? "Confirming..." : "Confirm Booking"}</span>
-                  </Button>
+                    <>
+                      {/* Button 1: Confirm Booking only */}
+                      <Button
+                        onClick={() => submitIntake(false)}
+                        disabled={isSubmitting}
+                        variant="secondary"
+                        className="w-full sm:w-auto text-xs font-semibold h-10 px-4 whitespace-nowrap"
+                      >
+                        <span>{isSubmitting ? "Confirming..." : "Confirm Booking"}</span>
+                      </Button>
 
-                  {/* Button 2: Confirm & Triage in Hub */}
-                  <Button
-                    onClick={() => submitIntake(true)}
-                    disabled={isSubmitting}
-                    className="w-full sm:w-auto text-xs font-semibold bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-5 gap-2 shadow-sm"
-                  >
-                    <Sparkles className="size-3.5" />
-                    <span>Confirm & Triage in Hub</span>
-                  </Button>
-                  </>
+                      {/* Button 2: Confirm & Open */}
+                      <Button
+                        onClick={() => submitIntake(true)}
+                        disabled={isSubmitting}
+                        title="Confirm booking and open in Appointments"
+                        className="w-full sm:w-auto text-xs font-semibold bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 gap-2 shadow-sm whitespace-nowrap"
+                      >
+                        <Sparkles className="size-3.5 shrink-0" />
+                        <span>{isSubmitting ? "Opening..." : "Confirm & Open"}</span>
+                      </Button>
+                    </>
                   )}
                 </div>
               </div>
@@ -1256,21 +1295,24 @@ export function NewAppointmentForm({ prefill = null }: { prefill?: ConversationP
                   </span>
                   {preview.explanation && preview.explanation.length > 0 ? (
                     <div className="flex flex-col gap-1.5">
-                      {preview.explanation.slice(0, 3).map((f, idx) => (
-                        <div key={idx} className="flex items-center justify-between text-xs">
-                          <span className="text-muted-foreground truncate max-w-[160px]">
-                            {f.feature_label || f.feature}
-                          </span>
-                          <span
-                            className={`font-mono text-[11px] font-semibold ${
-                              (f.contribution || 0) > 0 ? "text-rose-400" : "text-emerald-400"
-                            }`}
-                          >
-                            {(f.contribution || 0) > 0 ? "+" : ""}
-                            {((f.contribution || 0) * 100).toFixed(1)}%
-                          </span>
-                        </div>
-                      ))}
+                      {preview.explanation.slice(0, 3).map((f, idx) => {
+                        const label = formatDriverFeature(f.feature, f.feature_label);
+                        return (
+                          <div key={idx} className="flex items-center justify-between text-xs gap-2">
+                            <span className="text-muted-foreground truncate font-medium" title={label}>
+                              {label}
+                            </span>
+                            <span
+                              className={`font-mono text-[11px] font-semibold shrink-0 ${
+                                (f.contribution || 0) > 0 ? "text-rose-400" : "text-emerald-400"
+                              }`}
+                            >
+                              {(f.contribution || 0) > 0 ? "+" : ""}
+                              {((f.contribution || 0) * 100).toFixed(1)}%
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
                   ) : (
                     <span className="text-xs text-muted-foreground italic">None significant</span>

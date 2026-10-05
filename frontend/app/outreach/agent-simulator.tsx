@@ -18,6 +18,17 @@ const LANGUAGE_CONFIG: Record<InterventionLanguage, { label: string; badge: stri
   ta: { label: "தமிழ் (Tamil)", badge: "TA" },
 };
 
+const DRAFT_OCCASIONS: { key: string; label: string; hint: string }[] = [
+  { key: "reminder", label: "Appointment reminder", hint: "Confirm / reschedule, tailored to this patient's risk drivers" },
+  { key: "reschedule", label: "Hospital needs to reschedule", hint: "Doctor unavailable; ask the patient to pick a new time" },
+  { key: "missed", label: "Missed appointment follow-up", hint: "Warm, non-judgemental rebooking message" },
+  { key: "video", label: "Offer video consultation", hint: "Only for specialties cleared for telehealth" },
+  { key: "earlier_slot", label: "Earlier slot available", hint: "Offer to move the patient to an earlier time" },
+  { key: "prep", label: "Preparation instructions", hint: "Remind them to follow the instructions given at booking" },
+  { key: "bring_documents", label: "Bring ID and reports", hint: "Ask them to bring ID, reports and prescriptions" },
+  { key: "thank_you", label: "Thank you after visit", hint: "Post-visit message wishing them well" },
+];
+
 const QUICK_MESSAGES: Record<InterventionLanguage, { label: string; text: string }[]> = {
   en: [
     { label: "Can't make it", text: "I can't come tomorrow, can we change to next week?" },
@@ -63,6 +74,7 @@ export function AgentSimulator({
   );
   const [extraOptions, setExtraOptions] = useState<AppointmentOption[]>([]);
   const [language, setLanguage] = useState<InterventionLanguage>("en");
+  const [occasion, setOccasion] = useState("reminder");
   const [message, setMessage] = useState("");
   const [lastPatientMessage, setLastPatientMessage] = useState<string | null>(null);
   const [result, setResult] = useState<AgentSimulateResult | null>(null);
@@ -88,7 +100,7 @@ export function AgentSimulator({
     setCopied(false);
     startTransition(async () => {
       try {
-        const res = await draftOutreachAction(appointmentId, language);
+        const res = await draftOutreachAction(appointmentId, language, occasion);
         setDraft(res);
         setDraftText(res.message);
       } catch (err) {
@@ -183,13 +195,38 @@ export function AgentSimulator({
           <div className="flex flex-col">
             <span className="text-xs font-semibold text-foreground">AI reminder draft</span>
             <span className="text-[11px] text-muted-foreground">
-              Tailored to this patient&apos;s risk drivers. Review and edit before sending — nothing is sent from here.
+              Pick an occasion, then draft. Review and edit before sending — nothing is sent from here.
             </span>
           </div>
           <Button type="button" size="sm" onClick={generateDraft} disabled={isPending || !appointmentId} className="gap-1.5">
             {isPending ? <Loader2 className="size-3.5 animate-spin" /> : <WandSparkles className="size-3.5" />}
             Draft with AI
           </Button>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[11px] font-medium text-muted-foreground">Occasion template:</span>
+          <div className="flex flex-wrap gap-1.5">
+            {DRAFT_OCCASIONS.map((o) => (
+              <button
+                key={o.key}
+                type="button"
+                title={o.hint}
+                disabled={isPending}
+                onClick={() => setOccasion(o.key)}
+                className={`rounded-full border px-3 py-1 text-xs font-medium transition-all disabled:opacity-50 ${
+                  occasion === o.key
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border/80 bg-card text-foreground hover:border-primary/50 hover:bg-muted/40"
+                }`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+          <span className="text-[11px] text-muted-foreground">
+            {DRAFT_OCCASIONS.find((o) => o.key === occasion)?.hint}
+          </span>
         </div>
 
         {draft && (

@@ -515,7 +515,7 @@ class PredictionLog(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     appointment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("appointments.id", ondelete="CASCADE"), nullable=False)
-    stage: Mapped[str] = mapped_column(Text, nullable=False)  # booking, import, rescore
+    stage: Mapped[str] = mapped_column(Text, nullable=False)  # booking, import, rescore, day_of, preview
     features: Mapped[dict] = mapped_column(JSONB, nullable=False)
     risk_score: Mapped[float] = mapped_column(Numeric(5, 4), nullable=False)
     risk_category: Mapped[str] = mapped_column(Text, nullable=False)
