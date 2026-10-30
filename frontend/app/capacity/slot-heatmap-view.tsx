@@ -1,0 +1,359 @@
+"use client";
+
+import React, { useState } from "react";
+import {
+  Calendar,
+  Clock,
+  User,
+  AlertTriangle,
+  TrendingUp,
+  X,
+  Info,
+  CheckCircle2,
+  ChevronRight,
+  ShieldAlert,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import type { CapacitySlotsResponse, SlotDoctorRow, SlotDetail } from "@/lib/types";
+
+interface SlotHeatmapViewProps {
+  initialSlots: CapacitySlotsResponse | null;
+  onRefresh?: (date?: string, doctorId?: string) => void;
+}
+
+const rowKey = (d: { clinic_session_id?: string | null; doctor_id?: string | null; doctor_name: string }) =>
+  d.clinic_session_id ?? d.doctor_id ?? d.doctor_name;
+
+export function SlotHeatmapView({ initialSlots }: SlotHeatmapViewProps) {
+  const [selectedDoctorId, setSelectedDoctorId] = useState<string>("all");
+  const [activeSlot, setActiveSlot] = useState<{
+    doctor: SlotDoctorRow;
+    slot: SlotDetail;
+  } | null>(null);
+
+  if (!initialSlots || !initialSlots.doctors || initialSlots.doctors.length === 0) {
+    return (
+      <div className="rounded-[24px] bg-card p-12 text-center border border-border/60 flex flex-col items-center justify-center gap-3">
+        <Clock className="size-10 text-muted-foreground/40" />
+        <div className="flex flex-col gap-1">
+          <h3 className="text-base font-semibold text-foreground">No Slot Data Available</h3>
+          <p className="text-xs text-muted-foreground max-w-sm">
+            No consultant clinic sessions or scheduled time slots found for {initialSlots?.date ?? "today"}.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const defaultTimeSlots = [
+    "08:00", "08:15", "08:30", "08:45", "09:00", "09:15", "09:30", "09:45",
+    "10:00", "10:15", "10:30", "10:45", "11:00", "11:15", "11:30", "11:45",
+    "16:00", "16:15", "16:30", "16:45", "17:00", "17:15", "17:30", "17:45",
+  ];
+  const time_slots = initialSlots.time_slots && initialSlots.time_slots.length > 0
+    ? initialSlots.time_slots
+    : defaultTimeSlots;
+  const doctors = initialSlots.doctors;
+
+  const filteredDoctors =
+    selectedDoctorId === "all"
+      ? doctors
+      : doctors.filter((d) => rowKey(d) === selectedDoctorId);
+
+  return (
+    <div className="flex flex-col gap-6 animate-in fade-in duration-300">
+      {/* Header & Filter Controls */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-[20px] bg-card border border-border/60">
+        <div className="flex items-center gap-3">
+          <div className="size-9 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+            <Clock className="size-5" />
+          </div>
+          <div>
+            <h2 className="text-sm font-bold text-foreground">15-Minute Slot Overbooking Matrix</h2>
+            <p className="text-xs text-muted-foreground">
+              Slot-level risk accumulation based on individual patient probability & schedule position
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Doctor filter dropdown */}
+          <select
+            value={selectedDoctorId}
+            onChange={(e) => setSelectedDoctorId(e.target.value)}
+            className="h-9 px-3 text-xs rounded-xl bg-background border border-border text-foreground font-medium focus:outline-hidden focus:ring-2 focus:ring-primary/20"
+          >
+            <option value="all">All Consultants ({doctors.length})</option>
+            {doctors.map((d) => (
+              <option key={rowKey(d)} value={rowKey(d)}>
+                {d.doctor_name}{d.session_label ? ` · ${d.session_label}` : ""} ({d.specialty})
+              </option>
+            ))}
+          </select>
+
+          {/* Legend */}
+          <div className="flex items-center gap-2 text-[11px] text-muted-foreground bg-muted/30 px-3 py-1.5 rounded-xl border border-border/40">
+            <span className="font-semibold text-foreground">Expected no-shows in the slot:</span>
+            <span className="inline-flex items-center gap-1">
+              <span className="size-2 rounded-full bg-emerald-500" /> &lt; 0.5
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="size-2 rounded-full bg-amber-500" /> 0.5 – 1
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="size-2 rounded-full bg-primary" /> ≥ 1
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Heatmap Grid Matrix */}
+      <div className="rounded-[24px] bg-card p-5 shadow-xs border border-border/60 overflow-hidden">
+        <div className="overflow-x-auto pb-2">
+          <table className="w-full border-collapse min-w-[900px]">
+            <thead>
+              <tr className="border-b border-border/50 text-[11px] text-muted-foreground font-semibold">
+                <th className="py-3 px-4 text-left w-56 sticky left-0 bg-card z-10 shadow-xs">
+                  Consultant & Session
+                </th>
+                {time_slots.map((t: string) => (
+                  <th key={t} className="py-3 px-2 text-center font-mono text-[11px]">
+                    {t}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/30">
+              {filteredDoctors.map((doc) => (
+                <tr key={rowKey(doc)} className="hover:bg-muted/10 transition-colors">
+                  {/* Doctor Info Sticky Column */}
+                  <td className="py-3 px-4 sticky left-0 bg-card z-10 shadow-xs">
+                    <div className="flex flex-col">
+                      <span className="text-xs font-bold text-foreground truncate max-w-[200px]">
+                        {doc.doctor_name}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground truncate">
+                        {doc.specialty} · Room {doc.room_number.replace(/^Room\s+/i, "")}
+                      </span>
+                    </div>
+                  </td>
+
+                  {/* Time Slots */}
+                  {time_slots.map((t: string) => {
+                    let slot: SlotDetail;
+                    if (Array.isArray(doc.slots)) {
+                      slot = doc.slots.find((s) => (s.slot_time || s.time) === t) ?? {
+                        time: t,
+                        slot_time: t,
+                        booked: 0,
+                        booked_count: 0,
+                        expected_no_shows: 0,
+                        recommended_overbook: 0,
+                        heat_level: "empty",
+                        patients: [],
+                      };
+                    } else {
+                      slot = (doc.slots as Record<string, SlotDetail>)[t] ?? {
+                        time: t,
+                        slot_time: t,
+                        booked: 0,
+                        booked_count: 0,
+                        expected_no_shows: 0,
+                        recommended_overbook: 0,
+                        heat_level: "empty",
+                        patients: [],
+                      };
+                    }
+
+                    const bookedCount = slot.booked ?? slot.booked_count ?? 0;
+                    const heat =
+                      slot.heat_level ??
+                      (slot.heat_color === "green"
+                        ? "low"
+                        : slot.heat_color === "amber"
+                        ? "medium"
+                        : slot.heat_color === "red"
+                        ? "high"
+                        : "empty");
+
+                    let heatStyle = "bg-muted/10 text-muted-foreground/60 border border-transparent";
+                    if (heat === "low") {
+                      heatStyle = "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20 hover:border-emerald-500/40";
+                    } else if (heat === "medium") {
+                      heatStyle = "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 hover:border-amber-500/50";
+                    } else if (heat === "high") {
+                      heatStyle = "bg-primary/20 text-primary border border-primary/40 hover:border-primary/60";
+                    }
+
+                    return (
+                      <td key={t} className="p-1.5 text-center">
+                        <button
+                          type="button"
+                          onClick={() => setActiveSlot({ doctor: doc, slot })}
+                          className={cn(
+                            "w-full h-14 rounded-xl flex flex-col items-center justify-center p-1 cursor-pointer transition-all hover:scale-105 shadow-2xs",
+                            heatStyle
+                          )}
+                        >
+                          <span className="text-xs font-bold tabular-nums">
+                            {bookedCount}
+                          </span>
+                          {slot.recommended_overbook > 0 ? (
+                            <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded-full bg-background/80 shadow-2xs mt-0.5">
+                              +{slot.recommended_overbook} ovr
+                            </span>
+                          ) : (
+                            <span className="text-[9px] opacity-60">
+                              {slot.expected_no_shows > 0 ? `~${slot.expected_no_shows.toFixed(1)} ns` : "—"}
+                            </span>
+                          )}
+                        </button>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Slide-over Drawer for Slot Details */}
+      {activeSlot && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-card border-l border-border h-full flex flex-col shadow-2xl animate-in slide-in-from-right duration-300">
+            {/* Drawer Header */}
+            <div className="p-5 border-b border-border/60 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+                  <Clock className="size-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-foreground">
+                    Slot {activeSlot.slot.time ?? activeSlot.slot.slot_time} Details
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    {activeSlot.doctor.doctor_name} · Room {activeSlot.doctor.room_number.replace(/^Room\s+/i, "")}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveSlot(null)}
+                className="size-8 rounded-full flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            {/* Drawer Content */}
+            <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-5">
+              {/* Slot Metrics Card */}
+              <div className="grid grid-cols-3 gap-2.5">
+                <div className="flex flex-col rounded-xl bg-muted/30 p-3 text-center border border-border/40">
+                  <span className="text-[10px] text-muted-foreground font-medium">Booked</span>
+                  <span className="text-lg font-bold text-foreground tabular-nums">
+                    {activeSlot.slot.booked ?? activeSlot.slot.booked_count ?? 0}
+                  </span>
+                </div>
+                <div className="flex flex-col rounded-xl bg-rose-500/10 p-3 text-center border border-rose-500/20">
+                  <span className="text-[10px] text-rose-600 dark:text-rose-400 font-medium">Exp. No-Shows</span>
+                  <span className="text-lg font-bold text-rose-600 dark:text-rose-400 tabular-nums">
+                    {activeSlot.slot.expected_no_shows.toFixed(2)}
+                  </span>
+                </div>
+                <div className="flex flex-col rounded-xl bg-primary/15 p-3 text-center border border-primary/30">
+                  <span className="text-[10px] text-primary font-medium">Session overbook</span>
+                  <span className="text-lg font-bold text-primary tabular-nums">
+                    +{activeSlot.doctor.total_recommended_overbook}
+                  </span>
+                </div>
+              </div>
+
+              {/* Mathematical Justification */}
+              <div className="rounded-2xl bg-muted/20 border border-border/40 p-4 flex flex-col gap-2">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-foreground">
+                  <Info className="size-3.5 text-primary" />
+                  <span>How to read this slot</span>
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Slot risk is the sum of the booked patients&apos; calibrated no-show probabilities. Overbooking is decided per
+                  session (see Overview), not per slot: this session&apos;s exact optimum is{" "}
+                  <strong className="text-foreground">+{activeSlot.doctor.total_recommended_overbook} patient(s)</strong> beyond its capacity.
+                </p>
+              </div>
+
+              {/* Booked Patients List */}
+              <div className="flex flex-col gap-3">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                  Booked Patients ({activeSlot.slot.patients?.length ?? 0})
+                </h4>
+
+                {!activeSlot.slot.patients || activeSlot.slot.patients.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-border/60 p-6 text-center text-xs text-muted-foreground">
+                    No patients currently booked in this time slot.
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {activeSlot.slot.patients.map((p) => {
+                      const prob = p.risk_probability ?? ((p.risk_score ?? 15) > 1 ? (p.risk_score ?? 15) / 100 : (p.risk_score ?? 0.15));
+                      const probPct = Math.round(prob * 100);
+                      const isHigh = p.risk_category === "High" || probPct >= 35;
+                      const isMed = p.risk_category === "Medium" || (probPct >= 15 && probPct < 35);
+
+                      return (
+                        <div
+                          key={p.appointment_id}
+                          className="flex items-center justify-between p-3 rounded-xl bg-card border border-border/60 shadow-2xs"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <div className="size-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs">
+                              {p.patient_name.charAt(0)}
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-xs font-bold text-foreground">{p.patient_name}</span>
+                              <span className="text-[10px] text-muted-foreground">
+                                Appt #{p.appointment_id.slice(-6)}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={cn(
+                                "px-2 py-0.5 rounded-full text-[10px] font-bold",
+                                isHigh
+                                  ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20"
+                                  : isMed
+                                  ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                                  : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                              )}
+                            >
+                              {probPct}% risk ({p.risk_category})
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Drawer Footer */}
+            <div className="p-4 border-t border-border/60 flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">15-minute slot window</span>
+              <button
+                type="button"
+                onClick={() => setActiveSlot(null)}
+                className="px-4 py-2 rounded-xl bg-primary text-white text-xs font-semibold hover:bg-primary/90 transition-colors"
+              >
+                Close Drawer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -7,9 +7,12 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
-  --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
+  --color-surface: var(--surface);
+  --color-shell: var(--shell);
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", sans-serif;
+  --font-mono: "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+  --font-heading: -apple-system, BlinkMacSystemFont, "SF Pro Display", -apple-system, sans-serif;
+  --font-rounded: "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -29,92 +32,148 @@
   --color-destructive: var(--destructive);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
+  --color-accent-cyan: var(--accent-cyan);
   --color-muted-foreground: var(--muted-foreground);
   --color-muted: var(--muted);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
   --color-primary: var(--primary);
+  --color-primary-end: var(--primary-end);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
+  --color-risk-low: var(--risk-low);
+  --color-risk-low-bg: var(--risk-low-bg);
+  --color-risk-medium: var(--risk-medium);
+  --color-risk-medium-bg: var(--risk-medium-bg);
+  --color-risk-high: var(--risk-high);
+  --color-risk-high-bg: var(--risk-high-bg);
+  --radius-sm: calc(var(--radius) * 0.5);
+  --radius-md: calc(var(--radius) * 0.7);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+  --radius-xl: calc(var(--radius) * 1.2);
+  --radius-2xl: calc(var(--radius) * 1.4);
+  --radius-3xl: calc(var(--radius) * 1.8);
+  --radius-4xl: calc(var(--radius) * 2.2);
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  /* Soft Lavender Canvas & Bento Palette (Dropify & Peymen) */
+  --background: #EAE8FB;
+  --surface: #F7F7FA;
+  --shell: #FFFFFF;
+  --foreground: #171725;
+  
+  --card: #FFFFFF;
+  --card-foreground: #171725;
+  
+  --popover: #FFFFFF;
+  --popover-foreground: #171725;
+  
+  /* Modern Violet-Indigo Gradient Brand */
+  --primary: #8B7CF6;
+  --primary-end: #5B7CFA;
+  --primary-foreground: #FFFFFF;
+  
+  --secondary: #F3F3F7;
+  --secondary-foreground: #171725;
+  
+  --muted: #F3F3F7;
+  --muted-foreground: #8C8CA1;
+  
+  --accent: #EDE9FE;
+  --accent-foreground: #6C5CE7;
+  --accent-cyan: #00F0FF;
+  
+  --destructive: #E11D48;
+  --border: #F0F0F5;
+  --input: #EBEBF0;
+  --ring: #8B7CF6;
+  
+  /* Dedicated semantic risk colors (Sri Lankan clinical triage) */
+  --risk-low: #16A34A;
+  --risk-low-bg: #DCFCE7;
+  --risk-medium: #D97706;
+  --risk-medium-bg: #FEF3C7;
+  --risk-high: #E11D48;
+  --risk-high-bg: #FFE4E6;
+  
+  /* Charts */
+  --chart-1: #8B7CF6; /* Violet */
+  --chart-2: #16A34A; /* Low risk green */
+  --chart-3: #D97706; /* Med risk amber */
+  --chart-4: #E11D48; /* High risk red */
+  --chart-5: #5B7CFA; /* Indigo */
+  
+  --radius: 1.375rem; /* 22px bento radius */
+  
+  /* Sidebar */
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #171725;
+  --sidebar-primary: #8B7CF6;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #F5F5F9;
+  --sidebar-accent-foreground: #171725;
+  --sidebar-border: #F0F0F4;
+  --sidebar-ring: #8B7CF6;
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  /* Deep Navy/Charcoal Dark Bento Mode */
+  --background: #11111A;
+  --surface: #13131D;
+  --shell: #181824;
+  --foreground: #F5F5FA;
+  
+  --card: #1E1E2D;
+  --card-foreground: #F5F5FA;
+  
+  --popover: #1E1E2D;
+  --popover-foreground: #F5F5FA;
+  
+  --primary: #8B7CF6;
+  --primary-end: #5B7CFA;
+  --primary-foreground: #FFFFFF;
+  
+  --secondary: #222234;
+  --secondary-foreground: #F5F5FA;
+  
+  --muted: #222234;
+  --muted-foreground: #A0A0B8;
+  
+  --accent: #2A2644;
+  --accent-foreground: #C4B5FD;
+  --accent-cyan: #38BDF8;
+  
+  --destructive: #F43F5E;
+  --border: #2D2D42;
+  --input: #2D2D42;
+  --ring: #8B7CF6;
+  
+  /* Semantic risk colors in dark mode */
+  --risk-low: #86EFAC;
+  --risk-low-bg: rgba(22, 163, 74, 0.20);
+  --risk-medium: #FDE68A;
+  --risk-medium-bg: rgba(217, 119, 6, 0.20);
+  --risk-high: #FDA4AF;
+  --risk-high-bg: rgba(225, 29, 72, 0.20);
+  
+  --chart-1: #8B7CF6;
+  --chart-2: #86EFAC;
+  --chart-3: #FDE68A;
+  --chart-4: #FDA4AF;
+  --chart-5: #5B7CFA;
+  
+  --sidebar: #171722;
+  --sidebar-foreground: #F5F5FA;
+  --sidebar-primary: #8B7CF6;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #222234;
+  --sidebar-accent-foreground: #FFFFFF;
+  --sidebar-border: #272738;
+  --sidebar-ring: #8B7CF6;
 }
 
 @layer base {
@@ -122,9 +181,148 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
   html {
     @apply font-sans;
   }
+}
+
+.font-rounded {
+  font-family: var(--font-rounded), var(--font-sans);
+}
+
+.shai-shell-shadow {
+  box-shadow: 0 24px 64px -16px rgba(110, 100, 180, 0.16);
+}
+
+.dark .shai-shell-shadow {
+  box-shadow: 0 24px 64px -16px rgba(0, 0, 0, 0.6);
+}
+
+.bento-card-shadow {
+  box-shadow: 0 4px 20px -4px rgba(0, 0, 0, 0.04);
+}
+
+.dark .bento-card-shadow {
+  box-shadow: 0 4px 20px -4px rgba(0, 0, 0, 0.35);
+}
+@keyframes shai-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+@keyframes shai-spin {
+  to { transform: rotate(360deg); }
+}
+
+.shai-float {
+  animation: shai-float 7s ease-in-out infinite;
+}
+
+.shai-spin {
+  animation: shai-spin 90s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shai-float,
+  .shai-spin {
+    animation: none;
+  }
+}
+
+/* Floating pill animations for clinical AI consoles */
+@keyframes float-pill-1 {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(-7px) rotate(-1deg); }
+}
+@keyframes float-pill-2 {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(8px) rotate(1deg); }
+}
+@keyframes float-pill-3 {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(-6px) rotate(1.5deg); }
+}
+@keyframes float-pill-4 {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(7px) rotate(-1deg); }
+}
+
+.animate-float-1 { animation: float-pill-1 4.5s ease-in-out infinite; }
+.animate-float-2 { animation: float-pill-2 5.8s ease-in-out infinite; }
+.animate-float-3 { animation: float-pill-3 5.2s ease-in-out infinite; }
+.animate-float-4 { animation: float-pill-4 6.4s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-float-1,
+  .animate-float-2,
+  .animate-float-3,
+  .animate-float-4 {
+    animation: none;
+  }
+}
+
+/* ============================================================
+   SHAI Wordmark — Login Hero Animated Logo
+   CSS-only animation applied directly on the wordmark PNG:
+   1. shai-logo-pulse   – slow breathing glow via drop-shadow
+   2. shai-logo-shimmer – a diagonal shimmer pass across the logo
+   ============================================================ */
+
+@keyframes shai-logo-pulse {
+  0%, 100% {
+    filter: drop-shadow(0 0 8px rgba(139,124,246,0.5)) drop-shadow(0 0 24px rgba(91,124,250,0.25));
+    opacity: 1;
+  }
+  50% {
+    filter: drop-shadow(0 0 18px rgba(139,124,246,0.85)) drop-shadow(0 0 48px rgba(91,124,250,0.5));
+    opacity: 0.95;
+  }
+}
+
+.shai-wordmark-animate {
+  animation: shai-logo-pulse 3.5s ease-in-out infinite;
+  will-change: filter;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shai-wordmark-animate {
+    animation: none;
+    filter: drop-shadow(0 0 10px rgba(139,124,246,0.6));
+  }
+}
+
+/* Scale bounce on hover/focus for sidebar logo */
+.shai-logo-hover {
+  transition: transform 0.25s cubic-bezier(0.34,1.56,0.64,1), filter 0.25s ease;
+}
+.shai-logo-hover:hover {
+  transform: scale(1.04);
+  filter: drop-shadow(0 0 8px rgba(139,124,246,0.5));
+}
+
+/* Hide scrollbars everywhere; content remains scrollable */
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* Clinic-session strip: endless slow left-to-right loop (list is duplicated, so -50% -> 0 is seamless) */
+@keyframes shai-marquee {
+  from { transform: translateX(-50%); }
+  to { transform: translateX(0); }
+}
+.shai-marquee {
+  animation: shai-marquee 80s linear infinite;
+  padding-right: 0.5rem;
+}
+@media (prefers-reduced-motion: reduce) {
+  .shai-marquee { animation: none; }
 }

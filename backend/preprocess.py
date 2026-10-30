@@ -1,8 +1,10 @@
+import argparse
+
 import pandas as pd
 
-def preprocess_data():
-    print("Loading dataset...")
-    df = pd.read_csv("data/KaggleV2-May-2016.csv")
+def preprocess_data(input_path: str = "data/KaggleV2-May-2016.csv"):
+    print(f"Loading dataset from {input_path}...")
+    df = pd.read_csv(input_path)
     
     # Basic cleaning
     df = df.drop(['AppointmentID'], axis=1)
@@ -20,13 +22,13 @@ def preprocess_data():
     df['DayOfWeek'] = df['AppointmentDay'].dt.weekday
     df['IsWeekend'] = df['DayOfWeek'] >= 5
     df['Month'] = df['AppointmentDay'].dt.month
-    
+
     # Select important features for the model
     feature_cols = [
         'Age', 'Scholarship', 'Hipertension', 'Diabetes', 'Alcoholism',
         'Handcap', 'SMS_received', 'DaysAhead', 'DayOfWeek', 'IsWeekend', 'Month'
     ]
-    
+
     X = df[feature_cols]
     y = df['No-show']
     
@@ -40,4 +42,7 @@ def preprocess_data():
     print(f"Features saved: {X.shape[1]} columns")
 
 if __name__ == "__main__":
-    preprocess_data()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", default="data/KaggleV2-May-2016.csv", help="Path to the source no-show CSV")
+    args = parser.parse_args()
+    preprocess_data(args.input)

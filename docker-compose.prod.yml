@@ -1,0 +1,41 @@
+# Production overlay: HTTPS via Caddy (automatic Let's Encrypt certificates) and nothing else
+# exposed. Use together with the base file:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# Requires DOMAIN (DNS A record pointing at this server) and strong secrets in .env.
+# See deploy/DEPLOY.md.
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env (e.g. shai.example.com)}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - frontend
+
+  db:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a strong POSTGRES_PASSWORD in .env}
+
+  backend:
+    # The browser never talks to the API (the Next.js server does, over the internal network),
+    # so the API is not published at all.
+    ports: !reset []
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a strong POSTGRES_PASSWORD in .env}
+      CORS_ORIGINS: https://${DOMAIN}
+
+  frontend:
+    ports: !reset []
+    environment:
+      SESSION_COOKIE_SECURE: "true"
+
+volumes:
+  caddy_data:
+  caddy_config:

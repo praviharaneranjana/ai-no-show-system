@@ -1,2 +1,9 @@
 
 venv/
+__pycache__/
+*.pyc
+.env
+node_modules/
+.next/
+.DS_Store
+backend/models/shai_bundle/*.csv

@@ -1,0 +1,342 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080">
+  <defs>
+    <!-- Background Gradient: Deep Clinical Slate Dusk -->
+    <linearGradient id="skyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#050b14"/>
+      <stop offset="45%" stop-color="#0a192f"/>
+      <stop offset="75%" stop-color="#0c2340"/>
+      <stop offset="100%" stop-color="#061325"/>
+    </linearGradient>
+
+    <!-- Glowing wire gradients -->
+    <linearGradient id="wireCyan" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#06b6d4" stop-opacity="0.2"/>
+      <stop offset="50%" stop-color="#38bdf8" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#0ea5e9" stop-opacity="0.2"/>
+    </linearGradient>
+
+    <linearGradient id="wireTeal" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#14b8a6" stop-opacity="0.3"/>
+      <stop offset="50%" stop-color="#2dd4bf" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#06b6d4" stop-opacity="0.3"/>
+    </linearGradient>
+
+    <!-- Glow Filter -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="14" result="blur2"/>
+      <feMerge>
+        <feMergeNode in="blur2"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Hospital Building Gradients -->
+    <linearGradient id="bldgGlass1" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#0f172a" stop-opacity="0.98"/>
+    </linearGradient>
+    <linearGradient id="bldgGlass2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#334155" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#1e293b" stop-opacity="0.95"/>
+    </linearGradient>
+    <linearGradient id="bldgGlass3" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1e3a5f" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#0f1d32" stop-opacity="0.98"/>
+    </linearGradient>
+    <linearGradient id="centerCore" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0369a1" stop-opacity="0.7"/>
+      <stop offset="50%" stop-color="#075985" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#082f49" stop-opacity="0.95"/>
+    </linearGradient>
+
+    <!-- Radial AI Core Glow -->
+    <radialGradient id="aiPulse" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.8"/>
+      <stop offset="40%" stop-color="#0284c7" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#0284c7" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Canvas Background -->
+  <rect width="1920" height="1080" fill="url(#skyGrad)"/>
+
+  <!-- Perspective Grid on Floor / Campus Plaza -->
+  <g opacity="0.22" stroke="#0ea5e9" stroke-width="1">
+    <!-- Grid Perspective Lines converging to center-horizon -->
+    <line x1="960" y1="520" x2="-200" y2="1080" />
+    <line x1="960" y1="520" x2="100" y2="1080" />
+    <line x1="960" y1="520" x2="400" y2="1080" />
+    <line x1="960" y1="520" x2="700" y2="1080" />
+    <line x1="960" y1="520" x2="960" y2="1080" stroke-width="1.5" />
+    <line x1="960" y1="520" x2="1220" y2="1080" />
+    <line x1="960" y1="520" x2="1520" y2="1080" />
+    <line x1="960" y1="520" x2="1820" y2="1080" />
+    <line x1="960" y1="520" x2="2120" y2="1080" />
+
+    <!-- Transverse Grid rings -->
+    <line x1="840" y1="580" x2="1080" y2="580" />
+    <line x1="720" y1="650" x2="1200" y2="650" />
+    <line x1="580" y1="740" x2="1340" y2="740" />
+    <line x1="400" y1="850" x2="1520" y2="850" />
+    <line x1="160" y1="990" x2="1760" y2="990" />
+  </g>
+
+  <!-- Far Ambient City / Medical Campus Lights -->
+  <g opacity="0.4" fill="#38bdf8">
+    <circle cx="280" cy="510" r="1.5"/>
+    <circle cx="340" cy="490" r="1.5"/>
+    <circle cx="420" cy="530" r="1"/>
+    <circle cx="780" cy="480" r="1.5"/>
+    <circle cx="1140" cy="495" r="1.5"/>
+    <circle cx="1490" cy="515" r="2"/>
+    <circle cx="1620" cy="485" r="1.5"/>
+    <circle cx="1750" cy="530" r="1"/>
+  </g>
+
+  <!-- ============================================== -->
+  <!-- HOSPITAL BUILDINGS COMPLEX                     -->
+  <!-- ============================================== -->
+
+  <!-- Left Wing 1: Inpatient Care Tower (8 floors) -->
+  <g id="inpatient-tower">
+    <rect x="220" y="320" width="180" height="420" rx="6" fill="url(#bldgGlass1)" stroke="#38bdf8" stroke-width="1.5" stroke-opacity="0.3"/>
+    <!-- Facade architectural illumination & windows -->
+    <g opacity="0.65" fill="#38bdf8">
+      <rect x="235" y="345" width="22" height="14" rx="2" opacity="0.8"/>
+      <rect x="267" y="345" width="22" height="14" rx="2" opacity="0.5"/>
+      <rect x="299" y="345" width="22" height="14" rx="2" opacity="0.9"/>
+      <rect x="331" y="345" width="22" height="14" rx="2" opacity="0.4"/>
+      <rect x="363" y="345" width="22" height="14" rx="2" opacity="0.7"/>
+
+      <rect x="235" y="380" width="22" height="14" rx="2" opacity="0.4"/>
+      <rect x="267" y="380" width="22" height="14" rx="2" opacity="0.8"/>
+      <rect x="299" y="380" width="22" height="14" rx="2" opacity="0.6"/>
+      <rect x="331" y="380" width="22" height="14" rx="2" opacity="0.9"/>
+      <rect x="363" y="380" width="22" height="14" rx="2" opacity="0.5"/>
+
+      <rect x="235" y="415" width="22" height="14" rx="2" opacity="0.7"/>
+      <rect x="267" y="415" width="22" height="14" rx="2" opacity="0.9"/>
+      <rect x="299" y="415" width="22" height="14" rx="2" opacity="0.3"/>
+      <rect x="331" y="415" width="22" height="14" rx="2" opacity="0.7"/>
+      <rect x="363" y="415" width="22" height="14" rx="2" opacity="0.8"/>
+
+      <rect x="235" y="450" width="22" height="14" rx="2" opacity="0.9"/>
+      <rect x="267" y="450" width="22" height="14" rx="2" opacity="0.5"/>
+      <rect x="299" y="450" width="22" height="14" rx="2" opacity="0.8"/>
+      <rect x="331" y="450" width="22" height="14" rx="2" opacity="0.6"/>
+      <rect x="363" y="450" width="22" height="14" rx="2" opacity="0.4"/>
+      
+      <rect x="235" y="485" width="22" height="14" rx="2" opacity="0.6"/>
+      <rect x="267" y="485" width="22" height="14" rx="2" opacity="0.8"/>
+      <rect x="299" y="485" width="22" height="14" rx="2" opacity="0.7"/>
+      <rect x="331" y="485" width="22" height="14" rx="2" opacity="0.5"/>
+      <rect x="363" y="485" width="22" height="14" rx="2" opacity="0.9"/>
+    </g>
+    <!-- Medical Cross on roof -->
+    <g transform="translate(300, 290)" filter="url(#glow)">
+      <rect x="-3" y="-12" width="6" height="24" fill="#38bdf8" rx="2"/>
+      <rect x="-12" y="-3" width="24" height="6" fill="#38bdf8" rx="2"/>
+    </g>
+    <!-- Label -->
+    <text x="310" y="720" fill="#94a3b8" font-size="11" font-family="sans-serif" font-weight="600" text-anchor="middle" letter-spacing="2">INPATIENT WING A</text>
+  </g>
+
+  <!-- Left Wing 2: Emergency Department & Trauma Pavilion -->
+  <g id="emergency-pavilion">
+    <path d="M 440 440 L 640 440 L 670 760 L 410 760 Z" fill="url(#bldgGlass2)" stroke="#ef4444" stroke-width="1.5" stroke-opacity="0.4"/>
+    <!-- Emergency Red Beacon & Helipad -->
+    <ellipse cx="540" cy="440" rx="70" ry="18" fill="#1e293b" stroke="#ef4444" stroke-width="2" filter="url(#glow)"/>
+    <text x="540" y="445" fill="#f87171" font-size="16" font-family="sans-serif" font-weight="bold" text-anchor="middle">H</text>
+    
+    <!-- Red Accent line & label -->
+    <line x1="420" y1="560" x2="660" y2="560" stroke="#ef4444" stroke-width="2" stroke-opacity="0.7" filter="url(#glow)"/>
+    <text x="540" y="585" fill="#fca5a5" font-size="12" font-family="sans-serif" font-weight="bold" text-anchor="middle" letter-spacing="2">EMERGENCY &amp; TRAUMA</text>
+    <!-- Bay Entrance Lights -->
+    <rect x="470" y="680" width="140" height="50" rx="4" fill="#0f172a" stroke="#0ea5e9" stroke-width="1.5"/>
+    <line x1="490" y1="730" x2="590" y2="730" stroke="#38bdf8" stroke-width="3" filter="url(#glow)"/>
+  </g>
+
+  <!-- CENTER TOWER: SHAI Smart Operations & Diagnostic Hub -->
+  <g id="shai-central-core">
+    <!-- Huge background aura -->
+    <circle cx="960" cy="460" r="280" fill="url(#aiPulse)" opacity="0.6"/>
+    
+    <!-- Center Skyscraper Architecture -->
+    <polygon points="860,180 1060,180 1100,780 820,780" fill="url(#centerCore)" stroke="#0ea5e9" stroke-width="2" filter="url(#glow)"/>
+    
+    <!-- Glass curtain patterns -->
+    <g stroke="#38bdf8" stroke-width="1" stroke-opacity="0.35">
+      <line x1="890" y1="200" x2="860" y2="770"/>
+      <line x1="930" y1="200" x2="920" y2="770"/>
+      <line x1="960" y1="180" x2="960" y2="780" stroke-width="1.5" stroke-opacity="0.6"/>
+      <line x1="990" y1="200" x2="1000" y2="770"/>
+      <line x1="1030" y1="200" x2="1060" y2="770"/>
+
+      <line x1="865" y1="260" x2="1055" y2="260"/>
+      <line x1="855" y1="340" x2="1065" y2="340"/>
+      <line x1="845" y1="420" x2="1075" y2="420"/>
+      <line x1="835" y1="500" x2="1085" y2="500"/>
+      <line x1="825" y1="590" x2="1095" y2="590"/>
+      <line x1="820" y1="680" x2="1100" y2="680"/>
+    </g>
+
+    <!-- Glowing Core Spine (AI Nexus) -->
+    <rect x="955" y="220" width="10" height="420" rx="5" fill="#38bdf8" filter="url(#glow)"/>
+    
+    <!-- Pulse Ring nodes along the core -->
+    <circle cx="960" cy="240" r="8" fill="#ffffff" filter="url(#glow)"/>
+    <circle cx="960" cy="340" r="10" fill="#38bdf8" filter="url(#glow)"/>
+    <circle cx="960" cy="420" r="14" fill="#0284c7" stroke="#ffffff" stroke-width="2" filter="url(#softGlow)"/>
+    <circle cx="960" cy="500" r="9" fill="#38bdf8" filter="url(#glow)"/>
+
+    <!-- Roof Antenna Mast with Signal Rings -->
+    <line x1="960" y1="180" x2="960" y2="90" stroke="#38bdf8" stroke-width="3" filter="url(#glow)"/>
+    <circle cx="960" cy="85" r="5" fill="#ffffff" filter="url(#glow)"/>
+    <ellipse cx="960" cy="85" rx="20" ry="6" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-opacity="0.8"/>
+    <ellipse cx="960" cy="85" rx="38" ry="11" fill="none" stroke="#0ea5e9" stroke-width="1.2" stroke-opacity="0.5"/>
+    <ellipse cx="960" cy="85" rx="60" ry="16" fill="none" stroke="#0ea5e9" stroke-width="0.8" stroke-opacity="0.3"/>
+
+    <!-- Central Hub Badge -->
+    <rect x="890" y="405" width="140" height="32" rx="16" fill="#0b1728" stroke="#38bdf8" stroke-width="1.5" filter="url(#glow)"/>
+    <text x="960" y="426" fill="#ffffff" font-size="12" font-family="sans-serif" font-weight="bold" text-anchor="middle" letter-spacing="3">SHAI CORE HUB</text>
+  </g>
+
+  <!-- Right Wing 1: Surgical Center & ICU Pavilion -->
+  <g id="surgical-pavilion">
+    <path d="M 1240 380 L 1460 380 L 1490 750 L 1220 750 Z" fill="url(#bldgGlass3)" stroke="#14b8a6" stroke-width="1.5" stroke-opacity="0.4"/>
+    <!-- Cleanroom windows grid -->
+    <g opacity="0.7" fill="#2dd4bf">
+      <rect x="1260" y="420" width="35" height="12" rx="2" opacity="0.9"/>
+      <rect x="1310" y="420" width="35" height="12" rx="2" opacity="0.6"/>
+      <rect x="1360" y="420" width="35" height="12" rx="2" opacity="0.8"/>
+      <rect x="1410" y="420" width="35" height="12" rx="2" opacity="0.5"/>
+
+      <rect x="1255" y="460" width="35" height="12" rx="2" opacity="0.6"/>
+      <rect x="1305" y="460" width="35" height="12" rx="2" opacity="0.9"/>
+      <rect x="1355" y="460" width="35" height="12" rx="2" opacity="0.7"/>
+      <rect x="1405" y="460" width="35" height="12" rx="2" opacity="0.8"/>
+
+      <rect x="1250" y="500" width="35" height="12" rx="2" opacity="0.8"/>
+      <rect x="1300" y="500" width="35" height="12" rx="2" opacity="0.5"/>
+      <rect x="1350" y="500" width="35" height="12" rx="2" opacity="0.9"/>
+      <rect x="1400" y="500" width="35" height="12" rx="2" opacity="0.4"/>
+    </g>
+    <!-- Cross Symbol -->
+    <g transform="translate(1350, 355)" filter="url(#glow)">
+      <rect x="-3" y="-10" width="6" height="20" fill="#2dd4bf" rx="2"/>
+      <rect x="-10" y="-3" width="20" height="6" fill="#2dd4bf" rx="2"/>
+    </g>
+    <text x="1350" y="710" fill="#99f6e4" font-size="11" font-family="sans-serif" font-weight="600" text-anchor="middle" letter-spacing="2">SURGICAL &amp; ICU</text>
+  </g>
+
+  <!-- Right Wing 2: Outpatient Clinics & Laboratory Pavilion -->
+  <g id="outpatient-wing">
+    <rect x="1530" y="300" width="190" height="450" rx="6" fill="url(#bldgGlass1)" stroke="#38bdf8" stroke-width="1.5" stroke-opacity="0.3"/>
+    <g opacity="0.6" fill="#38bdf8">
+      <rect x="1550" y="330" width="36" height="16" rx="2" opacity="0.8"/>
+      <rect x="1600" y="330" width="36" height="16" rx="2" opacity="0.4"/>
+      <rect x="1650" y="330" width="36" height="16" rx="2" opacity="0.7"/>
+
+      <rect x="1550" y="370" width="36" height="16" rx="2" opacity="0.6"/>
+      <rect x="1600" y="370" width="36" height="16" rx="2" opacity="0.9"/>
+      <rect x="1650" y="370" width="36" height="16" rx="2" opacity="0.5"/>
+
+      <rect x="1550" y="410" width="36" height="16" rx="2" opacity="0.7"/>
+      <rect x="1600" y="410" width="36" height="16" rx="2" opacity="0.5"/>
+      <rect x="1650" y="410" width="36" height="16" rx="2" opacity="0.8"/>
+
+      <rect x="1550" y="450" width="36" height="16" rx="2" opacity="0.9"/>
+      <rect x="1600" y="450" width="36" height="16" rx="2" opacity="0.7"/>
+      <rect x="1650" y="450" width="36" height="16" rx="2" opacity="0.3"/>
+    </g>
+    <text x="1625" y="710" fill="#94a3b8" font-size="11" font-family="sans-serif" font-weight="600" text-anchor="middle" letter-spacing="2">OUTPATIENT CLINICS</text>
+  </g>
+
+  <!-- ============================================== -->
+  <!-- CONNECTED WIRES & DATA CABLES (NETWORK FABRIC) -->
+  <!-- ============================================== -->
+
+  <!-- Main Cyber Highway Wires connecting Wings to Central AI Hub -->
+  <g filter="url(#glow)">
+    
+    <!-- Wire 1: From Inpatient Tower (310, 360) down and across to SHAI Core (960, 420) -->
+    <path d="M 310 360 Q 400 480 600 450 T 890 420" fill="none" stroke="url(#wireCyan)" stroke-width="2.5" stroke-dasharray="8 4"/>
+    
+    <!-- Wire 2: From Emergency Helipad (540, 440) swooping into Central Hub (920, 500) -->
+    <path d="M 540 440 C 650 450 750 560 920 500" fill="none" stroke="#38bdf8" stroke-width="3"/>
+    
+    <!-- Wire 3: Low-level Ground Bus from Emergency (540, 700) to Center (880, 680) -->
+    <path d="M 540 700 C 680 730 780 700 880 680" fill="none" stroke="url(#wireTeal)" stroke-width="2.5"/>
+
+    <!-- Wire 4: From ICU Surgical (1350, 400) swooping into Central Hub (1030, 420) -->
+    <path d="M 1350 400 C 1220 420 1140 380 1030 420" fill="none" stroke="#2dd4bf" stroke-width="3"/>
+
+    <!-- Wire 5: From Outpatient Tower (1620, 360) looping into Central Hub (1040, 500) -->
+    <path d="M 1620 360 C 1450 460 1250 540 1040 500" fill="none" stroke="url(#wireCyan)" stroke-width="2.5" stroke-dasharray="10 5"/>
+
+    <!-- Wire 6: Cross-building interconnect: Inpatient to Emergency -->
+    <path d="M 380 500 L 440 500" fill="none" stroke="#0ea5e9" stroke-width="2.5"/>
+    <!-- Wire 7: Cross-building interconnect: Surgical to Outpatient -->
+    <path d="M 1470 520 L 1530 520" fill="none" stroke="#14b8a6" stroke-width="2.5"/>
+
+    <!-- Overhead Telemetry Waves & Aerial Skybridge Data Streams -->
+    <path d="M 300 290 Q 600 120 960 85" fill="none" stroke="#38bdf8" stroke-width="1.8" stroke-opacity="0.8" stroke-dasharray="6 3"/>
+    <path d="M 960 85 Q 1300 120 1625 300" fill="none" stroke="#38bdf8" stroke-width="1.8" stroke-opacity="0.8" stroke-dasharray="6 3"/>
+
+    <!-- Ground Level Pulse Rings & Campus Data Grid -->
+    <path d="M 100 850 Q 500 780 960 760 Q 1420 780 1820 850" fill="none" stroke="url(#wireCyan)" stroke-width="2"/>
+    <path d="M 250 920 Q 600 860 960 840 Q 1320 860 1670 920" fill="none" stroke="url(#wireTeal)" stroke-width="2.5"/>
+  </g>
+
+  <!-- Glowing Data Nodes & Cable Connection Splices -->
+  <g filter="url(#softGlow)">
+    <!-- Splice Node at Inpatient -->
+    <circle cx="310" cy="360" r="5" fill="#38bdf8"/>
+    <circle cx="380" cy="500" r="4" fill="#0ea5e9"/>
+
+    <!-- Splice Node at Emergency -->
+    <circle cx="540" cy="440" r="6" fill="#f87171"/>
+    <circle cx="440" cy="500" r="4" fill="#0ea5e9"/>
+    <circle cx="540" cy="700" r="5" fill="#2dd4bf"/>
+
+    <!-- Junction Nodes at Central Core -->
+    <circle cx="890" cy="420" r="6" fill="#38bdf8"/>
+    <circle cx="920" cy="500" r="7" fill="#ffffff"/>
+    <circle cx="880" cy="680" r="6" fill="#2dd4bf"/>
+    <circle cx="1030" cy="420" r="7" fill="#ffffff"/>
+    <circle cx="1040" cy="500" r="6" fill="#38bdf8"/>
+
+    <!-- Splice Nodes at Surgical & Outpatient -->
+    <circle cx="1350" cy="400" r="6" fill="#2dd4bf"/>
+    <circle cx="1470" cy="520" r="4" fill="#14b8a6"/>
+    <circle cx="1530" cy="520" r="4" fill="#14b8a6"/>
+    <circle cx="1620" cy="360" r="5" fill="#38bdf8"/>
+  </g>
+
+  <!-- Flowing Data Packets / Pulses along the wires -->
+  <g fill="#ffffff" filter="url(#glow)">
+    <circle cx="420" cy="420" r="3"/>
+    <circle cx="700" cy="455" r="3.5"/>
+    <circle cx="780" cy="520" r="4"/>
+    <circle cx="1180" cy="430" r="3.5"/>
+    <circle cx="1400" cy="440" r="3"/>
+    <circle cx="680" cy="180" r="2.5"/>
+    <circle cx="1240" cy="180" r="2.5"/>
+  </g>
+
+  <!-- Futuristic Clinical Vignette Overlay -->
+  <radialGradient id="vignette" cx="50%" cy="50%" r="70%">
+    <stop offset="0%" stop-color="#000000" stop-opacity="0"/>
+    <stop offset="65%" stop-color="#000000" stop-opacity="0.3"/>
+    <stop offset="100%" stop-color="#020817" stop-opacity="0.75"/>
+  </radialGradient>
+  <rect width="1920" height="1080" fill="url(#vignette)"/>
+</svg>
